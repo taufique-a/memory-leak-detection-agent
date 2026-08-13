@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "name": "iosense-overview-devices",
+  "description": "Sidebar navigation Overview -> Devices -> Overview, repeated. Targets OverviewComponent, the top-ranked static finding (9 unreleasable RxJS subscriptions, no ngOnDestroy, routes /overview and /overview-v2).",
+  "baseUrl": "http://localhost:7400",
+
+  "auth": {
+    "type": "storageState",
+    "file": ".auth/iosense.auth.json"
+  },
+
+  "setup": [
+    { "action": "goto", "path": "/overview", "waitUntil": "domcontentloaded" },
+    { "action": "waitFor", "selector": "overview", "timeoutMs": 60000 }
+  ],
+
+  "steps": [
+    { "action": "click", "selector": "a.nav-link[href=\"/devices\"]" },
+    { "action": "waitFor", "selector": "devices", "timeoutMs": 30000 },
+    { "action": "click", "selector": "a.nav-link[href=\"/overview\"]" },
+    { "action": "waitFor", "selector": "overview", "timeoutMs": 30000 }
+  ],
+
+  "iterations": 15,
+  "warmupIterations": 3,
+  "viewport": { "width": 1440, "height": 900 },
+  "timeoutMs": 60000
+}

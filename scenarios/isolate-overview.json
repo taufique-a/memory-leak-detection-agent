@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "isolate-overview",
+  "description": "Overview <-> Clusters. Clusters is a neutral control route with no canvas. Any growth here is attributable to Overview.",
+  "baseUrl": "http://localhost:7400",
+  "auth": { "type": "storageState", "file": ".auth/iosense.auth.json" },
+  "setup": [
+    { "action": "goto", "path": "/overview", "waitUntil": "domcontentloaded" },
+    { "action": "waitFor", "selector": "overview", "timeoutMs": 60000 }
+  ],
+  "steps": [
+    { "action": "click", "selector": "a.nav-link[href=\"/load-entity-gen\"]" },
+    { "action": "waitFor", "selector": "load-entities-generic", "timeoutMs": 30000 },
+    { "action": "click", "selector": "a.nav-link[href=\"/overview\"]" },
+    { "action": "waitFor", "selector": "overview", "timeoutMs": 30000 }
+  ],
+  "iterations": 15,
+  "warmupIterations": 3,
+  "viewport": { "width": 1440, "height": 900 },
+  "timeoutMs": 60000
+}
