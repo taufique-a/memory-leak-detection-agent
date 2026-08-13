@@ -178,6 +178,20 @@ const INFINITE_MEMBER_NAMES = new Set([
  *   this.someSubject$.subscribe()       never completes -> retains forever
  */
 export function classifyObservableSource(call: ts.CallExpression): ObservableSourceHint {
+  const callee = call.expression;
+  if (!ts.isPropertyAccessExpression(callee)) return 'unknown';
+  return classifyObservableExpression(callee.expression);
+}
+
+/**
+ * Classify an expression that evaluates to an Observable.
+ *
+ * Split out from `classifyObservableSource` so the optional type resolver
+ * can reuse it: once the checker resolves `getDevices` to its declaration,
+ * we run this same logic on whatever that method RETURNS, where
+ * `this.http.get(url)` is finally visible.
+ */
+export function classifyObservableExpression(source: ts.Expression): ObservableSourceHint {
   const parts: string[] = [];
 
   const collect = (node: ts.Node, depth: number): void => {
@@ -196,8 +210,7 @@ export function classifyObservableSource(call: ts.CallExpression): ObservableSou
     }
   };
 
-  const callee = call.expression;
-  if (ts.isPropertyAccessExpression(callee)) collect(callee.expression, 0);
+  collect(source, 0);
 
   const lower = parts.map((p) => p.toLowerCase());
   const hasStreamSuffix = parts.some((p) => p.endsWith('$'));
@@ -288,6 +301,21 @@ function operatorNameOf(arg: ts.Expression): string | undefined {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Optionally refine a syntax-derived source hint using type information.
+ *
+ * Passed in rather than imported so the expensive type-checking path stays
+ * entirely opt-in and this module keeps no dependency on it.
+ */
+export type SourceHintRefiner = (
+  call: ts.CallExpression,
+  current: ObservableSourceHint,
+) => ObservableSourceHint;
+
+export interface VisitOptions {
+  refineSource?: SourceHintRefiner;
+}
+
+/**
  * Find every resource operation in a parsed file.
  *
  * One pass, visiting every node. Both acquires and releases are collected
@@ -296,12 +324,13 @@ function operatorNameOf(arg: ts.Expression): string | undefined {
 export function findResourceOperations(
   sourceFile: ts.SourceFile,
   relativePath: string,
+  options: VisitOptions = {},
 ): ResourceOperation[] {
   const operations: ResourceOperation[] = [];
 
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
-      inspectCall(node, sourceFile, relativePath, operations);
+      inspectCall(node, sourceFile, relativePath, operations, options);
     } else if (ts.isNewExpression(node)) {
       inspectNew(node, sourceFile, relativePath, operations);
     }
@@ -319,6 +348,7 @@ function inspectCall(
   sourceFile: ts.SourceFile,
   relativePath: string,
   out: ResourceOperation[],
+  options: VisitOptions = {},
 ): void {
   const callee = node.expression;
 
@@ -404,7 +434,14 @@ function inspectCall(
       if (entry.definition.kind === 'rxjs.subscription') {
         const mitigation = findSubscribeMitigation(node);
         if (mitigation) operation.mitigatedBy = `${mitigation}()`;
-        operation.sourceHint = classifyObservableSource(node);
+
+        const syntactic = classifyObservableSource(node);
+        // With --types, follow the called method to its declaration and read
+        // what it actually returns. Refinement can only add information:
+        // the refiner returns the original hint when it cannot do better.
+        operation.sourceHint = options.refineSource
+          ? options.refineSource(node, syntactic)
+          : syntactic;
       }
 
       if (entry.definition.kind === 'dom.eventListener') {

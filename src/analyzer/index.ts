@@ -21,7 +21,7 @@ import type {
 } from '../types/analysis';
 import { AGENT_VERSION } from '../version';
 import { buildClassAnalyses } from './pairing';
-import { findResourceOperations } from './visitor';
+import { findResourceOperations, type VisitOptions } from './visitor';
 
 export interface AnalyzeOptions {
   onProgress?: (done: number, total: number) => void;
@@ -104,7 +104,19 @@ export function analyzeSourceFile(
   sourceFile: ts.SourceFile,
   relativePath: string,
 ): FileAnalysis {
-  const operations = findResourceOperations(sourceFile, relativePath);
+  return analyzeSourceFileWith(sourceFile, relativePath, {});
+}
+
+/**
+ * Analyze one file with visitor options - notably the optional type-aware
+ * source-hint refiner used by `--types`.
+ */
+export function analyzeSourceFileWith(
+  sourceFile: ts.SourceFile,
+  relativePath: string,
+  options: VisitOptions,
+): FileAnalysis {
+  const operations = findResourceOperations(sourceFile, relativePath, options);
   const facts = collectClassFacts(sourceFile);
   const { classes, loose } = buildClassAnalyses(operations, facts, relativePath);
   return { file: relativePath, classes, looseOperations: loose };

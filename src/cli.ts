@@ -9,6 +9,7 @@
  */
 
 import { runAnalyze } from './commands/analyze';
+import { runRisk } from './commands/risk';
 import { runScan } from './commands/scan';
 import { buildInfo, versionString } from './version';
 import { INVESTIGATION_STATUSES } from './types';
@@ -32,7 +33,8 @@ USAGE
 
 COMMANDS
   ${'scan <project>'.padEnd(28)} Discover the Angular project structure
-  ${'analyze <project>'.padEnd(28)} Find resource acquire/release operations (AST)`);
+  ${'analyze <project>'.padEnd(28)} Find resource acquire/release operations (AST)
+  ${'risk <project>'.padEnd(28)} Rank and explain static memory risks`);
 
   for (const cmd of PLANNED_COMMANDS) {
     const status = '(not implemented yet - ' + cmd.phase + ')';
@@ -50,6 +52,15 @@ ANALYZE OPTIONS
   --filter <frag>  Only analyze files whose path contains <frag>
   --limit <n>      How many findings to print (default 20)
   --include-tests  Also analyze *.spec.ts and mocks
+
+RISK OPTIONS
+  --json <file>    Also write the ranked findings as JSON
+  --filter <frag>  Only assess files whose path contains <frag>
+  --limit <n>      How many findings to keep (default 50, 0 = all)
+  --detail <n>     How many to print in full detail (default 10)
+  --types          Resolve observable sources with the type checker.
+                   More accurate, but ~25s slower and ~2.3 GB of memory.
+  --include-tests  Also assess *.spec.ts and mocks
 
 OPTIONS
   -v, --version    Print version information
@@ -87,6 +98,10 @@ export function run(argv: string[]): number {
 
   if (first === 'analyze') {
     return runAnalyze(args.slice(1));
+  }
+
+  if (first === 'risk') {
+    return runRisk(args.slice(1));
   }
 
   // Recognised command, but we have not built it yet. Say so honestly
