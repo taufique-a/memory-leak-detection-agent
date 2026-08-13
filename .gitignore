@@ -11,6 +11,7 @@ coverage/
 # Investigation artefacts (these get big fast - heap snapshots are huge)
 .memory-agent/
 artifacts/
+reports/
 snapshots/
 *.heapsnapshot
 *.heapprofile

@@ -9,6 +9,7 @@
  */
 
 import { runAnalyze } from './commands/analyze';
+import { runReport } from './commands/report';
 import { runRisk } from './commands/risk';
 import { runScan } from './commands/scan';
 import { buildInfo, versionString } from './version';
@@ -19,7 +20,6 @@ const PLANNED_COMMANDS: Array<{ name: string; summary: string; phase: string }> 
   { name: 'investigate', summary: 'Run the browser scenario and measure memory', phase: 'Phase 9' },
   { name: 'verify', summary: 'Compare before/after and confirm a fix', phase: 'Phase 16' },
   { name: 'fix', summary: 'Propose a fix, show a diff, ask approval', phase: 'Phase 13' },
-  { name: 'report', summary: 'Generate the investigation report', phase: 'Phase 17' },
 ];
 
 function printHelp(): void {
@@ -34,7 +34,8 @@ USAGE
 COMMANDS
   ${'scan <project>'.padEnd(28)} Discover the Angular project structure
   ${'analyze <project>'.padEnd(28)} Find resource acquire/release operations (AST)
-  ${'risk <project>'.padEnd(28)} Rank and explain static memory risks`);
+  ${'risk <project>'.padEnd(28)} Rank and explain static memory risks
+  ${'report <project>'.padEnd(28)} Generate a shareable investigation report`);
 
   for (const cmd of PLANNED_COMMANDS) {
     const status = '(not implemented yet - ' + cmd.phase + ')';
@@ -61,6 +62,13 @@ RISK OPTIONS
   --types          Resolve observable sources with the type checker.
                    More accurate, but ~25s slower and ~2.3 GB of memory.
   --include-tests  Also assess *.spec.ts and mocks
+
+REPORT OPTIONS
+  --format <list>  md, html, json, all, or a comma list (default md)
+  --out <dir>      Output directory (default ./reports)
+  --filter <frag>  Only report on files whose path contains <frag>
+  --limit <n>      How many findings to include (default 50, 0 = all)
+  --types          Resolve observable sources with the type checker
 
 OPTIONS
   -v, --version    Print version information
@@ -102,6 +110,10 @@ export function run(argv: string[]): number {
 
   if (first === 'risk') {
     return runRisk(args.slice(1));
+  }
+
+  if (first === 'report') {
+    return runReport(args.slice(1));
   }
 
   // Recognised command, but we have not built it yet. Say so honestly
