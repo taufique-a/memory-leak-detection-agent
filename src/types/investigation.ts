@@ -109,12 +109,41 @@ export interface MemoryEvidence {
     label: string;
     iteration: number;
     jsHeapUsedBytes?: number;
-    domNodes?: number;
-    detachedDomNodes?: number;
+    attachedDomNodes?: number;
     listeners?: number;
+    /** False means the number includes uncollected garbage. */
+    afterForcedGc?: boolean;
   }>;
+
+  /** GROWING / STABLE / SHRINKING / INCONCLUSIVE. */
+  verdict: string;
+  bytesPerIteration: number;
+  totalDeltaBytes: number;
+  /** Line-fit quality, 0..1. Low means erratic, not a steady leak. */
+  rSquared: number;
+  listenersPerIteration: number;
+  attachedDomPerIteration: number;
+
+  samplesAnalysed: number;
+  warmupDiscarded: number;
+
   /** Plain-language reading of the trend. */
   interpretation: string;
+  /** Everything that limits confidence in the reading. */
+  caveats: string[];
+}
+
+/** What the browser reported while the scenario ran. Filled by Phase 9. */
+export interface RuntimeObservations {
+  chromeVersion: string;
+  iterationsRequested: number;
+  iterationsCompleted: number;
+  /** Steps that failed. Non-empty means the numbers describe a different journey. */
+  stepFailures: Array<{ iteration: number; description: string; error: string }>;
+  /** Console errors and warnings, most frequent first. */
+  console: Array<{ type: string; text: string; count: number }>;
+  /** Set when the run stopped early. */
+  abortedReason?: string;
 }
 
 /** Heap snapshot analysis. Filled by Phase 10. */
@@ -221,7 +250,7 @@ export interface Investigation {
   /* ---- runtime and beyond ---- */
   scenario: Section<ScenarioDefinition>;
   reproductionSteps: Section<string[]>;
-  runtimeFindings: Section<string[]>;
+  runtimeFindings: Section<RuntimeObservations>;
   memoryEvidence: Section<MemoryEvidence>;
   heapEvidence: Section<HeapEvidence>;
   rootCause: Section<RootCauseAnalysis>;

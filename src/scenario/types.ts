@@ -115,6 +115,18 @@ export type AuthConfig =
       type: 'storageState';
       /** Path to a Playwright storage-state JSON file. */
       file: string;
+      /**
+       * Regular expression matched against the URL after navigation to
+       * detect that the saved session has expired.
+       *
+       * Sessions expire routinely, and the symptom is a redirect to a login
+       * page. Without this check the run waits the full selector timeout and
+       * then reports "element not found", which sends people looking at
+       * their selectors instead of their session.
+       *
+       * Defaults to `login|signin|sign-in|auth/`.
+       */
+      loginUrlPattern?: string;
     };
 
 /* ------------------------------------------------------------------ */

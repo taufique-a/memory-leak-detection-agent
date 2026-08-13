@@ -12,13 +12,19 @@ import * as ts from 'typescript';
 
 import { readWorkspace, supportedCleanupIdioms } from '../scanner/workspace';
 import type { RiskResult } from '../risk';
+import type { ScenarioRun } from '../scenario/runner';
+import type { Scenario } from '../scenario/types';
+import { describeStep } from '../scenario/validate';
 import type { Confidence, InvestigationStatus, Risk } from '../types/index';
 import type {
   Investigation,
   InvestigationSummary,
+  MemoryEvidence,
   ProjectContext,
+  RuntimeObservations,
+  ScenarioDefinition,
 } from '../types/investigation';
-import { notGathered } from '../types/investigation';
+import { gathered, notGathered } from '../types/investigation';
 import { AGENT_VERSION } from '../version';
 import { describeReproducibility, readGitContext } from './gitInfo';
 
@@ -27,6 +33,13 @@ export interface BuildInvestigationOptions {
   id?: string;
   /** Override the timestamp, for deterministic tests. */
   now?: Date;
+  /**
+   * A completed browser run. When present, the runtime sections stop being
+   * placeholders and the investigation can reach CONFIRMED.
+   */
+  scenarioRun?: ScenarioRun;
+  /** The scenario definition that produced the run, for the report. */
+  scenario?: Scenario;
 }
 
 /**
@@ -41,6 +54,7 @@ export function buildInvestigation(
   options: BuildInvestigationOptions = {},
 ): Investigation {
   const now = options.now ?? new Date();
+  const run = options.scenarioRun;
   const git = readGitContext(risk.projectRoot);
   const { workspace } = readWorkspace(risk.projectRoot);
 
@@ -57,8 +71,8 @@ export function buildInvestigation(
     supportedCleanupIdioms: supportedCleanupIdioms(workspace),
   };
 
-  const summary = summarise(risk);
-  const status = deriveStatus(risk);
+  const summary = summarise(risk, run);
+  const status = deriveStatus(risk, run);
 
   return {
     schemaVersion: 1,
@@ -81,23 +95,35 @@ export function buildInvestigation(
     summary,
     staticFindings: risk.findings,
 
-    /* ---- everything below arrives in later phases ---- */
-    scenario: notGathered(
-      'Phase 8 - scenario engine',
-      'A repeatable navigation sequence has not been defined or run.',
-    ),
-    reproductionSteps: notGathered(
-      'Phase 8 - scenario engine',
-      'Each finding carries a suggested investigation, but no scenario has been executed.',
-    ),
-    runtimeFindings: notGathered(
-      'Phase 7 - browser investigation',
-      'The application has not been launched. Nothing here has been observed running.',
-    ),
-    memoryEvidence: notGathered(
-      'Phase 9 - memory investigation',
-      'No memory measurements have been taken.',
-    ),
+    /* ---- runtime: real when a scenario ran, placeholders otherwise ---- */
+    scenario:
+      run !== undefined && options.scenario !== undefined
+        ? gathered(describeScenario(options.scenario, run))
+        : notGathered(
+            'Phase 8 - scenario engine',
+            'A repeatable navigation sequence has not been defined or run.',
+          ),
+    reproductionSteps:
+      run !== undefined && options.scenario !== undefined
+        ? gathered(buildReproductionSteps(options.scenario, run))
+        : notGathered(
+            'Phase 8 - scenario engine',
+            'Each finding carries a suggested investigation, but no scenario has been executed.',
+          ),
+    runtimeFindings:
+      run !== undefined
+        ? gathered(buildRuntimeObservations(run))
+        : notGathered(
+            'Phase 7 - browser investigation',
+            'The application has not been launched. Nothing here has been observed running.',
+          ),
+    memoryEvidence:
+      run !== undefined
+        ? gathered(buildMemoryEvidence(run))
+        : notGathered(
+            'Phase 9 - memory investigation',
+            'No memory measurements have been taken.',
+          ),
     heapEvidence: notGathered(
       'Phase 10 - heap and retention analysis',
       'No heap snapshots have been captured.',
@@ -140,18 +166,132 @@ export function buildInvestigation(
 /**
  * Derive the investigation status from the evidence actually held.
  *
- * The ceiling here is SUSPECTED, and that is deliberate. CONFIRMED means a
- * leak was observed; VERIFIED means a fix was measured. Neither can follow
- * from reading source code, and letting a static report claim either would
- * be the most damaging kind of dishonesty this tool could commit.
+ * WITHOUT a scenario run the ceiling is SUSPECTED, and that is deliberate:
+ * CONFIRMED means a leak was observed, and reading source code cannot
+ * observe anything.
+ *
+ * WITH a run, CONFIRMED becomes available - but only on the specific
+ * combination that actually earns it: sustained growth, a consistent line
+ * fit, and a journey that ran to completion. A GROWING verdict from a run
+ * where half the steps failed describes a different journey from the one
+ * written down, so it stays SUSPECTED.
+ *
+ * VERIFIED remains out of reach until a fix has been applied and re-measured
+ * (Phase 16).
  */
-export function deriveStatus(risk: RiskResult): InvestigationStatus {
+export function deriveStatus(
+  risk: RiskResult,
+  run?: ScenarioRun,
+): InvestigationStatus {
+  if (run !== undefined) {
+    const journeyIsTrustworthy =
+      run.failures.length === 0 &&
+      run.abortedReason === undefined &&
+      run.iterationsCompleted === run.iterationsRequested;
+
+    if (run.trend.verdict === 'GROWING' && journeyIsTrustworthy) return 'CONFIRMED';
+    if (run.trend.verdict === 'GROWING') return 'SUSPECTED';
+    // A stable run does not clear the application - it clears this journey.
+    if (run.trend.verdict === 'STABLE' && risk.findings.length > 0) return 'INVESTIGATING';
+    if (run.trend.verdict === 'INCONCLUSIVE') return 'INVESTIGATING';
+  }
+
   if (risk.findings.length === 0) return 'OPEN';
   const hasLikely = risk.findings.some((f) => f.confidence === 'LIKELY');
   return hasLikely ? 'SUSPECTED' : 'INVESTIGATING';
 }
 
-function summarise(risk: RiskResult): InvestigationSummary {
+/* ------------------------------------------------------------------ */
+/* Runtime section builders                                            */
+/* ------------------------------------------------------------------ */
+
+function describeScenario(scenario: Scenario, run: ScenarioRun): ScenarioDefinition {
+  return {
+    name: scenario.name,
+    description: scenario.description ?? '',
+    steps: scenario.steps.map(describeStep),
+    iterations: run.iterationsCompleted,
+  };
+}
+
+/**
+ * Turn the scenario into instructions a human can follow by hand.
+ *
+ * A measurement nobody else can reproduce is an anecdote. These steps are
+ * written for a person with a browser, not for the tool.
+ */
+function buildReproductionSteps(scenario: Scenario, run: ScenarioRun): string[] {
+  const steps: string[] = [
+    `Start the application and open ${scenario.baseUrl}.`,
+    ...(scenario.auth !== undefined && scenario.auth.type !== 'none'
+      ? ['Sign in.']
+      : []),
+  ];
+
+  for (const step of scenario.setup ?? []) {
+    steps.push(`Setup: ${describeStep(step)}.`);
+  }
+
+  steps.push(
+    `Open DevTools > Memory, then repeat the following ${run.iterationsCompleted} times, ` +
+      'forcing a garbage collection and recording the JS heap size after each pass:',
+  );
+
+  scenario.steps.forEach((step, i) => {
+    steps.push(`   ${i + 1}. ${describeStep(step)}`);
+  });
+
+  steps.push(
+    `Discard the first ${scenario.warmupIterations ?? 2} iterations - first visits load ` +
+      'lazy chunks and fill caches, which is not a leak.',
+  );
+  steps.push('Plot the remaining readings. A straight rising line is accumulation.');
+
+  return steps;
+}
+
+function buildRuntimeObservations(run: ScenarioRun): RuntimeObservations {
+  return {
+    chromeVersion: run.chromeVersion,
+    iterationsRequested: run.iterationsRequested,
+    iterationsCompleted: run.iterationsCompleted,
+    stepFailures: run.failures.slice(0, 20).map((f) => ({
+      iteration: f.iteration,
+      description: f.description,
+      error: f.error ?? 'failed',
+    })),
+    console: run.consoleEntries
+      .filter((e) => e.type !== 'warning')
+      .slice(0, 15)
+      .map((e) => ({ type: e.type, text: e.text, count: e.count })),
+    ...(run.abortedReason !== undefined ? { abortedReason: run.abortedReason } : {}),
+  };
+}
+
+function buildMemoryEvidence(run: ScenarioRun): MemoryEvidence {
+  return {
+    measurements: run.samples.map((s) => ({
+      label: s.label,
+      iteration: s.iteration,
+      jsHeapUsedBytes: s.jsHeapUsedBytes,
+      attachedDomNodes: s.attachedDomNodes,
+      listeners: s.jsEventListeners,
+      afterForcedGc: s.afterForcedGc,
+    })),
+    verdict: run.trend.verdict,
+    bytesPerIteration: run.trend.bytesPerIteration,
+    totalDeltaBytes: run.trend.totalDeltaBytes,
+    rSquared: run.trend.rSquared,
+    listenersPerIteration: run.trend.listenersPerIteration,
+    attachedDomPerIteration: run.trend.nodesPerIteration,
+    samplesAnalysed: run.trend.samplesAnalysed,
+    warmupDiscarded: run.trend.warmupDiscarded,
+    interpretation: run.trend.explanation,
+    caveats: run.trend.caveats,
+  };
+}
+
+function summarise(risk: RiskResult, run?: ScenarioRun): InvestigationSummary {
   /**
    * Take the breakdowns straight from the risk result.
    *
@@ -160,14 +300,28 @@ function summarise(risk: RiskResult): InvestigationSummary {
    * produced a report reading "2,546 findings / CRITICAL 20 / HIGH 0", a
    * breakdown that contradicts its own total.
    */
+  /**
+   * The evidence level is the one honest place a runtime run changes the
+   * headline. Static analysis alone is STATIC_SUSPICION, full stop. A run
+   * that observed something raises it to RUNTIME_EVIDENCE, and consistent
+   * growth across many iterations to STRONG_EVIDENCE. CONFIRMED is reserved
+   * for heap data that ties bytes to a retained object - Phase 10.
+   */
+  let strongestEvidence: InvestigationSummary['strongestEvidence'] = 'STATIC_SUSPICION';
+  if (run !== undefined) {
+    strongestEvidence =
+      run.trend.verdict === 'GROWING' && run.trend.samplesAnalysed >= 5
+        ? 'STRONG_EVIDENCE'
+        : 'RUNTIME_EVIDENCE';
+  }
+
   return {
     totalFindings: risk.summary.total,
     includedFindings: risk.findings.length,
     byRisk: risk.summary.byRisk,
     byConfidence: risk.summary.byConfidence,
     findingsInRoutedComponents: risk.summary.inRoutedComponents,
-    // Static analysis has exactly one evidence level, by construction.
-    strongestEvidence: 'STATIC_SUSPICION',
+    strongestEvidence,
   };
 }
 

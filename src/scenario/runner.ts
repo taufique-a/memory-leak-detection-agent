@@ -145,7 +145,34 @@ export async function runScenario(
         if (step === undefined) continue;
         const result = await executeStep(session, scenario, step, -1, i, options, screenshots);
         stepResults.push(result);
+
+        /**
+         * Check for an expired session immediately after any navigation,
+         * before a selector wait can burn the full timeout.
+         *
+         * The failure this prevents: the goto SUCCEEDS (it lands on the
+         * login page), then waitFor sits for 60 seconds and reports
+         * "element not found" - sending the reader to inspect selectors when
+         * the real answer is "sign in again".
+         */
+        if (result.ok && step.action === 'goto') {
+          /**
+           * Wait for the URL to settle first.
+           *
+           * An Angular auth guard redirects on the CLIENT, after
+           * domcontentloaded. Checking the instant goto() returns sees the
+           * requested URL and misses it entirely - which is how this check
+           * originally still took 63 seconds to fire.
+           */
+          await waitForUrlToSettle(session, 3000);
+          const expired = detectExpiredSession(session.page.url(), scenario);
+          if (expired !== undefined) throw new ScenarioError(expired);
+        }
+
         if (!result.ok) {
+          const expired = detectExpiredSession(session.page.url(), scenario);
+          if (expired !== undefined) throw new ScenarioError(expired);
+
           throw new ScenarioError(
             `Setup step ${i} (${result.description}) failed: ${result.error}. ` +
               'Aborting - running the loop from a broken starting state would produce ' +
@@ -427,6 +454,60 @@ async function applyAuth(
   } else {
     await page.waitForLoadState('networkidle');
   }
+}
+
+/**
+ * Poll until the URL stops changing, or the budget runs out.
+ *
+ * Returns as soon as two consecutive reads agree, so a page that does not
+ * redirect costs one extra poll interval rather than the whole budget.
+ */
+async function waitForUrlToSettle(
+  session: BrowserSession,
+  budgetMs: number,
+): Promise<void> {
+  const interval = 250;
+  let previous = session.page.url();
+
+  for (let waited = 0; waited < budgetMs; waited += interval) {
+    await session.page.waitForTimeout(interval);
+    const current = session.page.url();
+    if (current === previous) return;
+    previous = current;
+  }
+}
+
+/**
+ * Has the saved session expired?
+ *
+ * Returns a ready-to-show message when the current URL looks like a login
+ * page, or undefined when everything is fine. Only applies to storageState
+ * auth - with form login the runner performs the sign-in itself, and with
+ * no auth a login URL is presumably intentional.
+ */
+export function detectExpiredSession(
+  currentUrl: string,
+  scenario: Scenario,
+): string | undefined {
+  if (scenario.auth?.type !== 'storageState') return undefined;
+
+  const pattern = scenario.auth.loginUrlPattern ?? 'login|signin|sign-in|auth/';
+  let matches: boolean;
+  try {
+    matches = new RegExp(pattern, 'i').test(currentUrl);
+  } catch {
+    // A malformed pattern must not break the run; fall back to the default.
+    matches = /login|signin|sign-in|auth\//i.test(currentUrl);
+  }
+  if (!matches) return undefined;
+
+  return (
+    `The application redirected to a login page (${currentUrl}), so the saved session in ` +
+    `"${scenario.auth.file}" has expired or was rejected.\n\n` +
+    '  Sign in again with:\n' +
+    `    memory-agent scenario login --base-url ${scenario.baseUrl} --out ${scenario.auth.file}\n\n` +
+    '  This is normal - sessions expire. Nothing is wrong with the scenario or its selectors.'
+  );
 }
 
 /** Join a base URL and a path without producing a double slash. */

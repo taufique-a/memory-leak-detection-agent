@@ -10,6 +10,7 @@
 
 import { runAnalyze } from './commands/analyze';
 import { runDoctor } from './commands/doctor';
+import { runInvestigate } from './commands/investigate';
 import { runReport } from './commands/report';
 import { runRisk } from './commands/risk';
 import { runScan } from './commands/scan';
@@ -20,7 +21,6 @@ import { INVESTIGATION_STATUSES } from './types';
 
 /** Commands the agent will eventually support. */
 const PLANNED_COMMANDS: Array<{ name: string; summary: string; phase: string }> = [
-  { name: 'investigate', summary: 'Run the browser scenario and measure memory', phase: 'Phase 9' },
   { name: 'verify', summary: 'Compare before/after and confirm a fix', phase: 'Phase 16' },
   { name: 'fix', summary: 'Propose a fix, show a diff, ask approval', phase: 'Phase 13' },
 ];
@@ -41,7 +41,8 @@ COMMANDS
   ${'report <project>'.padEnd(28)} Generate a shareable investigation report
   ${'doctor'.padEnd(28)} Check the environment is ready for runtime work
   ${'selftest'.padEnd(28)} Prove memory measurement works, on a known leak
-  ${'scenario <sub>'.padEnd(28)} init | validate | run | demo  (repeatable journeys)`);
+  ${'scenario <sub>'.padEnd(28)} init | login | validate | run | demo
+  ${'investigate <project>'.padEnd(28)} Static + runtime in one investigation report`);
 
   for (const cmd of PLANNED_COMMANDS) {
     const status = '(not implemented yet - ' + cmd.phase + ')';
@@ -81,6 +82,14 @@ SCENARIO
   scenario validate <file>    Check it, and warn about misleading setups
   scenario run <file>         Run it against your application
   scenario demo [--clean]     Run the built-in leaky SPA, no app needed
+
+INVESTIGATE OPTIONS
+  --scenario <file>  The journey to run and measure (required)
+  --static-only      Skip the browser run entirely
+  --format <list>    md, html, json, all (default all)
+  --out <dir>        Output directory (default ./reports)
+  --types            Resolve observable sources with the type checker
+  --headed           Show the browser window while it runs
 
 SELFTEST OPTIONS
   --iterations <n> Mount/unmount cycles per fixture (default 12, min 5)
@@ -148,6 +157,10 @@ export function run(argv: string[]): number | Promise<number> {
 
   if (first === 'scenario') {
     return runScenarioCommand(args.slice(1));
+  }
+
+  if (first === 'investigate') {
+    return runInvestigate(args.slice(1));
   }
 
   // Recognised command, but we have not built it yet. Say so honestly

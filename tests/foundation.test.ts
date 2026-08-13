@@ -118,7 +118,10 @@ describe('cli', () => {
   });
 
   it('admits when a planned command is not built yet, instead of pretending', () => {
-    const code = run(['node', 'cli.js', 'investigate']);
+    // 'verify' arrives in Phase 16. This originally used 'investigate',
+    // which Phase 9 implemented - the test failing was the correct signal
+    // that the command had graduated.
+    const code = run(['node', 'cli.js', 'verify']);
     expect(code).toBe(2);
     expect(errSpy.mock.calls.join(' ')).toContain('not implemented yet');
   });

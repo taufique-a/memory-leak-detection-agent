@@ -7,7 +7,7 @@
  */
 
 import type { Finding } from '../types/finding';
-import type { Investigation, Section } from '../types/investigation';
+import type { Investigation, MemoryEvidence, Section } from '../types/investigation';
 
 /** Escape pipe characters so cell content cannot break a table. */
 function cell(text: string): string {
@@ -148,17 +148,96 @@ export function renderMarkdown(inv: Investigation): string {
   /* ---- runtime sections ---- */
   p('## 4. Runtime investigation');
   p();
-  const runtimeSections: Array<[Section<unknown>, string]> = [
-    [inv.scenario, 'Scenario'],
-    [inv.reproductionSteps, 'Reproduction steps'],
-    [inv.runtimeFindings, 'Runtime findings'],
-    [inv.memoryEvidence, 'Memory evidence'],
-    [inv.heapEvidence, 'Heap and retention evidence'],
-  ];
-  for (const [section, name] of runtimeSections) {
-    const placeholder = sectionPlaceholder(section, name);
+
+  if (inv.scenario.gathered) {
+    const s = inv.scenario.data;
+    p('### Scenario');
+    p();
+    p(`**${s.name}** - ${s.description}`);
+    p();
+    p(`Repeated **${s.iterations}** times. Each iteration:`);
+    p();
+    s.steps.forEach((step, i) => p(`${i + 1}. ${step}`));
+    p();
+  } else {
+    const placeholder = sectionPlaceholder(inv.scenario, 'Scenario');
     if (placeholder) p(placeholder);
   }
+
+  if (inv.reproductionSteps.gathered) {
+    p('### Reproduction steps');
+    p();
+    p('_Follow these by hand to see the same behaviour without the agent._');
+    p();
+    for (const step of inv.reproductionSteps.data) p(`- ${step}`);
+    p();
+  } else {
+    const placeholder = sectionPlaceholder(inv.reproductionSteps, 'Reproduction steps');
+    if (placeholder) p(placeholder);
+  }
+
+  if (inv.runtimeFindings.gathered) {
+    const r = inv.runtimeFindings.data;
+    p('### Runtime findings');
+    p();
+    p(`- Chrome ${r.chromeVersion}`);
+    p(`- Iterations completed: **${r.iterationsCompleted} / ${r.iterationsRequested}**`);
+    p(`- Step failures: **${r.stepFailures.length}**`);
+    p();
+
+    if (r.abortedReason !== undefined) {
+      p(`> **Run aborted.** ${r.abortedReason}`);
+      p();
+    }
+
+    if (r.stepFailures.length > 0) {
+      p(
+        '> **Some steps failed, so the journey performed was not the one written down. ' +
+          'Read the memory numbers with that in mind.**',
+      );
+      p();
+      p('| Iteration | Step | Error |');
+      p('|---|---|---|');
+      for (const f of r.stepFailures.slice(0, 10)) {
+        p(`| ${f.iteration} | ${cell(f.description)} | ${cell(f.error)} |`);
+      }
+      p();
+    }
+
+    if (r.console.length > 0) {
+      p('**Console errors during the run**');
+      p();
+      p('| Count | Type | Message |');
+      p('|---:|---|---|');
+      for (const entry of r.console) {
+        const text = entry.text.length > 160 ? entry.text.slice(0, 159) + '…' : entry.text;
+        p(`| ${entry.count} | ${entry.type} | ${cell(text)} |`);
+      }
+      p();
+      p(
+        '_An error appearing exactly once per iteration is worth attention: it means ' +
+          'something fails on every pass of the journey, which often points at state ' +
+          'left behind by the previous pass._',
+      );
+      p();
+    } else {
+      p('No console errors were recorded.');
+      p();
+    }
+  } else {
+    const placeholder = sectionPlaceholder(inv.runtimeFindings, 'Runtime findings');
+    if (placeholder) p(placeholder);
+  }
+
+  if (inv.memoryEvidence.gathered) {
+    renderMemoryMarkdown(p, inv.memoryEvidence.data);
+  } else {
+    const placeholder = sectionPlaceholder(inv.memoryEvidence, 'Memory evidence');
+    if (placeholder) p(placeholder);
+  }
+
+  const heapPlaceholder = sectionPlaceholder(inv.heapEvidence, 'Heap and retention evidence');
+  if (heapPlaceholder) p(heapPlaceholder);
 
   p('## 5. Root cause');
   p();
@@ -211,6 +290,62 @@ export function renderMarkdown(inv: Investigation): string {
   p();
 
   return out.join('\n');
+}
+
+function mb(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function signedMb(bytes: number): string {
+  const value = bytes / (1024 * 1024);
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)} MB`;
+}
+
+function renderMemoryMarkdown(p: (line?: string) => void, m: MemoryEvidence): void {
+  p('### Memory evidence');
+  p();
+  p(`**Verdict: ${m.verdict}**`);
+  p();
+  p('| | |');
+  p('|---|---|');
+  p(`| Growth per iteration | **${signedMb(m.bytesPerIteration)}** |`);
+  p(`| Total change | ${signedMb(m.totalDeltaBytes)} |`);
+  p(`| Line fit (R²) | ${m.rSquared.toFixed(3)} |`);
+  p(`| Attached DOM per iteration | ${m.attachedDomPerIteration.toFixed(1)} |`);
+  p(`| Listeners per iteration | ${m.listenersPerIteration.toFixed(2)} |`);
+  p(`| Samples analysed | ${m.samplesAnalysed} |`);
+  p(`| Warm-up discarded | ${m.warmupDiscarded} |`);
+  p();
+  p(m.interpretation);
+  p();
+
+  if (m.caveats.length > 0) {
+    p('**Caveats**');
+    p();
+    for (const caveat of m.caveats) p(`- ${caveat}`);
+    p();
+  }
+
+  const ungced = m.measurements.filter((x) => x.afterForcedGc === false).length;
+  p(
+    ungced === 0
+      ? '_Every reading was taken after a forced garbage collection, so these are ' +
+          'bytes that survived collection rather than uncollected garbage._'
+      : `_**${ungced} reading(s) were taken without a forced collection** and may include ` +
+          'uncollected garbage. Treat the trend as indicative only._',
+  );
+  p();
+
+  p('**Readings**');
+  p();
+  p('| Iteration | Heap | Attached DOM | Listeners |');
+  p('|---:|---:|---:|---:|');
+  for (const x of m.measurements) {
+    p(
+      `| ${x.iteration} | ${mb(x.jsHeapUsedBytes ?? 0)} | ${x.attachedDomNodes ?? '-'} | ${x.listeners ?? '-'} |`,
+    );
+  }
+  p();
 }
 
 function renderFindingMarkdown(p: (line?: string) => void, f: Finding, rank: number): void {
