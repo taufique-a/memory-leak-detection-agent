@@ -30,6 +30,7 @@ function series(
     jsHeapUsedBytes,
     jsHeapTotalBytes: jsHeapUsedBytes * 2,
     domNodes: 100,
+    attachedDomNodes: 100,
     jsEventListeners: 10,
     documents: 1,
     frames: 1,
@@ -159,12 +160,44 @@ describe('analyseTrend', () => {
     expect(trend.caveats.join(' ')).toContain('without a forced garbage collection');
   });
 
-  it('flags growing DOM nodes as evidence of retained DOM', () => {
+  it('flags growing ATTACHED DOM as accumulating visible elements', () => {
     const samples = series([10, 11, 12, 13, 14, 15].map((n) => n * MB)).map((s, i) => ({
       ...s,
-      domNodes: 100 + i * 50,
+      attachedDomNodes: 100 + i * 50,
     }));
-    expect(analyseTrend(samples).caveats.join(' ')).toContain('detached');
+    expect(analyseTrend(samples).caveats.join(' ')).toContain('accumulating visible DOM');
+  });
+
+  it("IGNORES Chrome's Nodes counter, which was measured not to discriminate", () => {
+    // Running the leaky and clean fixtures produced byte-identical `Nodes`
+    // series (46, 176, 309, ...) despite opposite behaviour, because Blink's
+    // Oilpan heap is not collected by the V8 GC we can force. Drawing a
+    // conclusion from it would mean reporting retained DOM on correct code.
+    const samples = series([10, 10, 10, 10, 10, 10].map((n) => n * MB)).map((s, i) => ({
+      ...s,
+      domNodes: 100 + i * 500, // wildly growing
+      attachedDomNodes: 100, // but nothing actually attached
+    }));
+    const trend = analyseTrend(samples);
+    expect(trend.nodesPerIteration).toBe(0);
+    expect(trend.caveats.join(' ')).not.toContain('accumulating visible DOM');
+  });
+
+  it('says a heap snapshot is needed when memory grows but attached DOM does not', () => {
+    // The honest position: we know memory is retained, we do not know
+    // whether it is data or detached DOM, and we say which phase settles it.
+    const trend = analyseTrend(series([10, 11, 12, 13, 14, 15, 16].map((n) => n * MB)));
+    expect(trend.verdict).toBe('GROWING');
+    expect(trend.caveats.join(' ')).toContain('heap snapshot');
+  });
+
+  it('drops unmeasurable attached-node readings instead of treating them as zero', () => {
+    const samples = series([10, 10, 10, 10, 10, 10].map((n) => n * MB)).map((s, i) => ({
+      ...s,
+      attachedDomNodes: i === 2 ? -1 : 200,
+    }));
+    // A -1 read as "the DOM emptied" would produce a huge fake slope.
+    expect(Math.abs(analyseTrend(samples).nodesPerIteration)).toBeLessThan(1);
   });
 
   it('flags growing listener counts', () => {
@@ -290,10 +323,27 @@ describe('browser integration', () => {
       expect(leaky?.trend.verdict).toBe('GROWING');
       expect(clean?.trend.verdict).toBe('STABLE');
 
-      // The leak must be visible in corroborating signals too, not just heap.
-      expect(leaky?.trend.nodesPerIteration ?? 0).toBeGreaterThan(10);
+      /**
+       * Listeners are the corroborating signal here.
+       *
+       * An earlier version of this test asserted nodesPerIteration > 10 and
+       * passed - but it was reading Chrome's `Nodes` counter, which was
+       * later measured to produce identical series for leaking and clean
+       * code. The assertion was giving false comfort. nodesPerIteration now
+       * measures ATTACHED elements, and correctly reports ~0 for this leak,
+       * because what it retains is DETACHED DOM.
+       */
       expect(leaky?.trend.listenersPerIteration ?? 0).toBeGreaterThan(0.5);
-      expect(clean?.trend.nodesPerIteration ?? 99).toBeLessThan(5);
+      expect(clean?.trend.listenersPerIteration ?? 99).toBeLessThan(0.5);
+
+      // Attached DOM must NOT grow in either run - the widgets are removed
+      // from the document in both modes.
+      expect(Math.abs(leaky?.trend.nodesPerIteration ?? 99)).toBeLessThan(5);
+      expect(Math.abs(clean?.trend.nodesPerIteration ?? 99)).toBeLessThan(5);
+
+      // And the tool must say plainly that a heap snapshot is what would
+      // distinguish retained data from retained detached DOM.
+      expect(leaky?.trend.caveats.join(' ')).toContain('heap snapshot');
 
       expect(result.passed).toBe(true);
     },

@@ -13,6 +13,7 @@ import { runDoctor } from './commands/doctor';
 import { runReport } from './commands/report';
 import { runRisk } from './commands/risk';
 import { runScan } from './commands/scan';
+import { runScenarioCommand } from './commands/scenario';
 import { runSelfTestCommand } from './commands/selftest';
 import { buildInfo, versionString } from './version';
 import { INVESTIGATION_STATUSES } from './types';
@@ -39,7 +40,8 @@ COMMANDS
   ${'risk <project>'.padEnd(28)} Rank and explain static memory risks
   ${'report <project>'.padEnd(28)} Generate a shareable investigation report
   ${'doctor'.padEnd(28)} Check the environment is ready for runtime work
-  ${'selftest'.padEnd(28)} Prove memory measurement works, on a known leak`);
+  ${'selftest'.padEnd(28)} Prove memory measurement works, on a known leak
+  ${'scenario <sub>'.padEnd(28)} init | validate | run | demo  (repeatable journeys)`);
 
   for (const cmd of PLANNED_COMMANDS) {
     const status = '(not implemented yet - ' + cmd.phase + ')';
@@ -73,6 +75,12 @@ REPORT OPTIONS
   --filter <frag>  Only report on files whose path contains <frag>
   --limit <n>      How many findings to include (default 50, 0 = all)
   --types          Resolve observable sources with the type checker
+
+SCENARIO
+  scenario init [file]        Write a starter scenario, correctly shaped
+  scenario validate <file>    Check it, and warn about misleading setups
+  scenario run <file>         Run it against your application
+  scenario demo [--clean]     Run the built-in leaky SPA, no app needed
 
 SELFTEST OPTIONS
   --iterations <n> Mount/unmount cycles per fixture (default 12, min 5)
@@ -136,6 +144,10 @@ export function run(argv: string[]): number | Promise<number> {
 
   if (first === 'selftest') {
     return runSelfTestCommand(args.slice(1));
+  }
+
+  if (first === 'scenario') {
+    return runScenarioCommand(args.slice(1));
   }
 
   // Recognised command, but we have not built it yet. Say so honestly

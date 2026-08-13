@@ -40,8 +40,30 @@ export interface MemorySample {
   /** Total heap V8 has reserved. Grows in steps; less informative. */
   jsHeapTotalBytes: number;
 
-  /** DOM nodes currently attached OR retained by JS. */
+  /**
+   * Chrome's `Nodes` counter.
+   *
+   * MEASURED AND FOUND NOT TO DISCRIMINATE. Running the leaky and clean SPA
+   * fixtures produced byte-identical series (46, 176, 309, 442, ...) even
+   * though one retains every widget and the other releases them. DOM nodes
+   * live in Blink's Oilpan heap, which HeapProfiler.collectGarbage does not
+   * collect, so this counter lags behind reality by an unknown amount.
+   *
+   * Recorded for completeness, but NEVER used as evidence of a leak. Use
+   * `attachedDomNodes` for a signal that means something, and heap
+   * snapshots (Phase 10) for genuine detached-DOM analysis.
+   */
   domNodes: number;
+
+  /**
+   * Elements actually in the document, from document.getElementsByTagName('*').
+   *
+   * Unambiguous: if this grows across iterations the page is accumulating
+   * visible DOM, which is a real defect regardless of GC timing. It cannot
+   * see detached-but-retained nodes - that needs a heap snapshot - but what
+   * it does say, it says truthfully.
+   */
+  attachedDomNodes: number;
   /** Registered event listeners. */
   jsEventListeners: number;
   /** Document objects. A rising count means whole pages are retained. */
@@ -119,11 +141,35 @@ export async function takeMemorySample(
     jsHeapUsedBytes: byName.get('JSHeapUsedSize') ?? 0,
     jsHeapTotalBytes: byName.get('JSHeapTotalSize') ?? 0,
     domNodes: byName.get('Nodes') ?? 0,
+    attachedDomNodes: await countAttachedNodes(cdp),
     jsEventListeners: byName.get('JSEventListeners') ?? 0,
     documents: byName.get('Documents') ?? 0,
     frames: byName.get('Frames') ?? 0,
     afterForcedGc,
   };
+}
+
+/**
+ * Count elements actually in the document.
+ *
+ * Done over CDP rather than through the Playwright page so that
+ * takeMemorySample keeps a single dependency and can be called from
+ * anywhere holding a session.
+ */
+async function countAttachedNodes(cdp: CDPSession): Promise<number> {
+  try {
+    const result = (await cdp.send('Runtime.evaluate', {
+      expression: 'document.getElementsByTagName("*").length',
+      returnByValue: true,
+    })) as { result?: { value?: unknown } };
+    const value = result.result?.value;
+    return typeof value === 'number' ? value : 0;
+  } catch {
+    // A navigation mid-evaluation can reject this. Returning 0 would look
+    // like the DOM emptied, so return -1 to mark it unmeasured; the trend
+    // code filters those out.
+    return -1;
+  }
 }
 
 function delay(ms: number): Promise<void> {

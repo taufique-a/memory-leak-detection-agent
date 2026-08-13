@@ -153,7 +153,7 @@ function printRun(run: SelfTestRun): void {
   field('Growth per cycle', formatDelta(run.trend.bytesPerIteration));
   field('Total change', formatDelta(run.trend.totalDeltaBytes));
   field('Line fit (R2)', run.trend.rSquared.toFixed(3));
-  field('DOM nodes / cycle', run.trend.nodesPerIteration.toFixed(1));
+  field('Attached DOM / cycle', run.trend.nodesPerIteration.toFixed(1));
   field('Listeners / cycle', run.trend.listenersPerIteration.toFixed(2));
 
   console.log('');

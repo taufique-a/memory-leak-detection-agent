@@ -46,7 +46,15 @@ export interface TrendAnalysis {
   /** How well a straight line fits, 0..1. Low means erratic. */
   rSquared: number;
 
-  /** DOM nodes gained per iteration. */
+  /**
+   * Attached DOM elements gained per iteration.
+   *
+   * This is the DOM signal we act on. Chrome's raw `Nodes` counter is
+   * recorded on each sample but deliberately NOT used here - measured
+   * against the fixtures it produced identical series for leaking and
+   * non-leaking code, because Blink's Oilpan heap is not collected by the
+   * V8 GC we can force.
+   */
   nodesPerIteration: number;
   /** Event listeners gained per iteration. */
   listenersPerIteration: number;
@@ -132,8 +140,22 @@ export function analyseTrend(
 
   /* ---- fit ---- */
   const heap = fitLine(analysed.map((s, i) => [i, s.jsHeapUsedBytes]));
-  const nodes = fitLine(analysed.map((s, i) => [i, s.domNodes]));
   const listeners = fitLine(analysed.map((s, i) => [i, s.jsEventListeners]));
+
+  /**
+   * Fit ATTACHED nodes, not Chrome's `Nodes` counter.
+   *
+   * Samples where the count could not be read are marked -1 and dropped
+   * rather than treated as an empty DOM. Re-indexing after filtering keeps
+   * the slope in units of "per surviving sample", which is close enough
+   * when only the occasional reading is missing.
+   */
+  const attachedPoints = analysed
+    .map((s) => s.attachedDomNodes)
+    .filter((n) => n >= 0)
+    .map((n, i): [number, number] => [i, n]);
+  const nodes =
+    attachedPoints.length >= 2 ? fitLine(attachedPoints) : { slope: 0, intercept: 0, rSquared: 0 };
 
   const first = analysed[0];
   const last = analysed[analysed.length - 1];
@@ -175,8 +197,22 @@ export function analyseTrend(
   /* ---- corroborating signals ---- */
   if (nodes.slope >= 10) {
     caveats.push(
-      `DOM nodes also grew by ${nodes.slope.toFixed(0)} per iteration, which points ` +
-        'at retained (detached) DOM rather than plain data growth.',
+      `Attached DOM elements grew by ${nodes.slope.toFixed(0)} per iteration. The page ` +
+        'is accumulating visible DOM, not just data - elements are being added and ' +
+        'never removed.',
+    );
+  }
+
+  /**
+   * Detached DOM deserves a mention only as a limitation, never as a
+   * finding. Chrome's Nodes counter cannot tell "retained forever" from
+   * "not collected yet", so any claim built on it would be a guess.
+   */
+  if (verdict === 'GROWING' && nodes.slope < 10) {
+    caveats.push(
+      'Attached DOM is not growing, so the retained memory is data or detached DOM. ' +
+        'Distinguishing those needs a heap snapshot (Phase 10) - the browser counter ' +
+        'for total nodes cannot separate "retained" from "not yet collected".',
     );
   }
   if (listeners.slope >= 1) {
