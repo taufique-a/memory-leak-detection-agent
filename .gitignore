@@ -22,6 +22,12 @@ traces/
 playwright-report/
 test-results/
 
+# Saved browser sessions. These are LIVE CREDENTIALS - a storage state grants
+# access to the application for as long as the session lasts. `scenario login`
+# refuses to write anywhere that does not match these patterns.
+*.auth.json
+.auth/
+
 # Logs
 *.log
 npm-debug.log*

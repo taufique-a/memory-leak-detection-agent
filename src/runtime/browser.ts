@@ -29,6 +29,15 @@ export interface BrowserOptions {
   viewport?: { width: number; height: number };
   /** Slow every action down, for watching a scenario run. */
   slowMoMs?: number;
+  /**
+   * Path to a Playwright storage-state file: cookies and localStorage saved
+   * from an earlier manual sign-in.
+   *
+   * This is how the agent reaches an authenticated page without ever seeing
+   * a password. The file holds session tokens, so it is treated like a
+   * credential - gitignored, and never written into a report.
+   */
+  storageStateFile?: string;
 }
 
 /** A live browser with a CDP session attached. */
@@ -76,7 +85,11 @@ export async function launchBrowser(options: BrowserOptions = {}): Promise<Brows
   const context = await browser.newContext({
     viewport: options.viewport ?? { width: 1440, height: 900 },
     // A fresh context each run means no cached state carried between
-    // investigations, so a "before" and "after" comparison is fair.
+    // investigations, so a "before" and "after" comparison is fair. The one
+    // thing we deliberately carry over is a saved sign-in.
+    ...(options.storageStateFile !== undefined
+      ? { storageState: options.storageStateFile }
+      : {}),
   });
   context.setDefaultTimeout(options.timeoutMs ?? 30_000);
 

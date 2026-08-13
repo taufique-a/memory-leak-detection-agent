@@ -72,11 +72,28 @@ export async function runScenario(
   const report = options.onProgress ?? ((): void => {});
   const timeoutMs = scenario.timeoutMs ?? 30_000;
 
+  /**
+   * A saved sign-in must be applied when the browser CONTEXT is created -
+   * cookies cannot be injected afterwards. So it is resolved here, before
+   * launch, rather than in the auth step below.
+   */
+  const storageStateFile =
+    scenario.auth?.type === 'storageState' ? path.resolve(scenario.auth.file) : undefined;
+
+  if (storageStateFile !== undefined && !fs.existsSync(storageStateFile)) {
+    throw new ScenarioError(
+      `auth.file "${storageStateFile}" does not exist. Create it with:\n` +
+        `  memory-agent scenario login --base-url ${scenario.baseUrl} --out ${scenario.auth?.type === 'storageState' ? scenario.auth.file : '.auth/app.auth.json'}\n` +
+        'That opens a browser for you to sign in manually. The agent never sees your password.',
+    );
+  }
+
   const session = await launchBrowser({
     headed: options.headed === true,
     timeoutMs,
     ...(scenario.viewport !== undefined ? { viewport: scenario.viewport } : {}),
     ...(options.slowMoMs !== undefined ? { slowMoMs: options.slowMoMs } : {}),
+    ...(storageStateFile !== undefined ? { storageStateFile } : {}),
   });
 
   const samples: MemorySample[] = [];
@@ -111,9 +128,13 @@ export async function runScenario(
     await enableMetrics(session.cdp);
 
     /* ---- auth ---- */
-    if (scenario.auth !== undefined && scenario.auth.type !== 'none') {
+    // storageState was already applied at context creation; only form login
+    // needs work here.
+    if (scenario.auth !== undefined && scenario.auth.type === 'form') {
       report('authenticating');
       await applyAuth(session, scenario, scenario.auth, timeoutMs);
+    } else if (storageStateFile !== undefined) {
+      report(`using saved session from ${path.basename(storageStateFile)}`);
     }
 
     /* ---- setup ---- */
@@ -367,19 +388,8 @@ async function applyAuth(
   auth: AuthConfig,
   timeoutMs: number,
 ): Promise<void> {
-  if (auth.type === 'storageState') {
-    // Handled at context creation time by the caller in a future phase;
-    // for now we fail loudly rather than silently running unauthenticated.
-    if (!fs.existsSync(auth.file)) {
-      throw new ScenarioError(
-        `auth.file "${auth.file}" does not exist. Create it with ` +
-          '`memory-agent scenario login`, which opens a browser for you to sign in ' +
-          'manually and saves the session - no credentials are stored by the agent.',
-      );
-    }
-    return;
-  }
-
+  // storageState is applied when the browser context is created, because
+  // cookies cannot be injected into a live context. See runScenario.
   if (auth.type !== 'form') return;
 
   const username = process.env[auth.usernameEnv];

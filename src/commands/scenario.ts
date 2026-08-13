@@ -15,6 +15,7 @@ import * as path from 'node:path';
 
 import { startFixtureServer } from '../runtime/fixtures/server';
 import { formatBytes, formatDelta } from '../runtime/metrics';
+import { captureLogin } from '../scenario/login';
 import { runScenario, ScenarioError, type ScenarioRun } from '../scenario/runner';
 import type { Scenario } from '../scenario/types';
 import { validateScenario } from '../scenario/validate';
@@ -92,6 +93,8 @@ export async function runScenarioCommand(args: string[]): Promise<number> {
       return doRun(args.slice(1));
     case 'demo':
       return doDemo(args.slice(1));
+    case 'login':
+      return doLogin(args.slice(1));
     default:
       console.error(`Unknown scenario subcommand: "${sub}"`);
       printUsage();
@@ -103,9 +106,16 @@ function printUsage(): void {
   console.log(`
 USAGE
   memory-agent scenario init [file] [--base-url <url>]
+  memory-agent scenario login --base-url <url> --out <file.auth.json>
+                              [--path <p>] [--success <selector>]
   memory-agent scenario validate <file>
   memory-agent scenario run <file> [--headed] [--json <out>] [--slow-mo <ms>]
   memory-agent scenario demo [--clean] [--iterations <n>] [--headed]
+
+  login opens a real Chrome window for you to sign in by hand, then saves the
+  session. The agent never sees your password, and SSO/MFA work normally.
+  The saved file IS a credential - it must end in .auth.json or live in a
+  .auth/ directory, both of which are gitignored.
 
   demo runs the built-in leaky single-page fixture, so the engine can be
   exercised without a dev server. --clean runs the non-leaking variant.
@@ -164,6 +174,111 @@ function doInit(args: string[]): number {
   );
   console.log('');
   return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* login                                                               */
+/* ------------------------------------------------------------------ */
+
+async function doLogin(args: string[]): Promise<number> {
+  let baseUrl: string | undefined;
+  let out: string | undefined;
+  let startPath: string | undefined;
+  let successSelector: string | undefined;
+
+  const value = (arg: string, prefix: string, next: string | undefined): string | undefined =>
+    arg.startsWith(prefix) ? arg.slice(prefix.length) : next;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === undefined) continue;
+
+    if (arg === '--base-url' || arg.startsWith('--base-url=')) {
+      const v = value(arg, '--base-url=', args[i + 1]);
+      if (v === undefined) {
+        console.error('--base-url requires a URL');
+        return 1;
+      }
+      baseUrl = v;
+      if (!arg.startsWith('--base-url=')) i++;
+    } else if (arg === '--out' || arg.startsWith('--out=')) {
+      const v = value(arg, '--out=', args[i + 1]);
+      if (v === undefined) {
+        console.error('--out requires a file path');
+        return 1;
+      }
+      out = v;
+      if (!arg.startsWith('--out=')) i++;
+    } else if (arg === '--path' || arg.startsWith('--path=')) {
+      const v = value(arg, '--path=', args[i + 1]);
+      if (v === undefined) {
+        console.error('--path requires a path');
+        return 1;
+      }
+      startPath = v;
+      if (!arg.startsWith('--path=')) i++;
+    } else if (arg === '--success' || arg.startsWith('--success=')) {
+      const v = value(arg, '--success=', args[i + 1]);
+      if (v === undefined) {
+        console.error('--success requires a selector');
+        return 1;
+      }
+      successSelector = v;
+      if (!arg.startsWith('--success=')) i++;
+    } else {
+      console.error(`Unknown option: ${arg}`);
+      return 1;
+    }
+  }
+
+  if (baseUrl === undefined || out === undefined) {
+    console.error('login requires --base-url and --out');
+    console.error(
+      '  e.g. memory-agent scenario login --base-url http://localhost:7400 --out .auth/iosense.auth.json',
+    );
+    return 1;
+  }
+
+  try {
+    const result = await captureLogin({
+      baseUrl,
+      outputFile: out,
+      ...(startPath !== undefined ? { startPath } : {}),
+      ...(successSelector !== undefined ? { successSelector } : {}),
+    });
+
+    heading('SESSION SAVED');
+    field('File', result.savedTo);
+    field('Ended on', result.finalUrl);
+    field('Cookies', num(result.cookieCount));
+    field('Origins with storage', num(result.originCount));
+
+    if (result.cookieCount === 0 && result.originCount === 0) {
+      console.log('');
+      warn(
+        'The saved session is empty - no cookies and no localStorage. Either the sign-in ' +
+          'did not complete, or the app stores its session somewhere we did not capture. ' +
+          'Run the scenario headed to check it actually reaches an authenticated page.',
+      );
+    }
+
+    console.log('');
+    warn(
+      'This file is a live credential. It is gitignored, but do not email it, paste it ' +
+        'into a ticket, or copy it to a shared drive.',
+    );
+    console.log('');
+    info(colour.dim('Reference it from a scenario like this:'));
+    console.log(
+      colour.dim(`    "auth": { "type": "storageState", "file": "${out.replace(/\\/g, '/')}" }`),
+    );
+    console.log('');
+    return 0;
+  } catch (err) {
+    console.error('');
+    console.error(colour.red('Login capture failed: ') + (err as Error).message);
+    return 1;
+  }
 }
 
 /* ------------------------------------------------------------------ */

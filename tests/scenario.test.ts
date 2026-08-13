@@ -237,6 +237,38 @@ describe('SPA fixture', () => {
   });
 });
 
+describe('saved-session safety', () => {
+  // captureLogin opens a browser, so we test the guard through the same
+  // code path by calling it with a bad path - it must refuse BEFORE
+  // launching anything.
+  it('refuses to write a session token to a non-gitignored path', async () => {
+    const { captureLogin } = await import('../src/scenario/login');
+    await expect(
+      captureLogin({ baseUrl: 'http://localhost:1', outputFile: 'session.json' }),
+    ).rejects.toThrow(/Refusing to write a session token/);
+  });
+
+  it('rejects a non-json filename', async () => {
+    const { captureLogin } = await import('../src/scenario/login');
+    await expect(
+      captureLogin({ baseUrl: 'http://localhost:1', outputFile: '.auth/creds.txt' }),
+    ).rejects.toThrow(/should end in \.json/);
+  });
+
+  it.each(['.auth/iosense.auth.json', 'anywhere/thing.auth.json', '.auth/x.json'])(
+    'accepts the gitignored pattern %s',
+    async (file) => {
+      const { captureLogin } = await import('../src/scenario/login');
+      // Reaching a connection error means the path guard passed - which is
+      // all this test checks. localhost:1 is closed.
+      await expect(
+        captureLogin({ baseUrl: 'http://localhost:1', outputFile: file, timeoutMs: 3000 }),
+      ).rejects.not.toThrow(/Refusing to write|should end in/);
+    },
+    60_000,
+  );
+});
+
 describe('scenario file loading', () => {
   it('REGRESSION: tolerates a UTF-8 BOM', async () => {
     // PowerShell's `Out-File -Encoding utf8`, Notepad and several editors
