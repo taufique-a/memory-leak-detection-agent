@@ -8,13 +8,13 @@
  * visible from day one, and so we never have to guess what to build next.
  */
 
+import { runAnalyze } from './commands/analyze';
 import { runScan } from './commands/scan';
 import { buildInfo, versionString } from './version';
 import { INVESTIGATION_STATUSES } from './types';
 
 /** Commands the agent will eventually support. */
 const PLANNED_COMMANDS: Array<{ name: string; summary: string; phase: string }> = [
-  { name: 'analyze', summary: 'Static memory-risk analysis (AST)', phase: 'Phase 4' },
   { name: 'investigate', summary: 'Run the browser scenario and measure memory', phase: 'Phase 9' },
   { name: 'verify', summary: 'Compare before/after and confirm a fix', phase: 'Phase 16' },
   { name: 'fix', summary: 'Propose a fix, show a diff, ask approval', phase: 'Phase 13' },
@@ -31,7 +31,8 @@ USAGE
   memory-agent <command> [options]
 
 COMMANDS
-  ${'scan <project>'.padEnd(28)} Discover the Angular project structure`);
+  ${'scan <project>'.padEnd(28)} Discover the Angular project structure
+  ${'analyze <project>'.padEnd(28)} Find resource acquire/release operations (AST)`);
 
   for (const cmd of PLANNED_COMMANDS) {
     const status = '(not implemented yet - ' + cmd.phase + ')';
@@ -43,6 +44,12 @@ SCAN OPTIONS
   --json <file>    Also write the full result as JSON
   --no-tests       Exclude *.spec.ts and mocks
   -q, --quiet      Suppress the human-readable report
+
+ANALYZE OPTIONS
+  --json <file>    Also write the full result as JSON
+  --filter <frag>  Only analyze files whose path contains <frag>
+  --limit <n>      How many findings to print (default 20)
+  --include-tests  Also analyze *.spec.ts and mocks
 
 OPTIONS
   -v, --version    Print version information
@@ -76,6 +83,10 @@ export function run(argv: string[]): number {
 
   if (first === 'scan') {
     return runScan(args.slice(1));
+  }
+
+  if (first === 'analyze') {
+    return runAnalyze(args.slice(1));
   }
 
   // Recognised command, but we have not built it yet. Say so honestly
