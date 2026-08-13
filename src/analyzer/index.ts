@@ -19,7 +19,9 @@ import type {
   FileAnalysis,
   ResourceOperation,
 } from '../types/analysis';
+import type { ClassLifecycle } from '../types/lifecycle';
 import { AGENT_VERSION } from '../version';
+import { analyzeLifecycles } from './lifecycle';
 import { buildClassAnalyses } from './pairing';
 import { findResourceOperations, type VisitOptions } from './visitor';
 
@@ -117,9 +119,78 @@ export function analyzeSourceFileWith(
   options: VisitOptions,
 ): FileAnalysis {
   const operations = findResourceOperations(sourceFile, relativePath, options);
+
+  /**
+   * ORDER MATTERS HERE.
+   *
+   * Lifecycle analysis must run BEFORE pairing, because it can invalidate a
+   * mitigation. A subscription piped through `takeUntil(this.destroy$)`
+   * looks handled - but if ngOnDestroy never fires destroy$, it is not.
+   * Pairing decides what is actionable, so it has to see the corrected
+   * mitigation state, not the optimistic one.
+   */
+  const operationsByClass = groupByClass(operations);
+  const lifecycles = analyzeLifecycles(sourceFile, relativePath, operationsByClass);
+  invalidateBrokenMitigations(lifecycles, operationsByClass);
+
   const facts = collectClassFacts(sourceFile);
   const { classes, loose } = buildClassAnalyses(operations, facts, relativePath);
-  return { file: relativePath, classes, looseOperations: loose };
+
+  // Attach lifecycle findings to the class they belong to.
+  const lifecycleByClass = new Map(lifecycles.map((l) => [l.className, l]));
+  for (const cls of classes) {
+    const lifecycle = lifecycleByClass.get(cls.className);
+    if (lifecycle) cls.lifecycle = lifecycle;
+  }
+
+  return {
+    file: relativePath,
+    classes,
+    looseOperations: loose,
+    // Classes with lifecycle issues but no resource operations still matter
+    // (an empty ngOnDestroy, a root service that cleans up pointlessly).
+    lifecycles: lifecycles.filter((l) => l.issues.length > 0),
+  };
+}
+
+function groupByClass(operations: ResourceOperation[]): Map<string, ResourceOperation[]> {
+  const map = new Map<string, ResourceOperation[]>();
+  for (const op of operations) {
+    if (op.className === undefined) continue;
+    const list = map.get(op.className) ?? [];
+    list.push(op);
+    map.set(op.className, list);
+  }
+  return map;
+}
+
+/**
+ * Clear mitigations that Phase 5 proved ineffective.
+ *
+ * Mutates the operations in place - they are the same objects pairing will
+ * read a moment later. The reason is preserved on `mitigationBroken` so the
+ * report can explain why code that reads as correct cleanup is not.
+ */
+function invalidateBrokenMitigations(
+  lifecycles: ClassLifecycle[],
+  operationsByClass: ReadonlyMap<string, ResourceOperation[]>,
+): void {
+  for (const lifecycle of lifecycles) {
+    const deadSignals = new Set(
+      lifecycle.destroySignals.filter((s) => !s.triggeredInOnDestroy).map((s) => s.name),
+    );
+    if (deadSignals.size === 0) continue;
+
+    for (const op of operationsByClass.get(lifecycle.className) ?? []) {
+      if (op.mitigationSignal === undefined) continue;
+      if (!deadSignals.has(op.mitigationSignal)) continue;
+
+      op.mitigationBroken =
+        `takeUntil(${op.mitigationSignal}) never fires: ${op.mitigationSignal} is never ` +
+        `completed in ngOnDestroy, so this subscription is not actually torn down.`;
+      delete op.mitigatedBy;
+    }
+  }
 }
 
 /** Run the analyzer across a project. Never modifies the target. */

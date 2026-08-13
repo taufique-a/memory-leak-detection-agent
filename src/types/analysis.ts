@@ -20,6 +20,7 @@
  */
 
 import type { LifecycleHook } from './project';
+import type { ClassLifecycle } from './lifecycle';
 
 /* ------------------------------------------------------------------ */
 /* What kind of resource?                                              */
@@ -222,6 +223,25 @@ export interface ResourceOperation {
   mitigatedBy?: string;
 
   /**
+   * For takeUntil: the teardown signal it waits on, e.g. "this.destroy$".
+   *
+   * Recorded so Phase 5 can check whether that signal is ever fired. A
+   * takeUntil pointing at a Subject nobody completes is decoration.
+   */
+  mitigationSignal?: string;
+
+  /**
+   * Set when a mitigation was found but PROVEN INEFFECTIVE.
+   *
+   * The classic case: `takeUntil(this.destroy$)` where ngOnDestroy never
+   * calls `destroy$.next()`. The code reads as correct cleanup and does
+   * nothing at all. When this is set, `mitigatedBy` has been cleared and
+   * the acquire counts as actionable again - but we keep the reason so the
+   * report can explain why something that looks handled is not.
+   */
+  mitigationBroken?: string;
+
+  /**
    * addEventListener only: true when the handler is an inline arrow or
    * function expression.
    *
@@ -312,6 +332,8 @@ export interface ClassAnalysis {
 
   operations: ResourceOperation[];
   pairings: ResourcePairing[];
+  /** Phase 5 lifecycle correctness findings for this class. */
+  lifecycle?: ClassLifecycle;
 }
 
 /** Everything we learned about one file. */
@@ -320,6 +342,12 @@ export interface FileAnalysis {
   classes: ClassAnalysis[];
   /** Operations found outside any class (module scope, plain functions). */
   looseOperations: ResourceOperation[];
+  /**
+   * Lifecycle issues for classes in this file that have issues, including
+   * classes with no resource operations at all - an empty ngOnDestroy is
+   * worth reporting even when we found nothing else.
+   */
+  lifecycles?: ClassLifecycle[];
 }
 
 /** Aggregate counts across an analysis run. */

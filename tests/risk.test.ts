@@ -99,9 +99,16 @@ describe('invariants', () => {
     expect(score(code)?.id).toBe(score(code)?.id);
   });
 
-  it('returns nothing when every acquire is already handled', () => {
+  it('returns nothing when every acquire is genuinely handled', () => {
+    // NOTE: the takeUntil fixture must COMPLETE its signal. An earlier
+    // version of this test omitted ngOnDestroy and still expected
+    // undefined - which encoded the very false negative Phase 5 fixes.
     expect(
-      score(`class C { ngOnInit() { this.a$.pipe(takeUntil(this.d$)).subscribe(); } }`),
+      score(`
+        class C {
+          ngOnInit() { this.a$.pipe(takeUntil(this.d$)).subscribe(); }
+          ngOnDestroy() { this.d$.next(); this.d$.complete(); }
+        }`),
     ).toBeUndefined();
     expect(
       score(`
@@ -110,6 +117,16 @@ describe('invariants', () => {
           ngOnDestroy() { clearInterval(this.t); }
         }`),
     ).toBeUndefined();
+  });
+
+  it('DOES produce a finding when takeUntil waits on a signal nobody fires', () => {
+    const finding = score(
+      `class C { ngOnInit() { this.a$.pipe(takeUntil(this.d$)).subscribe(); } }`,
+      routed(),
+    );
+    expect(finding).toBeDefined();
+    expect(finding?.factors.some((f) => f.key === 'broken-takeuntil')).toBe(true);
+    expect(finding?.confidence).toBe('LIKELY');
   });
 });
 
@@ -269,9 +286,12 @@ describe('finding content', () => {
            this.a$.pipe(takeUntil(this.d$)).subscribe();
            this.b$.subscribe();
          }
+         ngOnDestroy() { this.d$.next(); this.d$.complete(); }
        }`,
       routed(),
     );
+    // Only b$ needs work: a$ terminates on a signal that IS fired.
     expect(finding?.operations).toHaveLength(1);
+    expect(finding?.operations[0]?.snippet).toContain('b$');
   });
 });

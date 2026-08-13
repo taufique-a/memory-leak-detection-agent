@@ -108,7 +108,16 @@ const SELF_TERMINATING_OPERATORS = new Set([
  * methods, because that needs dataflow analysis. When we cannot see a
  * mitigation we report none, and the pairing stage stays cautious.
  */
-export function findSubscribeMitigation(call: ts.CallExpression): string | undefined {
+export interface SubscribeMitigation {
+  /** The operator name, e.g. "takeUntil". */
+  operator: string;
+  /** For takeUntil, the signal expression, e.g. "this.destroy$". */
+  signal?: string;
+}
+
+export function findSubscribeMitigation(
+  call: ts.CallExpression,
+): SubscribeMitigation | undefined {
   const callee = call.expression;
   if (!ts.isPropertyAccessExpression(callee)) return undefined;
 
@@ -123,7 +132,18 @@ export function findSubscribeMitigation(call: ts.CallExpression): string | undef
     if (receiverCallee.name.text === 'pipe') {
       for (const arg of receiver.arguments) {
         const name = operatorNameOf(arg);
-        if (name && SELF_TERMINATING_OPERATORS.has(name)) return name;
+        if (name === undefined || !SELF_TERMINATING_OPERATORS.has(name)) continue;
+
+        // Capture takeUntil's argument so Phase 5 can verify the signal is
+        // actually fired. take(1)/first() need no signal - they are
+        // self-limiting by construction.
+        let signal: string | undefined;
+        if (name === 'takeUntil' && ts.isCallExpression(arg)) {
+          const signalArg = arg.arguments[0];
+          if (signalArg) signal = renderReceiver(signalArg);
+        }
+
+        return { operator: name, ...(signal !== undefined ? { signal } : {}) };
       }
     }
 
@@ -433,7 +453,10 @@ function inspectCall(
       // subscribing to? Both questions decide whether this is a real risk.
       if (entry.definition.kind === 'rxjs.subscription') {
         const mitigation = findSubscribeMitigation(node);
-        if (mitigation) operation.mitigatedBy = `${mitigation}()`;
+        if (mitigation) {
+          operation.mitigatedBy = `${mitigation.operator}()`;
+          if (mitigation.signal !== undefined) operation.mitigationSignal = mitigation.signal;
+        }
 
         const syntactic = classifyObservableSource(node);
         // With --types, follow the called method to its declaration and read

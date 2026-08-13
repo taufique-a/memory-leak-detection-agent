@@ -200,7 +200,73 @@ export function scoreFinding(input: ScoreInput): Finding | undefined {
     });
   }
 
-  /* ---- 7. penalties for our own uncertainty ---- */
+  /* ---- 7. lifecycle defects (Phase 5) ---- */
+
+  /**
+   * A broken takeUntil outranks almost everything else.
+   *
+   * The code LOOKS correct - a reviewer skims `pipe(takeUntil(destroy$))`
+   * and moves on. Because it reads as handled, nobody revisits it, so these
+   * survive code review indefinitely. That combination of "certainly broken"
+   * and "invisible to reviewers" is what earns the weight.
+   */
+  const brokenMitigations = actionable.filter((a) => a.mitigationBroken !== undefined);
+  if (brokenMitigations.length > 0) {
+    factors.push({
+      key: 'broken-takeuntil',
+      points: 35,
+      reason:
+        `${brokenMitigations.length} subscription(s) use takeUntil on a signal that is ` +
+        'never completed in ngOnDestroy. The teardown looks correct in review but ' +
+        'never actually runs.',
+    });
+  }
+
+  const lifecycle = cls.lifecycle;
+  if (lifecycle) {
+    const unreferenced = lifecycle.storedHandles.filter((h) => !h.referencedInOnDestroy);
+    if (unreferenced.length > 0 && cls.hasOnDestroyMethod) {
+      factors.push({
+        key: 'handle-not-in-ondestroy',
+        points: 20,
+        reason:
+          `ngOnDestroy exists but never mentions ${unreferenced
+            .map((h) => h.property)
+            .slice(0, 3)
+            .join(', ')}, so the cleanup that was written does not cover this handle.`,
+      });
+    }
+
+    if (lifecycle.onDestroyIsEmpty) {
+      factors.push({
+        key: 'ondestroy-empty',
+        points: 14,
+        reason: 'ngOnDestroy is defined but empty - cleanup was intended and never written.',
+      });
+    }
+
+    const superIssue = lifecycle.issues.find((i) => i.code === 'SUPER_ONDESTROY_NOT_CALLED');
+    if (superIssue) {
+      factors.push({
+        key: 'super-ondestroy-not-called',
+        points: superIssue.unverified === true ? 5 : 16,
+        reason: superIssue.message,
+      });
+    }
+
+    const rootServiceIssue = lifecycle.issues.find(
+      (i) => i.code === 'ROOT_SERVICE_ONDESTROY_NEVER_RUNS',
+    );
+    if (rootServiceIssue) {
+      factors.push({
+        key: 'root-service-ondestroy-never-runs',
+        points: 12,
+        reason: rootServiceIssue.message,
+      });
+    }
+  }
+
+  /* ---- 8. penalties for our own uncertainty ---- */
   const nameGuesses = actionable.filter((a) => a.sourceHint === 'likelyFiniteByName');
   if (nameGuesses.length === actionable.length) {
     factors.push({
@@ -231,7 +297,7 @@ export function scoreFinding(input: ScoreInput): Finding | undefined {
     });
   }
 
-  /* ---- 8. blast radius: does this class hold other heavy resources? ---- */
+  /* ---- 9. blast radius: does this class hold other heavy resources? ---- */
   const otherHeavy = cls.pairings.filter(
     (p) =>
       p.kind !== pairing.kind &&
@@ -250,7 +316,12 @@ export function scoreFinding(input: ScoreInput): Finding | undefined {
 
   const score = factors.reduce((total, f) => total + f.points, 0);
   const risk = deriveRisk(score);
-  const confidence = deriveConfidence(pairing, actionable.length, nameGuesses.length);
+  const confidence = deriveConfidence(
+    pairing,
+    actionable.length,
+    nameGuesses.length,
+    brokenMitigations.length,
+  );
 
   const first = actionable[0];
   const location: FindingLocation = {
@@ -279,6 +350,7 @@ export function scoreFinding(input: ScoreInput): Finding | undefined {
     recommendedInvestigation: recommendInvestigation(pairing, routed),
     operations: actionable,
     hasOnDestroy: cls.hasOnDestroyMethod,
+    ...(lifecycle && lifecycle.issues.length > 0 ? { lifecycleIssues: lifecycle.issues } : {}),
   };
 }
 
@@ -308,7 +380,16 @@ export function deriveConfidence(
   pairing: ResourcePairing,
   actionableCount: number,
   nameGuessCount: number,
+  brokenMitigationCount = 0,
 ): Confidence {
+  /**
+   * A broken takeUntil is the strongest thing static analysis can establish.
+   * We can see the subscription, see the signal it waits on, and see that
+   * nothing ever fires that signal. No naming guess is involved, so this
+   * outranks the name-guess penalty below.
+   */
+  if (brokenMitigationCount > 0) return 'LIKELY';
+
   // Everything rests on a naming guess we explicitly do not trust.
   if (nameGuessCount === actionableCount && actionableCount > 0) return 'POSSIBLE';
 

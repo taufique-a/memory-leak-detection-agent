@@ -267,6 +267,17 @@ function printFinding(f: Finding, rank: number): void {
     );
   }
 
+  if (f.lifecycleIssues && f.lifecycleIssues.length > 0) {
+    console.log('');
+    console.log(`     ${colour.dim('LIFECYCLE DEFECTS:')}`);
+    for (const issue of f.lifecycleIssues) {
+      const tag = issue.severity === 'HIGH' ? colour.red(issue.code) : colour.yellow(issue.code);
+      const unverified = issue.unverified === true ? colour.dim(' (unverified)') : '';
+      console.log(`       ${tag}${unverified}`);
+      console.log(`         ${colour.dim(issue.message)}`);
+    }
+  }
+
   console.log('');
   console.log(`     ${colour.dim('WHY IT LEAKS: ' + f.whyItLeaks)}`);
   console.log('');

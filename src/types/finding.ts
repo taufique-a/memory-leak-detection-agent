@@ -17,6 +17,7 @@
 
 import type { Confidence, EvidenceLevel, Risk } from './index';
 import type { ResourceKind, ResourceOperation } from './analysis';
+import type { LifecycleIssue } from './lifecycle';
 
 /** Why a finding scored the way it did - one weighted reason. */
 export interface ScoreFactor {
@@ -76,6 +77,8 @@ export interface Finding {
   operations: ResourceOperation[];
   /** Whether the class has an ngOnDestroy at all. */
   hasOnDestroy: boolean;
+  /** Phase 5 lifecycle defects on the same class, when any were found. */
+  lifecycleIssues?: LifecycleIssue[];
 }
 
 /** Aggregate view of a ranked run. */
