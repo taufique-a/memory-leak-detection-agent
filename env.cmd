@@ -10,9 +10,16 @@ REM  wrong shell.
 REM
 REM  HOW TO USE (from cmd.exe):
 REM      cd /d e:\taufique\memory-agent
-REM      env.cmd
+REM      .\env.cmd
 REM
-REM  No leading dot. cmd applies the changes to the current window already.
+REM  Note the ".\" prefix, written WITHOUT a space. This machine has
+REM  NoDefaultCurrentDirectoryInExePath=1 set, a Windows security setting
+REM  that stops cmd searching the current folder for a command - so plain
+REM  "env.cmd" gives "is not recognized" even standing in this directory.
+REM
+REM  Do not confuse this with PowerShell's ". .\env.ps1", which is
+REM  dot-SPACE-dot-backslash and is a completely different mechanism
+REM  (dot-sourcing). Here the dot-backslash is just part of the path.
 REM
 REM  WHAT IT DOES NOT DO
 REM      It does not change your system PATH.
