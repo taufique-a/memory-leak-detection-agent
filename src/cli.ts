@@ -9,9 +9,11 @@
  */
 
 import { runAnalyze } from './commands/analyze';
+import { runDoctor } from './commands/doctor';
 import { runReport } from './commands/report';
 import { runRisk } from './commands/risk';
 import { runScan } from './commands/scan';
+import { runSelfTestCommand } from './commands/selftest';
 import { buildInfo, versionString } from './version';
 import { INVESTIGATION_STATUSES } from './types';
 
@@ -35,7 +37,9 @@ COMMANDS
   ${'scan <project>'.padEnd(28)} Discover the Angular project structure
   ${'analyze <project>'.padEnd(28)} Find resource acquire/release operations (AST)
   ${'risk <project>'.padEnd(28)} Rank and explain static memory risks
-  ${'report <project>'.padEnd(28)} Generate a shareable investigation report`);
+  ${'report <project>'.padEnd(28)} Generate a shareable investigation report
+  ${'doctor'.padEnd(28)} Check the environment is ready for runtime work
+  ${'selftest'.padEnd(28)} Prove memory measurement works, on a known leak`);
 
   for (const cmd of PLANNED_COMMANDS) {
     const status = '(not implemented yet - ' + cmd.phase + ')';
@@ -70,6 +74,11 @@ REPORT OPTIONS
   --limit <n>      How many findings to include (default 50, 0 = all)
   --types          Resolve observable sources with the type checker
 
+SELFTEST OPTIONS
+  --iterations <n> Mount/unmount cycles per fixture (default 12, min 5)
+  --payload-mb <n> Megabytes retained per cycle in leaky mode (default 2)
+  --headed         Show the browser window while it runs
+
 OPTIONS
   -v, --version    Print version information
   -h, --help       Show this help
@@ -85,8 +94,13 @@ ENVIRONMENT
 /**
  * Runs the CLI. Returns a process exit code rather than calling
  * process.exit() directly, so tests can call this without killing Jest.
+ *
+ * The return type is `number | Promise<number>` because commands that drive
+ * a browser are inherently asynchronous, while the static ones are not. We
+ * keep the synchronous ones synchronous so their tests stay simple, and
+ * `main()` awaits whichever comes back.
  */
-export function run(argv: string[]): number {
+export function run(argv: string[]): number | Promise<number> {
   const args = argv.slice(2);
   const first = args[0];
 
@@ -116,6 +130,14 @@ export function run(argv: string[]): number {
     return runReport(args.slice(1));
   }
 
+  if (first === 'doctor') {
+    return runDoctor(args.slice(1));
+  }
+
+  if (first === 'selftest') {
+    return runSelfTestCommand(args.slice(1));
+  }
+
   // Recognised command, but we have not built it yet. Say so honestly
   // instead of pretending or silently doing nothing.
   const planned = PLANNED_COMMANDS.find((c) => c.name === first);
@@ -137,7 +159,17 @@ export function run(argv: string[]): number {
  * (`node dist/cli.js`). When Jest imports it, this block is skipped.
  */
 if (require.main === module) {
-  process.exitCode = run(process.argv);
+  void (async (): Promise<void> => {
+    try {
+      process.exitCode = await run(process.argv);
+    } catch (err) {
+      // A browser command can reject long after the synchronous call
+      // returned. Without this, the process would exit 0 while printing a
+      // stack trace - the worst possible outcome for a CI gate.
+      console.error((err as Error).stack ?? String(err));
+      process.exitCode = 1;
+    }
+  })();
 }
 
 // Referenced so the types module is exercised at runtime; also a useful

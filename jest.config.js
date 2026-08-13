@@ -26,6 +26,21 @@ module.exports = {
 
   moduleFileExtensions: ['ts', 'js', 'json'],
 
+  /**
+   * Run test files one at a time.
+   *
+   * From Phase 7 the suite launches a real Chrome. With Jest's default
+   * parallelism, several workers each hold a ts-jest compilation cache while
+   * one of them also owns a browser, and workers start dying with "Jest
+   * worker ran out of memory and crashed" - which surfaces as five suites
+   * "failed to run" and no useful error.
+   *
+   * Serial execution costs a few seconds and removes the whole class of
+   * problem. The target project's own jest setup uses --runInBand for the
+   * same reason.
+   */
+  maxWorkers: 1,
+
   // Never scan build output or dependencies.
   testPathIgnorePatterns: ['/node_modules/', '/dist/'],
 
