@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Test / coverage output
+coverage/
+
+# Investigation artefacts (these get big fast - heap snapshots are huge)
+.memory-agent/
+artifacts/
+snapshots/
+*.heapsnapshot
+*.heapprofile
+*.cpuprofile
+traces/
+
+# Playwright
+playwright-report/
+test-results/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

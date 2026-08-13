@@ -1,0 +1,21 @@
+# Normalise line endings.
+#
+# This matters more than usual here: from Phase 13 the agent generates and
+# shows DIFFS of Angular source files. If line endings drift between LF and
+# CRLF, a one-line fix renders as "entire file changed" and the approval
+# step becomes useless.
+
+* text=auto eol=lf
+
+# Windows-only scripts must keep CRLF or PowerShell/cmd can misbehave.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Never touch binary or captured artefacts.
+*.png binary
+*.jpg binary
+*.zip binary
+*.heapsnapshot binary
+*.heapprofile binary
+*.cpuprofile binary
