@@ -118,6 +118,25 @@ npm run dev -- scenario validate scenarios/my-app.json
 npm run dev -- scenario run scenarios/my-app.json --json artifacts/run.json
 ```
 
+### Heap analysis — what accumulated, and what holds it
+
+```powershell
+npm run dev -- heap scenarios/iosense-overview-devices.json
+npm run dev -- heap scenarios/iosense-overview-devices.json --trace-top 5 --json artifacts/heap.json
+```
+
+Takes a snapshot before and after the measured loop, reports which
+constructors gained instances, which DOM is detached, and the **retaining
+chain** explaining why each survives collection. The baseline is captured
+*after* warm-up, so first-visit loading is excluded.
+
+Snapshots are written to `artifacts/heap/<scenario>/` and can be opened
+directly in Chrome DevTools → Memory → Load.
+
+> Findings tagged **`[tooling artifact]`** are retained by the CDP session
+> the agent attaches in order to measure — not by your application. They
+> would be collected in a normal browser session. Ignore them.
+
 ### Reports and full investigations
 
 ```powershell
@@ -333,7 +352,7 @@ Two constraints worth knowing before you edit:
 | 7 Browser runtime | ✅ | `doctor`, `selftest` |
 | 8 Scenario engine | ✅ | `scenario init/login/validate/run/demo` |
 | 9 Memory investigation | ✅ | `investigate` |
-| 10 Heap / retention | ⬜ | heap snapshots, retaining paths |
+| 10 Heap / retention | ✅ | `heap` — snapshots, comparison, retaining paths |
 | 11 Evidence correlation | ⬜ | tie runtime findings to static findings |
 | 12 AI root cause | ⬜ | structured evidence → Claude |
 | 13 Safe fix generation | ⬜ | `fix` — propose, diff, ask approval |
