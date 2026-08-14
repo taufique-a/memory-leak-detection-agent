@@ -137,6 +137,40 @@ directly in Chrome DevTools → Memory → Load.
 > the agent attaches in order to measure — not by your application. They
 > would be collected in a normal browser session. Ignore them.
 
+### Correlation, fixes and verification
+
+```powershell
+# Join static findings to what the browser actually did
+npm run dev -- correlate <project> --scenario <file> --detail 10
+
+# Propose fixes. DRY RUN by default - nothing is written.
+npm run dev -- fix <project> --scenario <file>
+
+# Actually apply. Every change is shown and confirmed individually.
+npm run dev -- fix <project> --scenario <file> --apply
+
+# Record a baseline BEFORE fixing, then compare after
+npm run dev -- verify <project> --scenario <file> --record
+npm run dev -- verify <project> --scenario <file>
+
+# The whole pipeline end to end (read-only unless --apply)
+npm run dev -- auto <project> --scenario <file>
+```
+
+**Safety rules the tool enforces on itself:**
+
+- `fix` and `auto` are **read-only by default**. `--apply` is required, and
+  even then each change is displayed as a diff and confirmed individually.
+  There is no flag that applies everything silently.
+- Both **refuse to run against a dirty working tree**, and will not stash on
+  your behalf — a stash you did not create is work you will not remember.
+- Changes always land on a `memory-agent/<id>` branch, never yours, with the
+  baseline commit recorded so rollback is one command.
+- Fixes are only generated for findings the **runtime evidence supports**
+  (LIKELY or PROVEN). A static guess never edits your source.
+- `VERIFIED` requires **both** passing project checks **and** a measured
+  improvement.
+
 ### Reports and full investigations
 
 ```powershell
@@ -353,15 +387,23 @@ Two constraints worth knowing before you edit:
 | 8 Scenario engine | ✅ | `scenario init/login/validate/run/demo` |
 | 9 Memory investigation | ✅ | `investigate` |
 | 10 Heap / retention | ✅ | `heap` — snapshots, comparison, retaining paths |
-| 11 Evidence correlation | ⬜ | tie runtime findings to static findings |
-| 12 AI root cause | ⬜ | structured evidence → Claude |
-| 13 Safe fix generation | ⬜ | `fix` — propose, diff, ask approval |
-| 14 Git safety | ⬜ | branch, baseline SHA, rollback |
-| 15 Automated verification | ⬜ | build / lint / test after a fix |
-| 16 Before/after | ⬜ | `verify` — re-measure and compare |
-| 17 Professional reporting | ⬜ | final report with all sections filled |
-| 18 Autonomous investigation | ⬜ | end-to-end |
-| 19 Advanced | ⬜ | CI, history, IDE |
+| 11 Evidence correlation | ✅ | `correlate` — joins static, runtime and heap |
+| 12 AI root cause | ◐ | evidence bundle + prompt built; API client is an interface |
+| 13 Safe fix generation | ✅ | `fix` — propose, diff, approve, apply |
+| 14 Git safety | ✅ | dirty-tree refusal, dedicated branch, baseline, rollback |
+| 15 Automated verification | ✅ | runs the project's own build / lint / test |
+| 16 Before/after | ✅ | `verify --record` then `verify` |
+| 17 Professional reporting | ✅ | all sections render; ungathered ones say which phase |
+| 18 Autonomous investigation | ✅ | `auto` — the whole pipeline, with early vetoes |
+| 19 Advanced | ⬜ | CI, investigation history, IDE integration |
+
+**Phase 12 is deliberately partial.** The evidence bundle and analysis prompt
+are complete and usable today — `writeBundleForManualUse()` writes both to
+disk, and the prompt can be pasted into any chat window. What is *not* built
+is a hardcoded API call: this machine has no `claude` CLI on PATH and no key
+configured, so shipping one would be untested code that fails at the worst
+moment. `AnalysisClient` is an interface; supply one when you have
+credentials.
 
 ---
 

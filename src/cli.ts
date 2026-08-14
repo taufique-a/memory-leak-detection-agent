@@ -9,6 +9,7 @@
  */
 
 import { runAnalyze } from './commands/analyze';
+import { runAuto } from './commands/autoInvestigate';
 import { runCorrelate } from './commands/correlate';
 import { runDoctor } from './commands/doctor';
 import { runFix } from './commands/fix';
@@ -53,7 +54,8 @@ COMMANDS
   ${'heap <scenario>'.padEnd(28)} Heap snapshots: what accumulated, and what holds it
   ${'correlate <project>'.padEnd(28)} Join static findings to observed behaviour
   ${'fix <project>'.padEnd(28)} Propose fixes, show diffs, ask approval, apply
-  ${'verify <project>'.padEnd(28)} Run project checks and compare before/after`);
+  ${'verify <project>'.padEnd(28)} Run project checks and compare before/after
+  ${'auto <project>'.padEnd(28)} The whole pipeline, end to end`);
 
   for (const cmd of PLANNED_COMMANDS) {
     const status = '(not implemented yet - ' + cmd.phase + ')';
@@ -101,6 +103,14 @@ INVESTIGATE OPTIONS
   --out <dir>        Output directory (default ./reports)
   --types            Resolve observable sources with the type checker
   --headed           Show the browser window while it runs
+
+AUTO OPTIONS
+  --scenario <file>  The journey to run (required)
+  --apply            Allow fixes to be applied. Each is still confirmed.
+  --max <n>          Most fixes to propose (default 3)
+  --out <dir>        Report directory (default ./reports)
+  --types            Resolve observable sources with the type checker
+  --skip-heap        Skip heap snapshots
 
 CORRELATE OPTIONS
   --scenario <file>  The journey to run (required)
@@ -214,6 +224,10 @@ export function run(argv: string[]): number | Promise<number> {
 
   if (first === 'verify') {
     return runVerify(args.slice(1));
+  }
+
+  if (first === 'auto') {
+    return runAuto(args.slice(1));
   }
 
   // Recognised command, but we have not built it yet. Say so honestly

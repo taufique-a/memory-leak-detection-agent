@@ -28,6 +28,7 @@ import { defaultChecks } from '../src/verify/checks';
 import { parseFixArgs } from '../src/commands/fix';
 import { parseVerifyArgs } from '../src/commands/verify';
 import { parseCorrelateArgs } from '../src/commands/correlate';
+import { parseAutoArgs } from '../src/commands/autoInvestigate';
 import type { Finding } from '../src/types/finding';
 import type { CorrelatedFinding } from '../src/types/correlation';
 import type { RiskResult } from '../src/risk';
@@ -729,5 +730,18 @@ describe('command arguments', () => {
 
   it('correlate requires a scenario', () => {
     expect(parseCorrelateArgs(['./p'])).toContain('--scenario');
+  });
+
+  it('auto requires a scenario and defaults to read-only', () => {
+    expect(parseAutoArgs(['./p'])).toContain('--scenario');
+    const args = parseAutoArgs(['./p', '--scenario', 's.json']);
+    if (typeof args === 'string') throw new Error(args);
+    // Autonomy over the investigation, never over the repository.
+    expect(args.apply).toBe(false);
+    expect(args.maxFixes).toBe(3);
+  });
+
+  it('auto rejects unknown options', () => {
+    expect(parseAutoArgs(['./p', '--scenario', 's.json', '--nope'])).toContain('Unknown option');
   });
 });
