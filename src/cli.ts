@@ -10,6 +10,7 @@
 
 import { runAnalyze } from './commands/analyze';
 import { runDoctor } from './commands/doctor';
+import { runHeap } from './commands/heap';
 import { runInvestigate } from './commands/investigate';
 import { runReport } from './commands/report';
 import { runRisk } from './commands/risk';
@@ -42,7 +43,8 @@ COMMANDS
   ${'doctor'.padEnd(28)} Check the environment is ready for runtime work
   ${'selftest'.padEnd(28)} Prove memory measurement works, on a known leak
   ${'scenario <sub>'.padEnd(28)} init | login | validate | run | demo
-  ${'investigate <project>'.padEnd(28)} Static + runtime in one investigation report`);
+  ${'investigate <project>'.padEnd(28)} Static + runtime in one investigation report
+  ${'heap <scenario>'.padEnd(28)} Heap snapshots: what accumulated, and what holds it`);
 
   for (const cmd of PLANNED_COMMANDS) {
     const status = '(not implemented yet - ' + cmd.phase + ')';
@@ -89,6 +91,12 @@ INVESTIGATE OPTIONS
   --format <list>    md, html, json, all (default all)
   --out <dir>        Output directory (default ./reports)
   --types            Resolve observable sources with the type checker
+  --headed           Show the browser window while it runs
+
+HEAP OPTIONS
+  --trace-top <n>    Trace retaining paths for the top N growers (default 3)
+  --out <dir>        Where to write .heapsnapshot files (default artifacts/heap)
+  --json <file>      Write the full result as JSON
   --headed           Show the browser window while it runs
 
 SELFTEST OPTIONS
@@ -161,6 +169,10 @@ export function run(argv: string[]): number | Promise<number> {
 
   if (first === 'investigate') {
     return runInvestigate(args.slice(1));
+  }
+
+  if (first === 'heap') {
+    return runHeap(args.slice(1));
   }
 
   // Recognised command, but we have not built it yet. Say so honestly
