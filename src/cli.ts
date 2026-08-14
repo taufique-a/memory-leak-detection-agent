@@ -9,7 +9,10 @@
  */
 
 import { runAnalyze } from './commands/analyze';
+import { runCorrelate } from './commands/correlate';
 import { runDoctor } from './commands/doctor';
+import { runFix } from './commands/fix';
+import { runVerify } from './commands/verify';
 import { runHeap } from './commands/heap';
 import { runInvestigate } from './commands/investigate';
 import { runReport } from './commands/report';
@@ -20,11 +23,14 @@ import { runSelfTestCommand } from './commands/selftest';
 import { buildInfo, versionString } from './version';
 import { INVESTIGATION_STATUSES } from './types';
 
-/** Commands the agent will eventually support. */
-const PLANNED_COMMANDS: Array<{ name: string; summary: string; phase: string }> = [
-  { name: 'verify', summary: 'Compare before/after and confirm a fix', phase: 'Phase 16' },
-  { name: 'fix', summary: 'Propose a fix, show a diff, ask approval', phase: 'Phase 13' },
-];
+/**
+ * Commands not built yet.
+ *
+ * Empty is the honest state right now: every command in the roadmap exists.
+ * The mechanism stays because it is how the CLI tells a user "that is
+ * planned" rather than "unknown command", and Phase 19 will use it again.
+ */
+const PLANNED_COMMANDS: Array<{ name: string; summary: string; phase: string }> = [];
 
 function printHelp(): void {
   const info = buildInfo();
@@ -44,7 +50,10 @@ COMMANDS
   ${'selftest'.padEnd(28)} Prove memory measurement works, on a known leak
   ${'scenario <sub>'.padEnd(28)} init | login | validate | run | demo
   ${'investigate <project>'.padEnd(28)} Static + runtime in one investigation report
-  ${'heap <scenario>'.padEnd(28)} Heap snapshots: what accumulated, and what holds it`);
+  ${'heap <scenario>'.padEnd(28)} Heap snapshots: what accumulated, and what holds it
+  ${'correlate <project>'.padEnd(28)} Join static findings to observed behaviour
+  ${'fix <project>'.padEnd(28)} Propose fixes, show diffs, ask approval, apply
+  ${'verify <project>'.padEnd(28)} Run project checks and compare before/after`);
 
   for (const cmd of PLANNED_COMMANDS) {
     const status = '(not implemented yet - ' + cmd.phase + ')';
@@ -92,6 +101,26 @@ INVESTIGATE OPTIONS
   --out <dir>        Output directory (default ./reports)
   --types            Resolve observable sources with the type checker
   --headed           Show the browser window while it runs
+
+CORRELATE OPTIONS
+  --scenario <file>  The journey to run (required)
+  --skip-heap        Skip heap snapshots (nothing can then reach PROVEN)
+  --detail <n>       How many corroborated findings to print (default 10)
+  --json <file>      Write the full result as JSON
+
+FIX OPTIONS
+  --scenario <file>  The journey to run (required - fixes need evidence)
+  --apply            Actually write changes. Each one is shown and confirmed.
+  --yes              Answer yes to every prompt. Requires --apply.
+  --max <n>          Most fixes to propose (default 3)
+  --skip-heap        Skip heap snapshots
+  --skip-verify      Do not run build/lint/test after applying
+
+VERIFY OPTIONS
+  --scenario <file>  The journey to measure (required)
+  --baseline <file>  Baseline to compare against (default artifacts/baseline.json)
+  --record           Record the current run AS the baseline, then stop
+  --skip-checks      Skip build/lint/test (VERIFIED then unreachable)
 
 HEAP OPTIONS
   --trace-top <n>    Trace retaining paths for the top N growers (default 3)
@@ -173,6 +202,18 @@ export function run(argv: string[]): number | Promise<number> {
 
   if (first === 'heap') {
     return runHeap(args.slice(1));
+  }
+
+  if (first === 'correlate') {
+    return runCorrelate(args.slice(1));
+  }
+
+  if (first === 'fix') {
+    return runFix(args.slice(1));
+  }
+
+  if (first === 'verify') {
+    return runVerify(args.slice(1));
   }
 
   // Recognised command, but we have not built it yet. Say so honestly

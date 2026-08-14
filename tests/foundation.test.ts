@@ -117,13 +117,27 @@ describe('cli', () => {
     expect(logSpy).toHaveBeenCalled();
   });
 
-  it('admits when a planned command is not built yet, instead of pretending', () => {
-    // 'verify' arrives in Phase 16. This originally used 'investigate',
-    // which Phase 9 implemented - the test failing was the correct signal
-    // that the command had graduated.
-    const code = run(['node', 'cli.js', 'verify']);
-    expect(code).toBe(2);
-    expect(errSpy.mock.calls.join(' ')).toContain('not implemented yet');
+  it('every command in the roadmap is now implemented', () => {
+    // This test has been rewritten twice, each time because a command it
+    // named had graduated - first 'investigate' (Phase 9), then 'verify'
+    // (Phase 16). Every roadmap command now exists, so there is nothing
+    // left to report as unbuilt. It asserts that state instead.
+    for (const command of [
+      'scan',
+      'analyze',
+      'risk',
+      'report',
+      'investigate',
+      'heap',
+      'correlate',
+      'fix',
+      'verify',
+    ]) {
+      const code = run(['node', 'cli.js', command]);
+      // Each should reject its arguments (1), not report itself as
+      // unimplemented (2).
+      expect(code).not.toBe(2);
+    }
   });
 
   it('rejects an unknown command with exit code 1', () => {
