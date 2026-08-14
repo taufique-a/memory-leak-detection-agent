@@ -1,0 +1,373 @@
+# Memory Leak Agent — Runbook
+
+Everything you need to run, test and extend this tool without help.
+
+**Project:** `E:\taufique\memory-agent`
+**Target app:** `E:\taufique\io-sense\IOSense` (Angular 15.2.10)
+
+---
+
+## 1. Activate the environment — do this first, every time
+
+This project runs on a **portable Node 22** on `E:`. Your system Node 14 (which
+IOSense builds with) is never touched. Activation lasts **only for the window you
+run it in**; close the window and you are back to Node 14.
+
+### If your prompt looks like `PS E:\taufique\memory-agent>` — PowerShell
+
+```powershell
+cd e:\taufique\memory-agent
+. .\env.ps1
+```
+
+**Dot, space, dot-backslash.** That leading dot is "dot-sourcing" — it runs the
+script *inside* your current window. Without it the change happens in a throwaway
+child process and vanishes.
+
+### If your prompt looks like `E:\taufique\memory-agent>` — Command Prompt
+
+```
+cd /d e:\taufique\memory-agent
+.\env.cmd
+```
+
+**Dot-backslash, no space, and the file is `env.cmd` — not `env.ps1`.**
+
+Three things that trip people up here:
+
+| You type | Result |
+|---|---|
+| `env.cmd` | ❌ `is not recognized` — this machine sets `NoDefaultCurrentDirectoryInExePath=1` |
+| `.\env.ps1` in cmd | ❌ opens the file in **Notepad** (Windows blocks double-click execution of `.ps1`) |
+| `.\env.cmd` in cmd | ✅ |
+
+### Confirm it worked
+
+```
+node -v
+```
+
+Must print **`v22.23.2`**. If it prints `v14.20.0`, activation did not happen —
+re-read the section above for your shell.
+
+---
+
+## 2. Command reference
+
+All commands below assume the environment is active. Use `npm run dev --` to run
+from source (no build step needed).
+
+### Health checks — run these when something feels wrong
+
+```powershell
+npm run dev -- doctor
+```
+Checks Node ≥ 20, TypeScript < 7, git, and that Chrome is launchable. Exit code
+`0` = ready.
+
+```powershell
+npm run dev -- selftest
+```
+**Run this after every Chrome update.** It measures a page built to leak and an
+identical page that cleans up, and checks it gets both right. If forced garbage
+collection ever breaks, every measurement silently becomes noise and *this is the
+only thing that would catch it*. Exit `0` = trustworthy.
+
+```powershell
+npm run dev -- selftest --headed        # watch it happen in a real window
+```
+
+### Static analysis — no browser, no login, read-only
+
+```powershell
+# What is in this project?
+npm run dev -- scan "e:\taufique\io-sense\IOSense"
+
+# What resources does the code acquire and release? (raw observations)
+npm run dev -- analyze "e:\taufique\io-sense\IOSense" --limit 10
+
+# Ranked, explained risks  <-- the useful one
+npm run dev -- risk "e:\taufique\io-sense\IOSense" --detail 5
+
+# Same, but resolve observable types properly (~20s, needs memory headroom)
+$env:NODE_OPTIONS = "--max-old-space-size=8192"
+npm run dev -- risk "e:\taufique\io-sense\IOSense" --types --detail 5
+
+# Focus on one area
+npm run dev -- risk "e:\taufique\io-sense\IOSense" --filter overview
+```
+
+Useful flags: `--json <file>`, `--limit <n>` (findings kept, `0` = all),
+`--detail <n>` (printed in full), `--filter <path-fragment>`, `--types`.
+
+### Scenarios — repeatable browser journeys
+
+```powershell
+# Try the engine with no app and no login (built-in leaky fixture)
+npm run dev -- scenario demo
+npm run dev -- scenario demo --clean       # the non-leaking variant, must be STABLE
+npm run dev -- scenario demo --headed      # watch it navigate
+
+# Create a scenario for your own app
+npm run dev -- scenario init scenarios/my-app.json --base-url http://localhost:4200
+
+# Check it BEFORE running — warnings here matter, see section 5
+npm run dev -- scenario validate scenarios/my-app.json
+
+# Run it
+npm run dev -- scenario run scenarios/my-app.json --json artifacts/run.json
+```
+
+### Reports and full investigations
+
+```powershell
+# Static-only report
+npm run dev -- report "e:\taufique\io-sense\IOSense" --format all --limit 25
+
+# Static + runtime in one document  <-- the complete picture
+npm run dev -- investigate "e:\taufique\io-sense\IOSense" `
+  --scenario "scenarios/iosense-overview-devices.json" --limit 25
+```
+
+Output lands in `reports\MLA-YYYYMMDD-XXXX.{md,html,json}`.
+**Open the `.html` in Chrome** — it is fully self-contained, so you can email it
+or attach it to a ticket.
+
+---
+
+## 3. The IOSense workflow, start to finish
+
+### Step 1 — start the app (a **Node 14** window)
+
+Use a **normal** terminal — one where you have *not* activated the agent
+environment. IOSense builds with Node 14.
+
+```
+cd /d e:\taufique\io-sense\IOSense
+npm start -- --port 7400
+```
+
+Wait for `Compiled successfully`. Confirm `http://localhost:7400` loads.
+
+### Step 2 — capture a login session (an **agent** window)
+
+Sessions expire, so expect to repeat this — it takes about 30 seconds.
+
+```
+cd /d e:\taufique\memory-agent
+.\env.cmd
+npm run dev -- scenario login --base-url http://localhost:7400 --out .auth/iosense.auth.json
+```
+
+A real Chrome window opens. **You** sign in — the agent never sees your password,
+and SSO/MFA work normally. When you are on a real page, return to the terminal
+and press **Enter**.
+
+Check the output says `Ended on  http://localhost:7400/overview`. If it still
+says `/login`, the sign-in did not complete — run it again.
+
+> The saved file is a **live credential**. It is gitignored, and the tool refuses
+> to write it anywhere that is not `*.auth.json` or under `.auth/`. Do not email
+> it or copy it to a shared drive.
+
+### Step 3 — investigate
+
+```
+npm run dev -- investigate "e:\taufique\io-sense\IOSense" --scenario "scenarios/iosense-overview-devices.json" --limit 25
+```
+
+Takes about 45 seconds. Then open the HTML report in `reports\`.
+
+### Existing scenarios
+
+| File | Journey | Purpose |
+|---|---|---|
+| `iosense-overview-devices.json` | Overview ↔ Devices | Main investigation |
+| `isolate-overview.json` | Overview ↔ Clusters | Isolates Overview's contribution |
+| `isolate-devices.json` | Devices ↔ Clusters | Control — Overview never mounts |
+
+Clusters (`/load-entity-gen`) measured ≈ 0.01 MB per mount, so it is a **valid
+control**: any growth in a loop containing it belongs to the other route.
+
+---
+
+## 4. Testing
+
+```powershell
+npm test                       # everything (~28s, 300 tests)
+npm run typecheck              # types only, fast
+npm run build                  # compile to dist/
+
+npx jest tests/risk.test.ts                    # one file
+npx jest -t "destroy"                          # tests matching a name
+npm run test:watch                             # re-run on save
+```
+
+Tests run **serially** (`maxWorkers: 1` in `jest.config.js`). With Jest's default
+parallelism, workers each holding a ts-jest cache while one owns a browser died
+with *"Jest worker ran out of memory"*, surfacing as several suites "failing to
+run" with no useful error. Serial is also faster here.
+
+Two test files drive a **real Chrome** (`runtime.test.ts`, `scenario.test.ts`)
+and skip gracefully if Chrome is unavailable.
+
+### Before committing
+
+```powershell
+npm run typecheck; npm test
+```
+
+---
+
+## 5. Troubleshooting
+
+### `'.' is not recognized` / the file opens in Notepad
+Wrong shell or wrong file. See section 1.
+
+### `node -v` says `v14.20.0`
+The environment is not active in *this* window. Activate it again.
+
+### `The application redirected to a login page … session has expired`
+Normal. Re-run **Step 2** above. Nothing is wrong with your scenario.
+
+### `waitForSelector: Timeout … exceeded`
+The selector did not appear. Common causes, in order of likelihood:
+
+1. **The selector matches more than one element.** `a[href="/overview"]` matches
+   both the sidebar link *and* the "I/O Sense" logo; Playwright picks the first,
+   which is not clickable. Use **`a.nav-link[href="/overview"]`**.
+2. **The element is inside a collapsed menu.** The Dashboards sidebar group
+   collapses when you navigate away, so its sub-links cannot be used in a loop.
+   Stick to top-level links: `/overview`, `/devices`, `/load-entity-gen`,
+   `/triggers`.
+3. The page genuinely did not load — run with `--headed` and watch.
+
+### Route render markers
+Wait on the component's own element name: `<overview>`, `<devices>`,
+`<load-entities-generic>`. Find others by opening the page and inspecting the
+element inside `<router-outlet>`.
+
+### `is not valid JSON: Unexpected token`
+A UTF-8 BOM. The tool strips it now, but if you hit it elsewhere, save the file
+as "UTF-8 without BOM". PowerShell's `Out-File -Encoding utf8` adds one.
+
+### Memory report says GROWING but you do not believe it
+Check in this order:
+- Did any **steps fail**? The report says so. Failed steps mean a different
+  journey ran.
+- Is **R²** below ~0.7? Then the readings were erratic — the tool should have
+  said `INCONCLUSIVE`.
+- Were readings taken **after forced GC**? The report states this explicitly.
+- Try more iterations: `"iterations": 25`.
+
+### `npm run dev -- risk --types` runs out of memory
+```powershell
+$env:NODE_OPTIONS = "--max-old-space-size=8192"
+```
+
+---
+
+## 6. How to read a report
+
+| Field | Meaning |
+|---|---|
+| **Status** | `OPEN` → `INVESTIGATING` → `SUSPECTED` → `CONFIRMED` → `VERIFIED` |
+| **Strongest evidence** | `STATIC_SUSPICION` → `RUNTIME_EVIDENCE` → `STRONG_EVIDENCE` |
+| **Confidence** (per finding) | `POSSIBLE` / `LIKELY` — static analysis can never emit `PROVEN` |
+| **Verdict** (runtime) | `GROWING` / `STABLE` / `SHRINKING` / `INCONCLUSIVE` |
+| **R²** | Line-fit quality. `> 0.9` = steady accumulation. `< 0.7` = too erratic to call |
+
+Rules the tool enforces on itself, so you can trust the labels:
+
+- Static analysis **cannot** produce `PROVEN` or `CONFIRMED`. Reading source code
+  observes nothing.
+- `CONFIRMED` needs growth **and** a good fit **and** zero step failures.
+- `VERIFIED` needs a fix applied and re-measured — Phase 16, not built yet.
+- Sections that have no data say **`NOT GATHERED — requires Phase N`** rather
+  than being silently omitted.
+
+---
+
+## 7. Project layout
+
+```
+src/
+  scanner/     project discovery, file walk, AST parse, route graph
+  analyzer/    resource catalog, AST visitor, pairing, lifecycle checks
+  risk/        scoring and ranking
+  runtime/     browser control, CDP metrics, trend analysis, test fixtures
+  scenario/    journey definition, validation, runner, login capture
+  report/      investigation model, Markdown and HTML renderers
+  commands/    one file per CLI command
+tests/         300 tests, mirrors src/
+scenarios/     journey definitions (safe to commit — no secrets)
+reports/       generated output (gitignored)
+artifacts/     JSON dumps, screenshots (gitignored)
+.auth/         saved sessions — CREDENTIALS, gitignored
+```
+
+Two constraints worth knowing before you edit:
+
+- **TypeScript is pinned to exactly `5.9.3`.** Version 7 ships the native
+  compiler and exports only `{ version, versionMajorMinor }` — no
+  `createSourceFile`, no `SyntaxKind`. The entire analyzer would stop working.
+  A test asserts the major version is below 7. Never run `npm install typescript`
+  unpinned.
+- **Never install globally, and keep everything off `C:`** (about 5 GB free).
+  `env.ps1` / `env.cmd` already point the npm cache and Playwright browsers at
+  `E:`.
+
+---
+
+## 8. Phase status
+
+| Phase | Status | Delivered |
+|---|---|---|
+| 0 Environment | ✅ | portable Node 22, both shell activators |
+| 1 Foundation | ✅ | TypeScript + Jest, TS pinned to 5.9.3 |
+| 2 Project scanner | ✅ | `scan` |
+| 3 AST analyzer | ✅ | `analyze` |
+| 4 Static risk analyzer | ✅ | `risk` (+ route graph, `--types`) |
+| 5 Lifecycle analysis | ✅ | broken `takeUntil` and handle-mismatch detection |
+| 6 Static reporting | ✅ | `report` (md / html / json) |
+| 7 Browser runtime | ✅ | `doctor`, `selftest` |
+| 8 Scenario engine | ✅ | `scenario init/login/validate/run/demo` |
+| 9 Memory investigation | ✅ | `investigate` |
+| 10 Heap / retention | ⬜ | heap snapshots, retaining paths |
+| 11 Evidence correlation | ⬜ | tie runtime findings to static findings |
+| 12 AI root cause | ⬜ | structured evidence → Claude |
+| 13 Safe fix generation | ⬜ | `fix` — propose, diff, ask approval |
+| 14 Git safety | ⬜ | branch, baseline SHA, rollback |
+| 15 Automated verification | ⬜ | build / lint / test after a fix |
+| 16 Before/after | ⬜ | `verify` — re-measure and compare |
+| 17 Professional reporting | ⬜ | final report with all sections filled |
+| 18 Autonomous investigation | ⬜ | end-to-end |
+| 19 Advanced | ⬜ | CI, history, IDE |
+
+---
+
+## 9. What we have found in IOSense so far
+
+**Static** — 5,208 files, 2,988 components, 2,546 ranked findings
+(124 CRITICAL). Only 30% of components define `ngOnDestroy`. 37 subscriptions
+across 9 classes use `takeUntil` on a signal that is never fired, so the cleanup
+reads as correct and does nothing.
+
+**Runtime** — Overview ↔ Devices, 15 iterations, measured after forced GC:
+
+```
++1.79 MB per navigation round-trip      R² 0.982
++20.77 MB total   (72.6 MB → 111.0 MB)
+```
+
+Isolation runs give per-mount cost: **Overview ≈ 1.20 MB, Devices ≈ 0.59 MB,
+Clusters ≈ 0.01 MB** (three independent runs agreeing to ~1%).
+
+**Open lead** — `Cannot read properties of null (reading 'createTexture')` and
+`lookAtManipulator` (HERE Maps) appear once per iteration, but **only when
+Overview is in the loop**. `/overview` holds one WebGL canvas; `/devices` holds
+none. Browsers cap WebGL contexts near 16. All six files under
+`src/app/utils/map-engine/` define neither `ngOnDestroy` nor `dispose()`.
+
+This is a **strong hypothesis, not a proven root cause** — nothing yet ties the
+retained bytes to a specific object. That is what Phase 10 settles.
