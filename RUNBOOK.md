@@ -109,7 +109,7 @@ npm run dev -- scenario demo --clean       # the non-leaking variant, must be ST
 npm run dev -- scenario demo --headed      # watch it navigate
 
 # Create a scenario for your own app
-npm run dev -- scenario init scenarios/my-app.json --base-url http://localhost:4200
+npm run dev -- scenario init scenarios/my-app.json --base-url http://localhost:7400
 
 # Check it BEFORE running — warnings here matter, see section 5
 npm run dev -- scenario validate scenarios/my-app.json

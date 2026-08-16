@@ -51,9 +51,20 @@ function starterScenario(baseUrl: string): Scenario {
     baseUrl,
     auth: { type: 'none' },
     setup: [
-      // A full page load belongs HERE, once, not in the loop.
-      { action: 'goto', path: '/', waitUntil: 'networkidle' },
-      { action: 'waitFor', selector: 'body' },
+      /**
+       * A full page load belongs HERE, once, not in the loop.
+       *
+       * waitUntil is 'domcontentloaded', NOT 'networkidle'. networkidle
+       * waits for 500ms with no network activity, which a real application
+       * never reaches: live notifications, polling and websockets all keep
+       * the connection busy. A scenario using it hangs at "running setup"
+       * forever, with no error to explain why.
+       *
+       * Wait for a SELECTOR that only exists once the page is ready instead
+       * - that is both faster and unambiguous.
+       */
+      { action: 'goto', path: '/', waitUntil: 'domcontentloaded' },
+      { action: 'waitFor', selector: 'body', timeoutMs: 60000 },
     ],
     steps: [
       // In-app navigation. These must be clicks, not goto - see the warning

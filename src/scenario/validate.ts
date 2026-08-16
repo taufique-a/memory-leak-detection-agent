@@ -135,6 +135,32 @@ export function validateScenario(scenario: unknown): ValidationResult {
     }
   }
 
+  /**
+   * ---- networkidle on a live application ----
+   *
+   * waitUntil: 'networkidle' resolves after 500ms with no network activity.
+   * Real applications never reach that: notification polling, websockets and
+   * background refreshes keep the connection busy indefinitely. The symptom
+   * is a run that sits on "running setup" forever with no error, which reads
+   * as a hung tool rather than a bad option.
+   */
+  const allSteps = [...(s.setup ?? []), ...(s.steps ?? []), ...(s.teardown ?? [])];
+  const networkIdleSteps = allSteps.filter(
+    (step) =>
+      typeof step === 'object' &&
+      step !== null &&
+      (step as Step).action === 'goto' &&
+      (step as { waitUntil?: string }).waitUntil === 'networkidle',
+  );
+  if (networkIdleSteps.length > 0) {
+    warnings.push(
+      'A goto step uses waitUntil: "networkidle", which waits for 500ms of complete ' +
+        'network silence. Applications with live notifications, polling or websockets ' +
+        'never go idle, so the run will hang with no error. Use "domcontentloaded" and ' +
+        'then waitFor a selector that only exists once the page is ready.',
+    );
+  }
+
   /* ---- auth ---- */
   if (s.auth !== undefined) validateAuth(s.auth, errors, warnings);
 

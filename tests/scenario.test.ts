@@ -124,6 +124,28 @@ describe('validateScenario - the warning that prevents a false negative', () => 
     expect(result.warnings.join(' ')).toContain('No navigation step');
   });
 
+  it('warns about networkidle, which hangs forever on a live app', () => {
+    // Hit for real: a scenario generated with waitUntil "networkidle" sat on
+    // "running setup" indefinitely against IOSense, because its notification
+    // polling means the network is never quiet for 500ms. No error, no
+    // timeout message - it just looked like the tool had frozen.
+    const result = validateScenario(
+      baseScenario({
+        setup: [{ action: 'goto', path: '/', waitUntil: 'networkidle' }],
+      }),
+    );
+    expect(result.valid).toBe(true);
+    expect(result.warnings.join(' ')).toContain('networkidle');
+    expect(result.warnings.join(' ')).toContain('hang');
+  });
+
+  it('does not warn about domcontentloaded', () => {
+    const result = validateScenario(
+      baseScenario({ setup: [{ action: 'goto', path: '/', waitUntil: 'domcontentloaded' }] }),
+    );
+    expect(result.warnings.join(' ')).not.toContain('networkidle');
+  });
+
   it('warns when the loop never waits, which measures half-built pages', () => {
     const result = validateScenario(
       baseScenario({ steps: [{ action: 'click', selector: '#a' }] }),
