@@ -52,7 +52,42 @@ re-read the section above for your shell.
 
 ---
 
-## 2. Command reference
+## 2. The easy way — the guided UI
+
+If you would rather not memorise commands, run this and work through the page:
+
+```powershell
+npm run dev -- ui --project "e:\taufique\io-sense\IOSense"
+```
+
+A browser opens on a local page that walks you from **step 0 (try it with no app)**
+through to **step 8 (build the report)**. Each step says what it does, why it
+matters and roughly how long it takes. Output streams live into the panel on the
+right.
+
+Steps that need your app running and a saved session are **visibly disabled**
+until both exist, with the reason shown — so you cannot accidentally run a
+measurement against a login page.
+
+```powershell
+npm run dev -- ui --port 8080          # fixed port
+npm run dev -- ui --no-open            # do not launch a browser
+```
+
+**What the UI will not do:** apply a fix. It shows proposals and diffs; applying
+is a terminal-only operation, so a change to your source is never one mis-click
+away.
+
+**Security.** The server executes commands, so it is locked down: bound to
+`127.0.0.1` only, a random token required on every request (it is in the URL
+printed at startup), the `Host` header checked to defeat DNS rebinding, no CORS
+headers, and — most importantly — **the page sends an action name, never a
+command line**. Arguments are validated against a fixed allowlist before they
+reach `argv`. If you close the terminal, the server stops.
+
+---
+
+## 3. Command reference
 
 All commands below assume the environment is active. Use `npm run dev --` to run
 from source (no build step needed).
@@ -111,7 +146,7 @@ npm run dev -- scenario demo --headed      # watch it navigate
 # Create a scenario for your own app
 npm run dev -- scenario init scenarios/my-app.json --base-url http://localhost:7400
 
-# Check it BEFORE running — warnings here matter, see section 5
+# Check it BEFORE running — warnings here matter, see section 6
 npm run dev -- scenario validate scenarios/my-app.json
 
 # Run it
@@ -188,7 +223,7 @@ or attach it to a ticket.
 
 ---
 
-## 3. The IOSense workflow, start to finish
+## 4. The IOSense workflow, start to finish
 
 ### Step 1 — start the app (a **Node 14** window)
 
@@ -244,7 +279,7 @@ control**: any growth in a loop containing it belongs to the other route.
 
 ---
 
-## 4. Testing
+## 5. Testing
 
 ```powershell
 npm test                       # everything (~28s, 300 tests)
@@ -272,7 +307,7 @@ npm run typecheck; npm test
 
 ---
 
-## 5. Troubleshooting
+## 6. Troubleshooting
 
 ### `'.' is not recognized` / the file opens in Notepad
 Wrong shell or wrong file. See section 1.
@@ -320,7 +355,7 @@ $env:NODE_OPTIONS = "--max-old-space-size=8192"
 
 ---
 
-## 6. How to read a report
+## 7. How to read a report
 
 | Field | Meaning |
 |---|---|
@@ -341,7 +376,7 @@ Rules the tool enforces on itself, so you can trust the labels:
 
 ---
 
-## 7. Project layout
+## 8. Project layout
 
 ```
 src/
@@ -372,7 +407,7 @@ Two constraints worth knowing before you edit:
 
 ---
 
-## 8. Phase status
+## 9. Phase status
 
 | Phase | Status | Delivered |
 |---|---|---|
@@ -396,6 +431,7 @@ Two constraints worth knowing before you edit:
 | 17 Professional reporting | ✅ | all sections render; ungathered ones say which phase |
 | 18 Autonomous investigation | ✅ | `auto` — the whole pipeline, with early vetoes |
 | 19 Advanced | ⬜ | CI, investigation history, IDE integration |
+| — Guided UI | ✅ | `ui` — local web interface, step 0 to step 8 |
 
 **Phase 12 is deliberately partial.** The evidence bundle and analysis prompt
 are complete and usable today — `writeBundleForManualUse()` writes both to
@@ -407,7 +443,7 @@ credentials.
 
 ---
 
-## 9. What we have found in IOSense so far
+## 10. What we have found in IOSense so far
 
 **Static** — 5,208 files, 2,988 components, 2,546 ranked findings
 (124 CRITICAL). Only 30% of components define `ngOnDestroy`. 37 subscriptions

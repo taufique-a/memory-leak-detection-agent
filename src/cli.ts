@@ -21,6 +21,7 @@ import { runRisk } from './commands/risk';
 import { runScan } from './commands/scan';
 import { runScenarioCommand } from './commands/scenario';
 import { runSelfTestCommand } from './commands/selftest';
+import { runUi } from './commands/ui';
 import { buildInfo, versionString } from './version';
 import { INVESTIGATION_STATUSES } from './types';
 
@@ -43,6 +44,7 @@ USAGE
   memory-agent <command> [options]
 
 COMMANDS
+  ${'ui'.padEnd(28)} Guided local interface - start here if unsure
   ${'scan <project>'.padEnd(28)} Discover the Angular project structure
   ${'analyze <project>'.padEnd(28)} Find resource acquire/release operations (AST)
   ${'risk <project>'.padEnd(28)} Rank and explain static memory risks
@@ -103,6 +105,11 @@ INVESTIGATE OPTIONS
   --out <dir>        Output directory (default ./reports)
   --types            Resolve observable sources with the type checker
   --headed           Show the browser window while it runs
+
+UI OPTIONS
+  --port <n>         Port to listen on (default: any free port)
+  --project <path>   Pre-fill the project folder
+  --no-open          Do not launch a browser
 
 AUTO OPTIONS
   --scenario <file>  The journey to run (required)
@@ -228,6 +235,10 @@ export function run(argv: string[]): number | Promise<number> {
 
   if (first === 'auto') {
     return runAuto(args.slice(1));
+  }
+
+  if (first === 'ui') {
+    return runUi(args.slice(1));
   }
 
   // Recognised command, but we have not built it yet. Say so honestly
