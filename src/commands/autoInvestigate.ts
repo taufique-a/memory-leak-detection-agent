@@ -33,6 +33,7 @@ import { renderMarkdown } from '../report/markdown';
 import { assessRisk } from '../risk';
 import { runScenario, type ScenarioRun } from '../scenario/runner';
 import { readWorkspace } from '../scanner/workspace';
+import { askLine } from '../utils/prompt';
 import { runVerification } from '../verify/checks';
 import { compareBeforeAfter, deriveVerificationStatus } from '../verify/compare';
 import type { CorrelationResult } from '../types/correlation';
@@ -288,14 +289,8 @@ export async function runAuto(args: string[]): Promise<number> {
               (line.startsWith('+') ? colour.green(line) : line.startsWith('-') ? colour.red(line) : colour.dim(line)),
           );
         }
-        const { createInterface } = await import('node:readline');
-        const rl = createInterface({ input: process.stdin, output: process.stdout });
-        return new Promise<boolean>((resolve) => {
-          rl.question('    Apply? [y/N] ', (answer) => {
-            rl.close();
-            resolve(answer.trim().toLowerCase() === 'y');
-          });
-        });
+        const answer = await askLine('    Apply? [y/N] ');
+        return answer.trim().toLowerCase() === 'y';
       },
       onProgress: (m) => console.log(colour.dim('        ' + m)),
     }),

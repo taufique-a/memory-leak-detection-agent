@@ -78,6 +78,15 @@ describe('parameter validation', () => {
     expect('error' in built).toBe(true);
   });
 
+  it('accepts a component filter but rejects shell characters in it', () => {
+    const one = findAction('analyzeOne');
+    if (one === undefined) throw new Error('analyzeOne missing');
+    expect('args' in buildArgs(one, { project: 'C:/p', filter: 'overview' })).toBe(true);
+    expect('args' in buildArgs(one, { project: 'C:/p', filter: 'modules/io-lens' })).toBe(true);
+    expect('error' in buildArgs(one, { project: 'C:/p', filter: 'x; rm -rf /' })).toBe(true);
+    expect('error' in buildArgs(one, { project: 'C:/p', filter: '$(id)' })).toBe(true);
+  });
+
   it('accepts an ordinary Windows path', () => {
     const built = buildArgs(scan, { project: 'E:\\taufique\\io-sense\\IOSense' });
     expect('args' in built).toBe(true);
@@ -194,6 +203,29 @@ describe('page', () => {
     expect(page).toContain('/api/check');
     // No hardcoded port anywhere in the guidance.
     expect(page).not.toContain('localhost:7400');
+  });
+
+  it('shows a spinner and progress bar while running', () => {
+    expect(page).toContain('class="spinner"');
+    expect(page).toContain('id="bar"');
+    expect(page).toContain('@keyframes spin');
+  });
+
+  it('respects prefers-reduced-motion', () => {
+    // Animation that cannot be turned off is an accessibility problem, and
+    // a spinner is not worth causing one.
+    expect(page).toContain('prefers-reduced-motion:reduce');
+  });
+
+  it('renders file ages readably rather than as raw minutes', () => {
+    // "4690m" told the user nothing.
+    expect(page).toContain('humanAge');
+    expect(page).toContain('days ago');
+  });
+
+  it('lets the user target one component', () => {
+    expect(page).toContain('Inspect one component');
+    expect(page).toContain('Only this component or folder');
   });
 
   it('has balanced markup', () => {

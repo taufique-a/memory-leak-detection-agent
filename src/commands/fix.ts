@@ -12,7 +12,8 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as readline from 'node:readline';
+
+import { askLine } from '../utils/prompt';
 
 import { correlate } from '../correlate';
 import { applyFixes } from '../fix/apply';
@@ -327,15 +328,10 @@ function printRollback(commands: string[]): void {
   for (const line of commands) console.log('  ' + (line === '' ? '' : colour.cyan(line)));
 }
 
-/** Ask on the terminal. Anything other than an explicit yes is a no. */
-function askApproval(fix: ProposedFix): Promise<boolean> {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(`\n  Apply "${fix.title}" to ${fix.file}? [y/N] `, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase() === 'y');
-    });
-  });
+/** Ask for approval. Anything other than an explicit yes is a no. */
+async function askApproval(fix: ProposedFix): Promise<boolean> {
+  const answer = await askLine(`\n  Apply "${fix.title}" to ${fix.file}? [y/N] `);
+  return answer.trim().toLowerCase() === 'y';
 }
 
 /** Exposed for the report. */

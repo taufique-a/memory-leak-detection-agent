@@ -24,9 +24,9 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as readline from 'node:readline';
 
 import { launchBrowser } from '../runtime/browser';
+import { waitForEnter } from '../utils/prompt';
 
 export interface LoginOptions {
   /** Application root, e.g. "http://localhost:7400". */
@@ -80,7 +80,7 @@ export async function captureLogin(options: LoginOptions): Promise<LoginResult> 
         session.page.waitForSelector(options.successSelector, {
           timeout: options.timeoutMs ?? 300_000,
         }),
-        waitForEnter(),
+        waitForEnter(''),
       ]);
     } else {
       await waitForEnter('  Press Enter here once you are signed in and on a normal page... ');
@@ -107,16 +107,8 @@ export async function captureLogin(options: LoginOptions): Promise<LoginResult> 
   }
 }
 
-/** Resolve when the user presses Enter on stdin. */
-function waitForEnter(prompt?: string): Promise<void> {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(prompt ?? '', () => {
-      rl.close();
-      resolve();
-    });
-  });
-}
+// waitForEnter lives in utils/prompt.ts - see the note there about why
+// releasing stdin properly matters when the UI is driving.
 
 /**
  * Refuse to write a session token somewhere git is tracking.

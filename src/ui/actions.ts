@@ -28,7 +28,19 @@
  * write anything.
  */
 
-export type ParamType = 'scenario' | 'project' | 'number' | 'flag' | 'url' | 'authFile';
+export type ParamType =
+  | 'scenario'
+  | 'project'
+  | 'number'
+  | 'flag'
+  | 'url'
+  | 'authFile'
+  /**
+   * A path fragment used to narrow analysis to one component or folder,
+   * e.g. "overview" or "modules/io-lens". Validated more loosely than a
+   * path because it is a substring match, but still no shell characters.
+   */
+  | 'filter';
 
 export interface ActionParam {
   name: string;
@@ -107,6 +119,36 @@ export const ACTIONS: readonly ActionDefinition[] = [
     needsApp: false,
   },
   {
+    id: 'analyzeOne',
+    step: 2,
+    title: 'Inspect one component',
+    summary: 'Every resource operation in a single file or folder',
+    why:
+      'When you already suspect something, this shows exactly what it acquires and ' +
+      'releases, line by line, without the noise of thousands of other files. Put the ' +
+      'same filter into "Rank static risks" to see how those operations score.',
+    expect: 'about 6 seconds',
+    params: [
+      { name: 'project', type: 'project', required: true, label: 'Project folder' },
+      {
+        name: 'filter',
+        type: 'filter',
+        required: true,
+        label: 'Component or folder, e.g. overview',
+      },
+      { name: 'limit', type: 'number', required: false, label: 'How many to print', default: 20 },
+    ],
+    build: (v) => [
+      'analyze',
+      v['project'] ?? '',
+      '--filter',
+      v['filter'] ?? '',
+      '--limit',
+      v['limit'] ?? '20',
+    ],
+    needsApp: false,
+  },
+  {
     id: 'risk',
     step: 2,
     title: 'Rank static risks',
@@ -117,11 +159,18 @@ export const ACTIONS: readonly ActionDefinition[] = [
     expect: 'about 8 seconds, or 20 with type resolution',
     params: [
       { name: 'project', type: 'project', required: true, label: 'Project folder' },
+      {
+        name: 'filter',
+        type: 'filter',
+        required: false,
+        label: 'Only this component or folder (optional)',
+      },
       { name: 'detail', type: 'number', required: false, label: 'Findings to detail', default: 5 },
       { name: 'types', type: 'flag', required: false, label: 'Resolve observable types (slower, more accurate)' },
     ],
     build: (v) => {
       const args = ['risk', v['project'] ?? '', '--detail', v['detail'] ?? '5'];
+      if (v['filter'] !== undefined && v['filter'] !== '') args.push('--filter', v['filter']);
       if (v['types'] === 'true') args.push('--types');
       return args;
     },
@@ -379,6 +428,14 @@ function validate(type: ParamType, value: string): string | undefined {
       } catch {
         return undefined;
       }
+    }
+
+    case 'filter': {
+      // A substring, not a path - but still nothing that could start a
+      // command or a new argument.
+      if (/["'`;&|$<>\n\r]/.test(value)) return undefined;
+      if (!/^[A-Za-z0-9 _.\-\\/]+$/.test(value)) return undefined;
+      return value;
     }
 
     case 'project':

@@ -169,12 +169,42 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 #reply .hint{font-size:.82rem;color:var(--muted);margin-bottom:.5rem}
 #reply .row{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center}
 #replyText{flex:1;min-width:8rem}
-.files{max-height:16rem;overflow:auto;font-size:.82rem}
-.files table{width:100%;border-collapse:collapse}
-.files td{padding:.25rem .4rem;border-bottom:1px solid var(--line);vertical-align:middle}
-.files td.r{text-align:right;color:var(--muted);white-space:nowrap}
-.files a{text-decoration:none}
-.mini{font-size:.74rem;padding:.2rem .5rem}
+/* ---- generated files ---- */
+.files{overflow:auto;min-height:0;flex:1 1 auto;padding:.4rem .6rem}
+.fgroup{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
+  padding:.5rem .4rem .25rem;position:sticky;top:0;background:var(--card)}
+.frow{display:flex;align-items:center;gap:.5rem;padding:.35rem .4rem;border-radius:5px}
+.frow:hover{background:var(--code)}
+.fname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:.83rem}
+.fname a{text-decoration:none}
+.fmeta{color:var(--muted);font-size:.72rem;white-space:nowrap}
+.facts{display:flex;gap:.3rem;opacity:.35;transition:opacity .15s}
+.frow:hover .facts{opacity:1}
+.mini{font-size:.72rem;padding:.18rem .5rem;border-radius:4px;
+  background:transparent;color:var(--accent);border:1px solid var(--line);cursor:pointer;
+  text-decoration:none;display:inline-block;line-height:1.4}
+.mini:hover{border-color:var(--accent)}
+
+/* ---- motion ---- */
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+@keyframes slidein{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+.spinner{display:inline-block;width:.85em;height:.85em;border:2px solid var(--line);
+  border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;
+  vertical-align:-.12em;margin-right:.45rem}
+.running #running{animation:pulse 1.6s ease-in-out infinite}
+#reply.on{animation:slidein .18s ease-out}
+.bar{height:2px;background:var(--line);overflow:hidden;flex:0 0 auto}
+.bar span{display:block;height:100%;width:35%;background:var(--accent);
+  transform:translateX(-100%);animation:sweep 1.1s ease-in-out infinite}
+@keyframes sweep{to{transform:translateX(400%)}}
+.bar.idle{visibility:hidden}
+button{transition:opacity .15s,background .15s}
+.action button:not(:disabled):hover{opacity:.88}
+@media (prefers-reduced-motion:reduce){
+  .spinner,.running #running,.bar span,#reply.on{animation:none}
+}
 ul.state{list-style:none;padding:0;margin:.4rem 0 0;font-size:.83rem}
 ul.state li{padding:.15rem 0;color:var(--muted)}
 code{background:var(--code);padding:.1em .35em;border-radius:3px;font-size:.85em}
@@ -226,6 +256,7 @@ a{color:var(--accent)}
             <button class="ghost mini" id="clearBtn">clear</button>
           </span>
         </h2>
+        <div class="bar idle" id="bar"><span></span></div>
         <pre id="out">Pick a step on the left.
 
 If you have never run this before, start with "Try it first" - it needs no
@@ -454,8 +485,11 @@ async function run(actionId) {
   }
 
   currentRun = result.id;
-  $('running').textContent = 'running: ' + action.title;
+  $('running').innerHTML = '<span class="spinner"></span>' + esc(action.title);
+  $('consolePanel').classList.add('running');
+  $('bar').classList.remove('idle');
   $('stopBtn').disabled = false;
+  $('status').innerHTML = '<span class="pill warn">running</span> ' + esc(action.expect);
   for (const b of document.querySelectorAll('button[data-action]')) b.disabled = true;
 
   /* Show the reply controls for commands that will ask something. */
@@ -485,6 +519,8 @@ function finish(exitCode) {
   if (source) { source.close(); source = null; }
   currentRun = null;
   $('running').textContent = 'idle';
+  $('consolePanel').classList.remove('running');
+  $('bar').classList.add('idle');
   $('stopBtn').disabled = true;
   $('reply').classList.remove('on');
   $('status').innerHTML = exitCode === 0
@@ -521,27 +557,59 @@ function humanBytes(n) {
   return (n / 1048576).toFixed(1) + ' MB';
 }
 
+/** "4690m" is unreadable. Say it the way a person would. */
+function humanAge(minutes) {
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return minutes + ' min ago';
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return hours + (hours === 1 ? ' hour ago' : ' hours ago');
+  const days = Math.round(hours / 24);
+  return days + (days === 1 ? ' day ago' : ' days ago');
+}
+
+const GROUP_LABEL = {
+  reports: 'Reports',
+  artifacts: 'Data and snapshots',
+  scenarios: 'Scenarios',
+};
+
 async function refreshFiles() {
   let data;
   try { data = await api('/api/files'); } catch { return; }
   const files = data.files || [];
   if (!files.length) {
-    $('files').innerHTML = '<div class="status">nothing yet — run something first</div>';
+    $('files').innerHTML =
+      '<div class="status">Nothing yet. Run a step and generated files appear here.</div>';
     return;
   }
-  let html = '<table>';
-  for (const f of files.slice(0, 60)) {
-    const href = '/api/download?path=' + encodeURIComponent(f.path) + '&token=' + TOKEN;
-    html += '<tr>' +
-      '<td><a href="' + href + '" target="_blank" rel="noopener">' + esc(f.path) + '</a></td>' +
-      '<td class="r">' + humanBytes(f.bytes) + '</td>' +
-      '<td class="r">' + f.ageMinutes + 'm</td>' +
-      '<td class="r">' +
-        (f.textual ? '<button class="ghost mini" data-copy="' + esc(f.path) + '">copy</button> ' : '') +
-        '<a class="ghost mini" href="' + href + '" download>download</a>' +
-      '</td></tr>';
+
+  /* Group by directory, newest first within each. */
+  const groups = {};
+  for (const f of files) {
+    (groups[f.group] = groups[f.group] || []).push(f);
   }
-  html += '</table>';
+
+  let html = '';
+  for (const key of ['reports', 'artifacts', 'scenarios']) {
+    const list = groups[key];
+    if (!list || !list.length) continue;
+    html += '<div class="fgroup">' + esc(GROUP_LABEL[key] || key) +
+      ' <span style="text-transform:none;letter-spacing:0">(' + list.length + ')</span></div>';
+
+    for (const f of list.slice(0, 40)) {
+      const href = '/api/download?path=' + encodeURIComponent(f.path) + '&token=' + TOKEN;
+      // Show the filename prominently; the folder is already the group.
+      const short = f.path.slice(f.path.indexOf('/') + 1);
+      html += '<div class="frow">' +
+        '<div class="fname"><a href="' + href + '" target="_blank" rel="noopener" title="' +
+          esc(f.path) + '">' + esc(short) + '</a></div>' +
+        '<div class="fmeta">' + humanBytes(f.bytes) + ' &middot; ' + humanAge(f.ageMinutes) + '</div>' +
+        '<div class="facts">' +
+          (f.textual ? '<button class="mini" data-copy="' + esc(f.path) + '">copy</button>' : '') +
+          '<a class="mini" href="' + href + '" download>save</a>' +
+        '</div></div>';
+    }
+  }
   $('files').innerHTML = html;
 
   for (const btn of document.querySelectorAll('button[data-copy]')) {
