@@ -271,6 +271,53 @@ describe('page', () => {
   it('embeds the token so API calls can authenticate', () => {
     expect(page).toContain('deadbeef');
   });
+
+  /* ---- searching for something to investigate ---- */
+
+  it('lets the user search for ANY component, not just the two hand-written ones', () => {
+    expect(page).toContain('id="entitySearch"');
+    expect(page).toContain('id="entityResults"');
+    expect(page).toContain('/api/entities');
+  });
+
+  it('debounces the search rather than scanning per keystroke', () => {
+    // An index costs about six seconds to build on a real project.
+    expect(page).toContain('clearTimeout(searchTimer)');
+    expect(page).toContain('setTimeout(() => searchEntities(false), 250)');
+  });
+
+  it('runs the whole find-and-fix pipeline on the picked component', () => {
+    expect(page).toContain("createAndRun('auto')");
+    expect(page).toContain('/api/scenario/generate');
+  });
+
+  it('shows the generated scenario notes BEFORE starting the run', () => {
+    // The link selector is a guess. The user needs to read that while there
+    // is still a reason to, not after a timeout.
+    const script = page.slice(page.indexOf('<script>'));
+    const notes = script.indexOf('result.notes');
+    const start = script.indexOf('runWithScenario(actionId');
+    expect(notes).toBeGreaterThan(-1);
+    expect(notes).toBeLessThan(start);
+  });
+
+  it('explains why a component cannot be driven instead of offering it anyway', () => {
+    expect(page).toContain('blockedReason');
+    expect(page).toContain('static only');
+  });
+
+  it('warns in the UI when a class name is ambiguous', () => {
+    expect(page).toContain('ambiguous route');
+  });
+
+  /* ---- generated files ---- */
+
+  it('shows only what the latest run produced', () => {
+    // A full history buries the file you just made under dozens of
+    // near-identical names.
+    expect(page).toContain('From the latest run');
+    expect(page).not.toContain('list.slice(0, 40)');
+  });
 });
 
 /* ================================================================== */
@@ -515,6 +562,80 @@ describe('server security', () => {
       expect(body.error).toBeDefined();
     }
   });
+
+  /* ---- entity search endpoints ---- */
+
+  it('REFUSES to index a project without the token', async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/entities?project=${encodeURIComponent(process.cwd())}`,
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('REFUSES a project path with traversal or shell characters', async () => {
+    for (const bad of ['../../etc', 'C:/p && calc', 'C:/p`id`']) {
+      const res = await fetch(
+        `http://127.0.0.1:${server.port}/api/entities?token=${server.token}&project=${encodeURIComponent(bad)}`,
+      );
+      const body = (await res.json()) as { error?: string };
+      expect(body.error).toBeDefined();
+    }
+  });
+
+  it('reports an unindexable project rather than crashing the server', async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/entities?token=${server.token}&project=${encodeURIComponent('E:/no/such/folder/here')}`,
+    );
+    const body = (await res.json()) as { error?: string; results?: unknown[] };
+    // Either an explicit error or an empty index - never a 500.
+    expect(res.status).toBe(200);
+    expect(body.error !== undefined || Array.isArray(body.results)).toBe(true);
+  }, 20_000);
+
+  it('REFUSES to generate a scenario without the token', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/scenario/generate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ target: 'X', control: 'Y', baseUrl: 'http://localhost:1' }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('REFUSES to generate a scenario pointed at a non-http URL', async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/scenario/generate?token=${server.token}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          project: process.cwd(),
+          target: 'X',
+          control: 'Y',
+          baseUrl: 'file:///etc/passwd',
+        }),
+      },
+    );
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toContain('http');
+  });
+
+  it('refuses to generate a scenario for an unknown component', async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/scenario/generate?token=${server.token}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          project: process.cwd(),
+          target: 'NoSuchComponent',
+          control: 'AlsoMissing',
+          baseUrl: 'http://localhost:1234',
+        }),
+      },
+    );
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toBeDefined();
+  }, 30_000);
 
   it('reports state the UI needs to guide the next step', async () => {
     const res = await fetch(`http://127.0.0.1:${server.port}/api/state?token=${server.token}`);

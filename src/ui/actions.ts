@@ -447,7 +447,7 @@ export function buildArgs(
 function validate(type: ParamType, value: string): string | undefined {
   if (value.length > 400) return undefined;
   // Control characters have no legitimate use in any of these.
-  if (/[ -]/.test(value)) return undefined;
+  if (/[\u0000-\u001f]/.test(value)) return undefined;
 
   switch (type) {
     case 'number':

@@ -30,6 +30,19 @@ export interface BrowserOptions {
   /** Slow every action down, for watching a scenario run. */
   slowMoMs?: number;
   /**
+   * Open a real, maximised window and let the page use its full size.
+   *
+   * Measurement runs want a FIXED viewport, because a layout that differs
+   * between runs makes the numbers incomparable. Sign-in is the opposite: a
+   * human has to read and use the page, and a 1440x900 box inside a large
+   * monitor - or worse, on a smaller laptop - can clip a login form or push
+   * the submit button out of view.
+   *
+   * So this is off by default and on only for the interactive flow.
+   */
+  maximized?: boolean;
+
+  /**
    * Path to a Playwright storage-state file: cookies and localStorage saved
    * from an earlier manual sign-in.
    *
@@ -79,11 +92,17 @@ export async function launchBrowser(options: BrowserOptions = {}): Promise<Brows
       '--disable-component-update',
       '--no-default-browser-check',
       '--no-first-run',
+      ...(options.maximized === true ? ['--start-maximized'] : []),
     ],
   });
 
   const context = await browser.newContext({
-    viewport: options.viewport ?? { width: 1440, height: 900 },
+    /**
+     * `viewport: null` makes the page track the real window size, so a
+     * maximised window gives a full-size, responsive page. Any fixed
+     * viewport would letterbox it regardless of how big the window is.
+     */
+    viewport: options.maximized === true ? null : (options.viewport ?? { width: 1440, height: 900 }),
     // A fresh context each run means no cached state carried between
     // investigations, so a "before" and "after" comparison is fair. The one
     // thing we deliberately carry over is a saved sign-in.

@@ -58,6 +58,9 @@ export async function captureLogin(options: LoginOptions): Promise<LoginResult> 
 
   const session = await launchBrowser({
     headed: true,
+    // A person has to read and use this page, so give it the whole window
+    // rather than the fixed viewport measurement runs need.
+    maximized: true,
     timeoutMs: options.timeoutMs ?? 300_000,
   });
 

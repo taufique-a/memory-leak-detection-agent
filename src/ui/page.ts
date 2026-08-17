@@ -181,6 +181,22 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 .fmeta{color:var(--muted);font-size:.72rem;white-space:nowrap}
 .facts{display:flex;gap:.3rem;opacity:.35;transition:opacity .15s}
 .frow:hover .facts{opacity:1}
+/* ---- entity search ---- */
+#entityResults{max-height:18rem;overflow:auto;margin-top:.5rem}
+.erow{display:flex;align-items:center;gap:.5rem;padding:.35rem .45rem;border-radius:5px;
+  cursor:pointer;border:1px solid transparent}
+.erow:hover{background:var(--code);border-color:var(--line)}
+.erow.sel{background:var(--code);border-color:var(--accent)}
+.ename{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:.85rem;font-weight:600}
+.eroute{font-size:.75rem;color:var(--muted);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;max-width:16rem}
+.efile{font-size:.7rem;color:var(--muted);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;max-width:18rem}
+.etag{font-size:.66rem;padding:.05em .4em;border-radius:3px;border:1px solid;white-space:nowrap}
+.etag.warn{color:var(--warn);border-color:var(--warn)}
+.etag.bad{color:var(--bad);border-color:var(--bad)}
+.etag.ok{color:var(--ok);border-color:var(--ok)}
 .mini{font-size:.72rem;padding:.18rem .5rem;border-radius:4px;
   background:transparent;color:var(--accent);border:1px solid var(--line);cursor:pointer;
   text-decoration:none;display:inline-block;line-height:1.4}
@@ -234,6 +250,20 @@ a{color:var(--accent)}
         Whatever port you serve on. This is used to decide which steps are ready, and
         pre-fills the sign-in URL. Press <strong>check</strong> after starting your app.
       </div>
+    </div>
+
+    <div class="banner" id="findBanner">
+      <strong>Find something to investigate</strong>
+      <div class="row" style="margin-top:.5rem">
+        <input type="text" id="entitySearch" placeholder="Search any component, route or selector — try energy, oee, report" style="flex:1;min-width:14rem">
+        <button class="ghost" id="entityRefresh" title="Re-scan the project">rescan</button>
+      </div>
+      <div class="sub" id="entityStatus" style="margin-top:.4rem">
+        Type to search every component in your project. Pick one and a scenario is
+        generated for it automatically.
+      </div>
+      <div id="entityResults"></div>
+      <div id="entityPick" style="display:none;margin-top:.6rem"></div>
     </div>
 
     <div class="banner warn">
@@ -493,6 +523,17 @@ async function run(actionId) {
     return;
   }
 
+  attachRun(result, action);
+}
+
+/**
+ * Wire the page to a run the server has already started.
+ *
+ * Kept separate from run() because a run can also be started by the entity
+ * search, which builds its parameters itself instead of reading them off a
+ * rendered form.
+ */
+function attachRun(result, action) {
   currentRun = result.id;
   $('running').innerHTML = '<span class="spinner"></span>' + esc(action.title);
   $('consolePanel').classList.add('running');
@@ -507,7 +548,7 @@ async function run(actionId) {
     $('reply').classList.add('on');
   }
 
-  $('out').textContent = '$ memory-agent ' + result.args.join(' ') + '\\n\\n';
+  $('out').textContent += '$ memory-agent ' + result.args.join(' ') + '\\n\\n';
 
   source = new EventSource('/api/stream?id=' + result.id + '&token=' + TOKEN);
   source.onmessage = (event) => {
@@ -582,6 +623,14 @@ const GROUP_LABEL = {
   scenarios: 'Scenarios',
 };
 
+/**
+ * Only what the last run produced.
+ *
+ * A list of everything ever written grows into dozens of near-identical
+ * filenames, and the one you actually want is buried. The server returns
+ * just the files newer than the current run's start - or, before any run,
+ * the single newest file so the panel is not empty.
+ */
 async function refreshFiles() {
   let data;
   try { data = await api('/api/files'); } catch { return; }
@@ -598,14 +647,17 @@ async function refreshFiles() {
     (groups[f.group] = groups[f.group] || []).push(f);
   }
 
-  let html = '';
+  let html = '<div class="status" style="padding:0 0 .4rem">' +
+    (files.length === 1 ? 'Latest file' : 'From the latest run — ' + files.length + ' files') +
+    '</div>';
+
   for (const key of ['reports', 'artifacts', 'scenarios']) {
     const list = groups[key];
     if (!list || !list.length) continue;
     html += '<div class="fgroup">' + esc(GROUP_LABEL[key] || key) +
       ' <span style="text-transform:none;letter-spacing:0">(' + list.length + ')</span></div>';
 
-    for (const f of list.slice(0, 40)) {
+    for (const f of list) {
       const href = '/api/download?path=' + encodeURIComponent(f.path) + '&token=' + TOKEN;
       // Show the filename prominently; the folder is already the group.
       const short = f.path.slice(f.path.indexOf('/') + 1);
@@ -654,6 +706,188 @@ $('stopBtn').addEventListener('click', async () => {
   if (currentRun) await api('/api/stop?id=' + currentRun, { method: 'POST' });
 });
 $('clearBtn').addEventListener('click', () => { $('out').textContent = ''; });
+
+/* ------------------------------------------------------------------ */
+/* Entity search                                                       */
+/* ------------------------------------------------------------------ */
+
+let entityControls = [];
+let selectedEntity = null;
+let searchTimer = null;
+
+function projectPath() {
+  const el = $('risk_project') || $('scan_project');
+  return (el && el.value) || DEFAULT_PROJECT;
+}
+
+async function searchEntities(refresh) {
+  const q = $('entitySearch').value.trim();
+  const project = projectPath();
+  if (!project) {
+    $('entityStatus').textContent = 'Set the project folder in step 2 first.';
+    return;
+  }
+
+  $('entityStatus').innerHTML = '<span class="spinner"></span>' +
+    (refresh ? 'Re-scanning the project (about 6 seconds)...' : 'Searching...');
+
+  let data;
+  try {
+    data = await api('/api/entities?project=' + encodeURIComponent(project) +
+      '&q=' + encodeURIComponent(q) + (refresh ? '&refresh=1' : ''));
+  } catch {
+    $('entityStatus').textContent = 'Search failed.';
+    return;
+  }
+
+  if (data.error) {
+    $('entityStatus').textContent = data.error;
+    $('entityResults').innerHTML = '';
+    return;
+  }
+
+  entityControls = data.controls || [];
+  const results = data.results || [];
+  $('entityStatus').textContent =
+    results.length + ' of ' + data.total + ' components' +
+    (q ? ' matching "' + q + '"' : ' — showing routed ones without ngOnDestroy first');
+
+  if (!results.length) {
+    $('entityResults').innerHTML = '<div class="sub" style="padding:.5rem">No match.</div>';
+    return;
+  }
+
+  $('entityResults').innerHTML = results.map((r, i) => {
+    const tags = [];
+    if (!r.investigable) tags.push('<span class="etag bad">static only</span>');
+    else if (r.ambiguousName) tags.push('<span class="etag warn">ambiguous route</span>');
+    if (!r.hasOnDestroy) tags.push('<span class="etag warn">no ngOnDestroy</span>');
+    return '<div class="erow" data-i="' + i + '">' +
+      '<div class="ename">' + esc(r.name) + '</div>' +
+      '<div class="eroute">' + esc(r.routes[0] || 'not routed') + '</div>' +
+      '<div class="efile">' + esc(r.file) + '</div>' +
+      tags.join('') +
+      '</div>';
+  }).join('');
+
+  for (const row of document.querySelectorAll('.erow')) {
+    row.addEventListener('click', () => {
+      for (const other of document.querySelectorAll('.erow')) other.classList.remove('sel');
+      row.classList.add('sel');
+      pickEntity(results[Number(row.getAttribute('data-i'))]);
+    });
+  }
+}
+
+function pickEntity(entity) {
+  selectedEntity = entity;
+  const box = $('entityPick');
+  box.style.display = 'block';
+
+  if (!entity.investigable) {
+    box.innerHTML =
+      '<div class="danger">' + esc(entity.blockedReason || 'Cannot be driven in a browser.') + '</div>' +
+      '<div class="sub">You can still analyse it statically: put <code>' +
+      esc(entity.file.split('/').slice(-1)[0].replace('.ts','')) +
+      '</code> into the filter on "Inspect one component" in step 2.</div>';
+    return;
+  }
+
+  const controls = entityControls.filter((c) => c.name !== entity.name);
+  box.innerHTML =
+    '<div class="sub"><strong>' + esc(entity.name) + '</strong> at <code>' +
+      esc(entity.routes[0]) + '</code>, waits for <code>&lt;' + esc(entity.selector) + '&gt;</code></div>' +
+    (entity.ambiguousName
+      ? '<div class="danger" style="margin-top:.3rem">' + esc(entity.blockedReason || '') + '</div>'
+      : '') +
+    '<div class="params" style="margin-top:.5rem">' +
+      '<label>Navigate away to<select id="pickControl">' +
+        controls.map((c) => '<option value="' + esc(c.name) + '">' + esc(c.name) +
+          ' — ' + esc(c.route) + '</option>').join('') +
+      '</select></label>' +
+      '<label>Iterations<input type="number" id="pickIterations" value="12" min="5" max="60"></label>' +
+      '<label>Saved session<input type="text" id="pickAuth" value=".auth/iosense.auth.json"></label>' +
+    '</div>' +
+    '<button id="pickGo">find and fix ' + esc(entity.name) + '</button>' +
+    '<button class="ghost" id="pickMeasure">just measure it</button>' +
+    '<span class="expect">3 to 5 minutes — static, runtime, heap, correlation, proposed fixes, report</span>';
+
+  $('pickGo').addEventListener('click', () => createAndRun('auto'));
+  $('pickMeasure').addEventListener('click', () => createAndRun('scenarioRun'));
+}
+
+async function createAndRun(actionId) {
+  if (!selectedEntity) return;
+  if (!appUrl) {
+    $('entityStatus').textContent = 'Set your app URL at the top first.';
+    return;
+  }
+
+  const project = projectPath();
+  $('pickGo').disabled = true;
+  $('pickMeasure').disabled = true;
+  $('pickGo').textContent = 'generating scenario...';
+
+  const payload = {
+    project: project,
+    target: selectedEntity.name,
+    control: $('pickControl').value,
+    baseUrl: appUrl,
+    authFile: $('pickAuth').value,
+    iterations: Number($('pickIterations').value) || 12,
+  };
+
+  const result = await api('/api/scenario/generate', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  $('pickGo').disabled = false;
+  $('pickMeasure').disabled = false;
+  $('pickGo').textContent = 'find and fix ' + selectedEntity.name;
+
+  if (result.error) {
+    $('out').textContent = 'Could not generate a scenario:\\n\\n' + result.error;
+    return;
+  }
+
+  // Show what was generated, and why it might need a human eye, BEFORE the
+  // run starts - a guessed selector is worth reading about up front.
+  $('out').textContent =
+    'Generated ' + result.file + '\\n' +
+    '  target : ' + result.target + '\\n' +
+    '  control: ' + result.control + '\\n\\n' +
+    (result.notes || []).map((n) => '  - ' + n).join('\\n') + '\\n\\n' +
+    'Starting...\\n\\n';
+
+  await refreshState();
+  await runWithScenario(actionId, result.file, project);
+}
+
+/** Start an action with an explicit scenario file, bypassing the dropdown. */
+async function runWithScenario(actionId, scenarioFile, project) {
+  const action = ACTIONS.find((a) => a.id === actionId);
+  if (!action || currentRun) return;
+
+  const params = { scenario: scenarioFile, project: project };
+  if (appUrl) params.__baseUrl = appUrl;
+
+  const result = await api('/api/run', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: actionId, params: params }),
+  });
+  if (result.error) { $('out').textContent += result.error; return; }
+  attachRun(result, action);
+}
+
+$('entitySearch').addEventListener('input', () => {
+  // Debounced: a scan is cached, but a request per keystroke is still waste.
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => searchEntities(false), 250);
+});
+$('entityRefresh').addEventListener('click', () => searchEntities(true));
 
 $('checkUrl').addEventListener('click', checkApp);
 $('appUrl').addEventListener('keydown', (e) => {

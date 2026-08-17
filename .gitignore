@@ -18,6 +18,11 @@ snapshots/
 *.cpuprofile
 traces/
 
+# Scenarios written by the UI's component search. Regenerated on demand from
+# the code, so committing them adds churn without adding information. The
+# hand-written ones in scenarios/ are tracked.
+scenarios/auto-*.json
+
 # Playwright
 playwright-report/
 test-results/

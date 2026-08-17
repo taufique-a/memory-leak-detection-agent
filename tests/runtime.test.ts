@@ -14,7 +14,7 @@
 import { buildLeakyPage, describeFixture } from '../src/runtime/fixtures/leakyPage';
 import { formatBytes, formatDelta, type MemorySample } from '../src/runtime/metrics';
 import { analyseTrend, fitLine } from '../src/runtime/trend';
-import { isChromeAvailable } from '../src/runtime/browser';
+import { isChromeAvailable, launchBrowser } from '../src/runtime/browser';
 import { runSelfTest } from '../src/runtime/selftest';
 import { parseSelfTestArgs } from '../src/commands/selftest';
 
@@ -304,6 +304,42 @@ describe('browser integration', () => {
     }
     expect(typeof chromeAvailable).toBe('boolean');
   });
+
+  it(
+    'gives a measurement run a FIXED viewport, so two runs are comparable',
+    async () => {
+      if (!chromeAvailable) return;
+      const session = await launchBrowser({});
+      try {
+        expect(session.page.viewportSize()).toEqual({ width: 1440, height: 900 });
+      } finally {
+        await session.close();
+      }
+    },
+    60_000,
+  );
+
+  it(
+    'gives the sign-in window the whole screen, so the login page is responsive',
+    async () => {
+      /**
+       * A person has to read and use the sign-in page. A fixed 1440x900 box
+       * inside a maximised window letterboxes it, and on a smaller laptop it
+       * clips the form - the submit button ends up off-screen.
+       *
+       * `viewportSize() === null` is exactly the Playwright signal that the
+       * page tracks the real window instead of a fixed box.
+       */
+      if (!chromeAvailable) return;
+      const session = await launchBrowser({ maximized: true });
+      try {
+        expect(session.page.viewportSize()).toBeNull();
+      } finally {
+        await session.close();
+      }
+    },
+    60_000,
+  );
 
   it(
     'THE CRITICAL TEST: detects a planted leak and clears an identical clean page',

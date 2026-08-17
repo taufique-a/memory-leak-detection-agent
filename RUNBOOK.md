@@ -78,15 +78,45 @@ npm run dev -- ui --no-open            # do not launch a browser
 terminal:
 
 - **Signing in.** A real Chrome window opens, you log in, then press
-  *"I have signed in"* in the UI. No switching back to a terminal.
+  *"I have signed in"* in the UI. No switching back to a terminal. The window
+  is **maximised and the page uses its full size**, so the login form is
+  responsive rather than letterboxed into a fixed 1440×900 box.
 - **Applying a fix.** Step 7's *"Apply a fix"* writes to your code — the only
   action here that does. It requires you to type **`APPLY`** first, then shows
   each diff and asks about it individually. Answer with the **yes** / **no**
   buttons.
 
-**Generated files** are listed at the bottom right: reports, JSON results and
-heap snapshots. Each has **copy** (contents to clipboard) and **download**.
-There is also **copy output** for the console panel.
+### Investigating **any** component, not just the two written by hand
+
+Near the top of the page there is a **"Find something to investigate"** search
+box. Type part of a class name, selector or route — `energy`, `oee`, `report` —
+and it searches every component in your project (3,195 of them in IOSense).
+
+Pick one and the page shows its route and its render marker, lets you choose a
+second route to navigate away to, and then **generates a scenario file for it
+and runs the whole find-and-fix pipeline** — static analysis, measurement, heap
+snapshots, correlation, proposed fixes and a report. *"Just measure it"* runs
+only the measurement, which is about a minute instead of five.
+
+The search is honest about what it cannot do:
+
+| Badge | Meaning |
+|---|---|
+| **static only** | No route reaches it, or it has no selector — so there is no page to navigate to, or nothing to wait for after navigating. Use *"Inspect one component"* in step 2 instead. |
+| **ambiguous route** | More than one class in the project has this name. Routes are matched **by class name**, so the route shown may belong to a different copy — IOSense has five classes called `OverviewComponent`. Check the file before trusting the generated scenario. |
+| **no ngOnDestroy** | Declares no teardown hook. Not proof of anything, but the more interesting hit. |
+
+Two things the generator refuses to do: it will **never** pick an
+authentication route (`/login`, `/logout`, …) as the place to navigate away to,
+because that ends the session mid-run; and it will **never overwrite a
+scenario it did not generate**.
+
+Link selectors are **guessed** from the route path, so the notes printed before
+the run tell you what to fix if a step times out. See section 6.
+
+**Generated files** are listed at the bottom right — **only what the latest run
+produced**, not the whole history. Each has **copy** (contents to clipboard)
+and **download**. There is also **copy output** for the console panel.
 
 The `.auth/` directory is deliberately *not* downloadable — it holds live
 session tokens.
@@ -291,16 +321,20 @@ Takes about 45 seconds. Then open the HTML report in `reports\`.
 | `iosense-overview-devices.json` | Overview ↔ Devices | Main investigation |
 | `isolate-overview.json` | Overview ↔ Clusters | Isolates Overview's contribution |
 | `isolate-devices.json` | Devices ↔ Clusters | Control — Overview never mounts |
+| `auto-*.json` | whatever you picked | Written by the UI search — safe to delete |
 
 Clusters (`/load-entity-gen`) measured ≈ 0.01 MB per mount, so it is a **valid
 control**: any growth in a loop containing it belongs to the other route.
+
+For anything else, do not hand-write a scenario: use the search box in the UI
+(section 2) and let it generate one.
 
 ---
 
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~28s, 300 tests)
+npm test                       # everything (~36s, 496 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -347,6 +381,16 @@ The selector did not appear. Common causes, in order of likelihood:
    Stick to top-level links: `/overview`, `/devices`, `/load-entity-gen`,
    `/triggers`.
 3. The page genuinely did not load — run with `--headed` and watch.
+
+**In a generated `auto-*.json` scenario this is expected sometimes.** The link
+selector is guessed from the route path — the UI prints a note saying so before
+the run starts. Open your app, inspect the real nav link, and edit the
+`selector` in `scenarios/auto-*.json`. Everything else in the file is derived
+from the code and is correct.
+
+If the search shows the component with an **ambiguous route** badge, suspect the
+route itself first: several classes share that name, and the route may belong to
+a different one.
 
 ### Route render markers
 Wait on the component's own element name: `<overview>`, `<devices>`,
@@ -405,7 +449,11 @@ src/
   scenario/    journey definition, validation, runner, login capture
   report/      investigation model, Markdown and HTML renderers
   commands/    one file per CLI command
-tests/         300 tests, mirrors src/
+  fix/         git safety, fix proposals, guarded apply
+  heap/        snapshot capture, parsing, retaining paths
+  verify/      the project's own build/lint/test, before-and-after compare
+  ui/          local server, action allowlist, page, entity search
+tests/         496 tests, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)
@@ -450,6 +498,7 @@ Two constraints worth knowing before you edit:
 | 18 Autonomous investigation | ✅ | `auto` — the whole pipeline, with early vetoes |
 | 19 Advanced | ⬜ | CI, investigation history, IDE integration |
 | — Guided UI | ✅ | `ui` — local web interface, step 0 to step 8 |
+| — Dynamic targets | ✅ | search any of 3,195 components, scenario generated for the one you pick |
 
 **Phase 12 is deliberately partial.** The evidence bundle and analysis prompt
 are complete and usable today — `writeBundleForManualUse()` writes both to
