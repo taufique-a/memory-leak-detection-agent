@@ -29,18 +29,32 @@ describe('action allowlist', () => {
     expect('args' in built && built.args[0]).toBe('scan');
   });
 
-  it('has no action that applies fixes', () => {
-    // Applying belongs in a terminal next to the code, not behind a button.
+  it('EXACTLY ONE action can write, and it demands a typed confirmation', () => {
+    const writers = ACTIONS.filter((action) => {
+      const built = buildArgs(action, {
+        project: 'C:/p',
+        scenario: 'scenarios/x.json',
+        url: 'http://localhost:1',
+      });
+      return 'args' in built && built.args.includes('--apply');
+    });
+
+    expect(writers).toHaveLength(1);
+    expect(writers[0]?.id).toBe('fixApply');
+    expect(writers[0]?.requiresConfirmation).toBe(true);
+    expect(writers[0]?.confirmWord).toBe('APPLY');
+  });
+
+  it('NOTHING can pass --yes, so per-change approval can never be skipped', () => {
+    // --yes answers every prompt automatically. Exposing it through a web
+    // page would turn "approve each change" into "approve nothing".
     for (const action of ACTIONS) {
       const built = buildArgs(action, {
         project: 'C:/p',
         scenario: 'scenarios/x.json',
         url: 'http://localhost:1',
       });
-      if ('args' in built) {
-        expect(built.args).not.toContain('--apply');
-        expect(built.args).not.toContain('--yes');
-      }
+      if ('args' in built) expect(built.args).not.toContain('--yes');
     }
   });
 });
@@ -127,9 +141,21 @@ describe('page', () => {
     expect(page).not.toContain('fetch(\'http');
   });
 
-  it('tells the user plainly that nothing is modified', () => {
-    expect(page).toContain('Read-only');
+  it('states clearly which action can write, rather than burying it', () => {
+    expect(page).toContain('One action writes to your code');
+    expect(page).toContain('rollback');
     expect(page).toContain('nothing leaves this machine');
+  });
+
+  it('offers copy and download for generated files', () => {
+    expect(page).toContain('Generated files');
+    expect(page).toContain('copy output');
+    expect(page).toContain('/api/download');
+  });
+
+  it('has reply controls so prompts can be answered here', () => {
+    expect(page).toContain('I have signed in');
+    expect(page).toContain('/api/input');
   });
 
   it('supports both colour schemes', () => {
@@ -274,6 +300,81 @@ describe('server security', () => {
     });
     const body = (await res.json()) as { error?: string };
     expect(body.error).toBeDefined();
+  });
+
+  /* ---- artifact download ---- */
+
+  it('lists generated files', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/files?token=${server.token}`);
+    const body = (await res.json()) as { files?: unknown[] };
+    expect(Array.isArray(body.files)).toBe(true);
+  });
+
+  it.each([
+    ['parent traversal', '../package.json'],
+    ['deep traversal', '../../../../Windows/System32/drivers/etc/hosts'],
+    ['absolute path', 'C:/Windows/win.ini'],
+    ['outside allowlist', 'src/cli.ts'],
+    ['the auth directory', '.auth/iosense.auth.json'],
+  ])('REFUSES to download %s', async (_label, badPath) => {
+    // .auth holds live session tokens. It is not in the allowlist, and this
+    // asserts that staying true - a download endpoint that can reach it
+    // would hand out credentials to anything that guessed the URL.
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/download?token=${server.token}&path=${encodeURIComponent(badPath)}`,
+    );
+    expect([400, 403, 404]).toContain(res.status);
+  });
+
+  it('serves a file inside the allowlist', async () => {
+    const fs = await import('node:fs');
+    const pathMod = await import('node:path');
+    const dir = pathMod.join(process.cwd(), 'artifacts');
+    fs.mkdirSync(dir, { recursive: true });
+    const name = `ui-download-test-${Date.now()}.txt`;
+    fs.writeFileSync(pathMod.join(dir, name), 'hello from the artifact', 'utf8');
+
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${server.port}/api/download?token=${server.token}&path=${encodeURIComponent('artifacts/' + name)}`,
+      );
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('hello from the artifact');
+      // Never text/html: a report rendered in this origin could read the
+      // token out of the URL.
+      expect(res.headers.get('content-type')).not.toContain('text/html');
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    } finally {
+      fs.rmSync(pathMod.join(dir, name), { force: true });
+    }
+  });
+
+  it('REFUSES a download without the token', async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/download?path=${encodeURIComponent('artifacts/x.json')}`,
+    );
+    expect(res.status).toBe(403);
+  });
+
+  /* ---- replying to a prompt ---- */
+
+  it('refuses input when nothing is running', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/input?id=nope&token=${server.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'y' }),
+    });
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toContain('no running command');
+  });
+
+  it('REFUSES input without the token', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/input?id=x`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'y' }),
+    });
+    expect(res.status).toBe(403);
   });
 
   it('reports state the UI needs to guide the next step', async () => {

@@ -14,12 +14,18 @@
  * An allowlist removes the entire class of problem rather than trying to
  * sanitise it.
  *
- * WHY --apply IS NOT HERE
- * -----------------------
- * Nothing in this list writes to the target repository. Fix application
- * needs a diff reviewed and confirmed per change, which belongs in a
- * terminal where the person is already looking at their code - not behind a
- * button that is one mis-click away. The UI proposes; the CLI applies.
+ * ABOUT THE ONE ACTION THAT WRITES
+ * --------------------------------
+ * `fixApply` is the only entry here that can modify the target repository,
+ * and it keeps every safety property the CLI has: it refuses a dirty working
+ * tree, works only on a dedicated branch, records a rollback baseline, and
+ * asks for approval on EACH change separately. The approval is answered
+ * through the UI's stdin channel rather than a terminal - the gate is in the
+ * same place, the person is just reading the diff in a browser.
+ *
+ * It carries `requiresConfirmation`, which makes the page demand a typed
+ * confirmation before the run can even start. Nothing else in this list can
+ * write anything.
  */
 
 export type ParamType = 'scenario' | 'project' | 'number' | 'flag' | 'url' | 'authFile';
@@ -49,6 +55,18 @@ export interface ActionDefinition {
   build: (values: Record<string, string>) => string[];
   /** True when this needs the app running and a saved session. */
   needsApp: boolean;
+  /**
+   * True when the command will pause and wait for the user to answer
+   * something - a login to complete, or a per-change approval. The page
+   * shows the reply controls for these.
+   */
+  interactive?: boolean;
+  /** Shown above the reply box while the run is waiting. */
+  interactiveHint?: string;
+  /** True when the page must demand a typed confirmation before starting. */
+  requiresConfirmation?: boolean;
+  /** What the user must type to confirm. */
+  confirmWord?: string;
 }
 
 /** Every action the UI may start. */
@@ -117,7 +135,11 @@ export const ACTIONS: readonly ActionDefinition[] = [
     why:
       'The agent never sees your password. A browser opens, you sign in normally, and ' +
       'only the session cookie is saved. Sessions expire - repeat this when a run says so.',
-    expect: 'as long as you take, then press Enter IN THE TERMINAL',
+    expect: 'as long as you take, then press "I have signed in"',
+    interactive: true,
+    interactiveHint:
+      'A Chrome window has opened. Sign in there, and once you are on a normal page of ' +
+      'the application, press the button below.',
     params: [
       { name: 'url', type: 'url', required: true, label: 'App URL', default: 'http://localhost:7400' },
       { name: 'authFile', type: 'authFile', required: false, label: 'Save to', default: '.auth/iosense.auth.json' },
@@ -206,6 +228,30 @@ export const ACTIONS: readonly ActionDefinition[] = [
     ],
     build: (v) => ['fix', v['project'] ?? '', '--scenario', v['scenario'] ?? ''],
     needsApp: true,
+  },
+  {
+    id: 'fixApply',
+    step: 7,
+    title: 'Apply a fix',
+    summary: 'Writes to your code. Each change confirmed separately.',
+    why:
+      'Keeps every safety property: refuses a dirty working tree, works only on a ' +
+      'memory-agent branch so your own is untouched, records a rollback commit, and asks ' +
+      'about each change on its own. After applying it runs your build, lint and tests. ' +
+      'Rollback commands are printed at the end.',
+    expect: '3 to 6 minutes, and it will ask you questions',
+    params: [
+      { name: 'project', type: 'project', required: true, label: 'Project folder' },
+      { name: 'scenario', type: 'scenario', required: true, label: 'Scenario' },
+    ],
+    build: (v) => ['fix', v['project'] ?? '', '--scenario', v['scenario'] ?? '', '--apply'],
+    needsApp: true,
+    interactive: true,
+    interactiveHint:
+      'The run will show a diff and ask "Apply ... ? [y/N]". Answer each one. Anything ' +
+      'other than y is treated as no.',
+    requiresConfirmation: true,
+    confirmWord: 'APPLY',
   },
   {
     id: 'investigate',

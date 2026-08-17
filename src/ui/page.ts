@@ -54,7 +54,7 @@ const STEP_NOTES: Record<number, string> = {
   4: 'Validate first - the warnings catch setups that would give you a wrong answer.',
   5: 'Heap snapshots. Slower, but this is what names the actual object.',
   6: 'Ties the code analysis to what the browser actually did.',
-  7: 'Proposals and diffs only. Applying is done from a terminal, deliberately.',
+  7: 'See what would change before anything changes. Applying is separate and asks per change.',
   8: 'A document you can send to someone.',
 };
 
@@ -71,6 +71,10 @@ export function renderPage(options: PageOptions): string {
       expect: a.expect,
       needsApp: a.needsApp,
       params: a.params,
+      interactive: a.interactive === true,
+      interactiveHint: a.interactiveHint ?? '',
+      requiresConfirmation: a.requiresConfirmation === true,
+      confirmWord: a.confirmWord ?? '',
     })),
   );
 
@@ -140,6 +144,19 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 .banner{padding:.7rem 1rem;border-radius:6px;margin-bottom:1rem;font-size:.86rem;
   border:1px solid var(--line);background:var(--card)}
 .banner.warn{border-left:4px solid var(--warn)}
+.action.writes{border-left:4px solid var(--bad)}
+.danger{color:var(--bad);font-size:.82rem;margin:.35rem 0}
+#reply{padding:.7rem 1rem;border-top:1px solid var(--line);background:var(--card);display:none}
+#reply.on{display:block}
+#reply .hint{font-size:.82rem;color:var(--muted);margin-bottom:.5rem}
+#reply .row{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center}
+#replyText{flex:1;min-width:8rem}
+.files{max-height:16rem;overflow:auto;font-size:.82rem}
+.files table{width:100%;border-collapse:collapse}
+.files td{padding:.25rem .4rem;border-bottom:1px solid var(--line);vertical-align:middle}
+.files td.r{text-align:right;color:var(--muted);white-space:nowrap}
+.files a{text-decoration:none}
+.mini{font-size:.74rem;padding:.2rem .5rem}
 ul.state{list-style:none;padding:0;margin:.4rem 0 0;font-size:.83rem}
 ul.state li{padding:.15rem 0;color:var(--muted)}
 code{background:var(--code);padding:.1em .35em;border-radius:3px;font-size:.85em}
@@ -159,9 +176,10 @@ a{color:var(--accent)}
 <main>
   <section id="steps">
     <div class="banner warn">
-      <strong>Read-only.</strong> Nothing here modifies your source code. Fix proposals
-      show diffs; applying them is done from a terminal on purpose, so a change is never
-      one mis-click away.
+      <strong>One action writes to your code</strong> &mdash; &ldquo;Apply a fix&rdquo; in
+      step 7, which asks you to type a confirmation first and then approves each change
+      separately. Everything else here only reads. Applying refuses a dirty working tree,
+      works on its own branch, and prints rollback commands when it finishes.
     </div>
     <div id="stepList"></div>
   </section>
@@ -171,15 +189,40 @@ a{color:var(--accent)}
       <h2>
         <span id="running">idle</span>
         <span>
-          <button class="ghost" id="stopBtn" disabled>stop</button>
-          <button class="ghost" id="clearBtn">clear</button>
+          <button class="ghost mini" id="copyBtn">copy output</button>
+          <button class="ghost mini" id="stopBtn" disabled>stop</button>
+          <button class="ghost mini" id="clearBtn">clear</button>
         </span>
       </h2>
       <pre id="out">Pick a step on the left.
 
 If you have never run this before, start with "Try it first" - it needs no
 app and no login, and shows what a real result looks like.</pre>
+
+      <div id="reply">
+        <div class="hint" id="replyHint"></div>
+        <div class="row">
+          <button id="replyEnter">I have signed in / continue</button>
+          <button class="ghost" id="replyYes">yes</button>
+          <button class="ghost" id="replyNo">no</button>
+          <input type="text" id="replyText" placeholder="or type an answer">
+          <button class="ghost" id="replySend">send</button>
+        </div>
+      </div>
+
       <div class="status" id="status">&nbsp;</div>
+    </div>
+
+    <div id="console" style="position:static;margin-top:1rem">
+      <h2>
+        <span>Generated files</span>
+        <button class="ghost mini" id="filesRefresh">refresh</button>
+      </h2>
+      <div class="files" id="files"><div class="status">nothing yet</div></div>
+      <div class="status">
+        Reports open in a new tab. <strong>Copy</strong> puts the file contents on your
+        clipboard; <strong>download</strong> saves it.
+      </div>
     </div>
   </section>
 </main>
@@ -266,11 +309,17 @@ function render() {
     if (STEP_NOTES[step]) html += '<div class="note">' + esc(STEP_NOTES[step]) + '</div>';
     for (const a of actions) {
       const blocked = blockedReason(a);
-      html += '<div class="action">' +
+      html += '<div class="action' + (a.requiresConfirmation ? ' writes' : '') + '">' +
         '<h3>' + esc(a.title) + '</h3>' +
         '<div class="summary">' + esc(a.summary) + '</div>' +
         '<details><summary>why this matters</summary><div class="why">' + esc(a.why) + '</div></details>' +
         '<div class="params">' + a.params.map((p) => paramField(a, p)).join('') + '</div>' +
+        (a.requiresConfirmation
+          ? '<div class="danger">This modifies files in your project. Type <code>' +
+            esc(a.confirmWord) + '</code> to enable it.</div>' +
+            '<div class="params"><label>Confirmation' +
+            '<input type="text" id="' + a.id + '_confirm" placeholder="' + esc(a.confirmWord) + '"></label></div>'
+          : '') +
         '<button data-action="' + a.id + '"' + (blocked ? ' disabled' : '') + '>run</button>' +
         '<span class="expect">' + esc(a.expect) + '</span>' +
         (blocked ? '<div class="blocked">' + esc(blocked) + '</div>' : '') +
@@ -316,6 +365,17 @@ async function run(actionId) {
   const action = ACTIONS.find((a) => a.id === actionId);
   if (!action) return;
 
+  /* A writing action needs the confirmation word typed exactly. */
+  if (action.requiresConfirmation) {
+    const field = $(action.id + '_confirm');
+    if (!field || field.value.trim() !== action.confirmWord) {
+      $('out').textContent =
+        'Not started.\\n\\nThis action modifies files in your project, so it needs the ' +
+        'word ' + action.confirmWord + ' typed into the confirmation box first.';
+      return;
+    }
+  }
+
   $('out').textContent = '';
   $('status').textContent = '';
   const result = await api('/api/run', {
@@ -333,6 +393,12 @@ async function run(actionId) {
   $('running').textContent = 'running: ' + action.title;
   $('stopBtn').disabled = false;
   for (const b of document.querySelectorAll('button[data-action]')) b.disabled = true;
+
+  /* Show the reply controls for commands that will ask something. */
+  if (action.interactive) {
+    $('replyHint').textContent = action.interactiveHint;
+    $('reply').classList.add('on');
+  }
 
   $('out').textContent = '$ memory-agent ' + result.args.join(' ') + '\\n\\n';
 
@@ -356,12 +422,92 @@ function finish(exitCode) {
   currentRun = null;
   $('running').textContent = 'idle';
   $('stopBtn').disabled = true;
+  $('reply').classList.remove('on');
   $('status').innerHTML = exitCode === 0
     ? '<span class="pill ok">finished</span> exit 0'
     : '<span class="pill ' + (exitCode === null ? 'warn' : 'bad') + '">finished</span> exit ' + exitCode +
       ' — a non-zero exit is not always a failure: some commands use it to report a finding.';
   refreshState();
+  refreshFiles();
 }
+
+/* ---- answering a prompt ---- */
+async function reply(text) {
+  if (!currentRun) return;
+  await api('/api/input?id=' + currentRun, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: text }),
+  });
+  $('replyText').value = '';
+}
+
+$('replyEnter').addEventListener('click', () => reply(''));
+$('replyYes').addEventListener('click', () => reply('y'));
+$('replyNo').addEventListener('click', () => reply('n'));
+$('replySend').addEventListener('click', () => reply($('replyText').value));
+$('replyText').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); reply($('replyText').value); }
+});
+
+/* ---- generated files ---- */
+function humanBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+
+async function refreshFiles() {
+  let data;
+  try { data = await api('/api/files'); } catch { return; }
+  const files = data.files || [];
+  if (!files.length) {
+    $('files').innerHTML = '<div class="status">nothing yet — run something first</div>';
+    return;
+  }
+  let html = '<table>';
+  for (const f of files.slice(0, 60)) {
+    const href = '/api/download?path=' + encodeURIComponent(f.path) + '&token=' + TOKEN;
+    html += '<tr>' +
+      '<td><a href="' + href + '" target="_blank" rel="noopener">' + esc(f.path) + '</a></td>' +
+      '<td class="r">' + humanBytes(f.bytes) + '</td>' +
+      '<td class="r">' + f.ageMinutes + 'm</td>' +
+      '<td class="r">' +
+        (f.textual ? '<button class="ghost mini" data-copy="' + esc(f.path) + '">copy</button> ' : '') +
+        '<a class="ghost mini" href="' + href + '" download>download</a>' +
+      '</td></tr>';
+  }
+  html += '</table>';
+  $('files').innerHTML = html;
+
+  for (const btn of document.querySelectorAll('button[data-copy]')) {
+    btn.addEventListener('click', async () => {
+      const p = btn.getAttribute('data-copy');
+      try {
+        const res = await fetch('/api/download?path=' + encodeURIComponent(p) + '&token=' + TOKEN);
+        await navigator.clipboard.writeText(await res.text());
+        btn.textContent = 'copied';
+        setTimeout(() => { btn.textContent = 'copy'; }, 1500);
+      } catch {
+        btn.textContent = 'failed';
+        setTimeout(() => { btn.textContent = 'copy'; }, 1500);
+      }
+    });
+  }
+}
+
+$('filesRefresh').addEventListener('click', refreshFiles);
+
+$('copyBtn').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText($('out').textContent);
+    $('copyBtn').textContent = 'copied';
+    setTimeout(() => { $('copyBtn').textContent = 'copy output'; }, 1500);
+  } catch {
+    $('copyBtn').textContent = 'failed';
+    setTimeout(() => { $('copyBtn').textContent = 'copy output'; }, 1500);
+  }
+});
 
 $('stopBtn').addEventListener('click', async () => {
   if (currentRun) await api('/api/stop?id=' + currentRun, { method: 'POST' });
@@ -369,7 +515,8 @@ $('stopBtn').addEventListener('click', async () => {
 $('clearBtn').addEventListener('click', () => { $('out').textContent = ''; });
 
 refreshState();
-setInterval(() => { if (!currentRun) refreshState(); }, 15000);
+refreshFiles();
+setInterval(() => { if (!currentRun) { refreshState(); refreshFiles(); } }, 15000);
 </script>
 </body>
 </html>`;

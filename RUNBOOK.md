@@ -74,9 +74,27 @@ npm run dev -- ui --port 8080          # fixed port
 npm run dev -- ui --no-open            # do not launch a browser
 ```
 
-**What the UI will not do:** apply a fix. It shows proposals and diffs; applying
-is a terminal-only operation, so a change to your source is never one mis-click
-away.
+**Everything happens in the page**, including the two things that used to need a
+terminal:
+
+- **Signing in.** A real Chrome window opens, you log in, then press
+  *"I have signed in"* in the UI. No switching back to a terminal.
+- **Applying a fix.** Step 7's *"Apply a fix"* writes to your code — the only
+  action here that does. It requires you to type **`APPLY`** first, then shows
+  each diff and asks about it individually. Answer with the **yes** / **no**
+  buttons.
+
+**Generated files** are listed at the bottom right: reports, JSON results and
+heap snapshots. Each has **copy** (contents to clipboard) and **download**.
+There is also **copy output** for the console panel.
+
+The `.auth/` directory is deliberately *not* downloadable — it holds live
+session tokens.
+
+**Applying keeps every safety property:** refuses a dirty working tree, works
+only on a `memory-agent/<id>` branch, records a rollback commit, approves each
+change separately, and runs your build/lint/tests afterwards. The `--yes`
+flag that would skip all the prompts is not reachable from the UI at all.
 
 **Security.** The server executes commands, so it is locked down: bound to
 `127.0.0.1` only, a random token required on every request (it is in the URL
