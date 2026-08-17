@@ -15,6 +15,7 @@ import * as path from 'node:path';
 
 import { startFixtureServer } from '../runtime/fixtures/server';
 import { formatBytes, formatDelta } from '../runtime/metrics';
+import { extractBaseUrlArg, loadScenarioFile as loadSharedScenario } from '../scenario/load';
 import { captureLogin } from '../scenario/login';
 import { runScenario, ScenarioError, type ScenarioRun } from '../scenario/runner';
 import type { Scenario } from '../scenario/types';
@@ -337,7 +338,15 @@ function loadScenario(file: string): Scenario | string {
 }
 
 function doValidate(args: string[]): number {
-  const file = args[0];
+  // Accept --base-url so validation describes the configuration that will
+  // actually run, rather than silently ignoring a flag every sibling
+  // command honours.
+  const extracted = extractBaseUrlArg(args);
+  if (extracted.error !== undefined) {
+    console.error(extracted.error);
+    return 1;
+  }
+  const file = extracted.rest[0];
   if (file === undefined) {
     console.error('validate requires a scenario file');
     return 1;
@@ -355,10 +364,17 @@ function doValidate(args: string[]): number {
     return 1;
   }
 
+  if (extracted.baseUrl !== undefined) {
+    (parsed as { baseUrl?: string }).baseUrl = extracted.baseUrl;
+  }
+
   const result = validateScenario(parsed);
 
   console.log('');
   console.log(`  ${colour.cyan(target)}`);
+  if (extracted.baseUrl !== undefined) {
+    console.log(`  ${colour.dim('checked against ' + extracted.baseUrl)}`);
+  }
 
   if (result.errors.length > 0) {
     heading('ERRORS');
@@ -396,6 +412,17 @@ async function doRun(args: string[]): Promise<number> {
   let jsonOut: string | undefined;
   let slowMo: number | undefined;
 
+  // --base-url re-points the scenario for this run. The port is the
+  // developer's choice and changes constantly; a file that hardcodes one
+  // should not be the reason a run fails with ERR_CONNECTION_REFUSED.
+  const extracted = extractBaseUrlArg(args);
+  if (extracted.error !== undefined) {
+    console.error(extracted.error);
+    return 1;
+  }
+  const baseUrlOverride = extracted.baseUrl;
+  args = extracted.rest;
+
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === undefined) continue;
@@ -428,7 +455,9 @@ async function doRun(args: string[]): Promise<number> {
     return 1;
   }
 
-  const loaded = loadScenario(file);
+  const loaded = loadSharedScenario(file, {
+    ...(baseUrlOverride !== undefined ? { baseUrl: baseUrlOverride } : {}),
+  });
   if (typeof loaded === 'string') {
     console.error(loaded);
     return 1;

@@ -37,7 +37,7 @@ import { askLine } from '../utils/prompt';
 import { runVerification } from '../verify/checks';
 import { compareBeforeAfter, deriveVerificationStatus } from '../verify/compare';
 import type { CorrelationResult } from '../types/correlation';
-import { loadScenarioFile } from './correlate';
+import { extractBaseUrlArg, loadScenarioFile } from '../scenario/load';
 import {
   clearProgressLine,
   colour,
@@ -58,6 +58,8 @@ export interface AutoArgs {
   maxFixes: number;
   useTypes: boolean;
   skipHeap: boolean;
+  /** Overrides the scenario's own baseUrl for this run. */
+  baseUrl?: string;
 }
 
 export function parseAutoArgs(args: string[]): AutoArgs | string {
@@ -68,6 +70,11 @@ export function parseAutoArgs(args: string[]): AutoArgs | string {
   let maxFixes = 3;
   let useTypes = false;
   let skipHeap = false;
+
+  const extracted = extractBaseUrlArg(args);
+  if (extracted.error !== undefined) return extracted.error;
+  const baseUrl = extracted.baseUrl;
+  args = extracted.rest;
 
   const valueOf = (arg: string, prefix: string, next: string | undefined): string | undefined =>
     arg.startsWith(prefix) ? arg.slice(prefix.length) : next;
@@ -109,7 +116,16 @@ export function parseAutoArgs(args: string[]): AutoArgs | string {
   if (projectPath === undefined) return 'auto requires a project path';
   if (scenarioFile === undefined) return 'auto requires --scenario <file>';
 
-  return { projectPath, scenarioFile, outDir, apply, maxFixes, useTypes, skipHeap };
+  return {
+    projectPath,
+    scenarioFile,
+    outDir,
+    apply,
+    maxFixes,
+    useTypes,
+    skipHeap,
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
+  };
 }
 
 /** One stage of the pipeline, for the run log in the report. */
@@ -129,7 +145,9 @@ export async function runAuto(args: string[]): Promise<number> {
   }
 
   const projectRoot = path.resolve(parsed.projectPath);
-  const scenario = loadScenarioFile(parsed.scenarioFile);
+  const scenario = loadScenarioFile(parsed.scenarioFile, {
+    ...(parsed.baseUrl !== undefined ? { baseUrl: parsed.baseUrl } : {}),
+  });
   if (typeof scenario === 'string') {
     console.error(scenario);
     return 1;
@@ -383,7 +401,9 @@ function finish(
   conclusion: string,
   proposals: ProposedFix[] = [],
 ): number {
-  const scenarioObj = loadScenarioFile(parsed.scenarioFile);
+  const scenarioObj = loadScenarioFile(parsed.scenarioFile, {
+    ...(parsed.baseUrl !== undefined ? { baseUrl: parsed.baseUrl } : {}),
+  });
   const investigation = buildInvestigation(risk, {
     ...(run !== undefined ? { scenarioRun: run } : {}),
     ...(run !== undefined && typeof scenarioObj !== 'string' ? { scenario: scenarioObj } : {}),

@@ -12,8 +12,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { investigateHeap, type HeapInvestigationResult } from '../heap/investigate';
+import { extractBaseUrlArg, loadScenarioFile } from '../scenario/load';
 import { ScenarioError } from '../scenario/runner';
-import type { Scenario } from '../scenario/types';
 import { validateScenario } from '../scenario/validate';
 import { colour, duration, field, heading, info, num, warn } from '../utils/logger';
 
@@ -23,6 +23,8 @@ export interface HeapArgs {
   jsonOut?: string;
   traceTop: number;
   headed: boolean;
+  /** Overrides the scenario's own baseUrl for this run. */
+  baseUrl?: string;
 }
 
 export function parseHeapArgs(args: string[]): HeapArgs | string {
@@ -31,6 +33,11 @@ export function parseHeapArgs(args: string[]): HeapArgs | string {
   let jsonOut: string | undefined;
   let traceTop = 3;
   let headed = false;
+
+  const extracted = extractBaseUrlArg(args);
+  if (extracted.error !== undefined) return extracted.error;
+  const baseUrl = extracted.baseUrl;
+  args = extracted.rest;
 
   const valueOf = (arg: string, prefix: string, next: string | undefined): string | undefined =>
     arg.startsWith(prefix) ? arg.slice(prefix.length) : next;
@@ -75,6 +82,7 @@ export function parseHeapArgs(args: string[]): HeapArgs | string {
     ...(jsonOut !== undefined ? { jsonOut } : {}),
     traceTop,
     headed,
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
   };
 }
 
@@ -91,23 +99,16 @@ export async function runHeap(args: string[]): Promise<number> {
     return 1;
   }
 
-  let raw = fs.readFileSync(target, 'utf8');
-  if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-
-  let scenario: Scenario;
-  try {
-    scenario = JSON.parse(raw) as Scenario;
-  } catch (err) {
-    console.error(`${target} is not valid JSON: ${(err as Error).message}`);
+  const loaded = loadScenarioFile(target, {
+    ...(parsed.baseUrl !== undefined ? { baseUrl: parsed.baseUrl } : {}),
+  });
+  if (typeof loaded === 'string') {
+    console.error(loaded);
     return 1;
   }
+  const scenario = loaded;
 
   const validation = validateScenario(scenario);
-  if (!validation.valid) {
-    console.error('Scenario is invalid:');
-    for (const e of validation.errors) console.error('  - ' + e);
-    return 1;
-  }
   if (validation.warnings.length > 0) {
     heading('SCENARIO WARNINGS');
     for (const w of validation.warnings) warn(w);

@@ -78,6 +78,38 @@ describe('parameter validation', () => {
     expect('error' in built).toBe(true);
   });
 
+  it('passes the app URL through as --base-url for scenario actions', () => {
+    // The port is the user's choice; a scenario file that hardcodes one
+    // must not decide where the run points.
+    const run = findAction('scenarioRun');
+    if (run === undefined) throw new Error('scenarioRun missing');
+    const built = buildArgs(run, {
+      scenario: 'scenarios/x.json',
+      __baseUrl: 'http://localhost:7500',
+    });
+    if (!('args' in built)) throw new Error(built.error);
+    expect(built.args).toContain('--base-url');
+    expect(built.args).toContain('http://localhost:7500');
+  });
+
+  it('does NOT add --base-url to actions that take no scenario', () => {
+    const doctor = findAction('doctor');
+    if (doctor === undefined) throw new Error('doctor missing');
+    const built = buildArgs(doctor, { __baseUrl: 'http://localhost:7500' });
+    if (!('args' in built)) throw new Error(built.error);
+    expect(built.args).not.toContain('--base-url');
+  });
+
+  it('rejects an app URL that is not http(s)', () => {
+    const run = findAction('scenarioRun');
+    if (run === undefined) throw new Error('scenarioRun missing');
+    const built = buildArgs(run, {
+      scenario: 'scenarios/x.json',
+      __baseUrl: 'file:///etc/passwd',
+    });
+    expect('error' in built).toBe(true);
+  });
+
   it('accepts a component filter but rejects shell characters in it', () => {
     const one = findAction('analyzeOne');
     if (one === undefined) throw new Error('analyzeOne missing');

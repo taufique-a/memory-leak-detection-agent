@@ -15,8 +15,8 @@ import * as path from 'node:path';
 import { runScenario, type ScenarioRun } from '../scenario/runner';
 import type { TrendAnalysis } from '../runtime/trend';
 import { runVerification } from '../verify/checks';
+import { extractBaseUrlArg, loadScenarioFile } from '../scenario/load';
 import { compareBeforeAfter, deriveVerificationStatus } from '../verify/compare';
-import { loadScenarioFile } from './correlate';
 import { colour, duration, field, heading, info, num, warn } from '../utils/logger';
 
 /** What a baseline file holds. */
@@ -38,6 +38,8 @@ export interface VerifyArgs {
   /** Write the current run as the baseline instead of comparing. */
   record: boolean;
   skipChecks: boolean;
+  /** Overrides the scenario's own baseUrl for this run. */
+  baseUrl?: string;
 }
 
 export function parseVerifyArgs(args: string[]): VerifyArgs | string {
@@ -46,6 +48,11 @@ export function parseVerifyArgs(args: string[]): VerifyArgs | string {
   let baselineFile = 'artifacts/baseline.json';
   let record = false;
   let skipChecks = false;
+
+  const extracted = extractBaseUrlArg(args);
+  if (extracted.error !== undefined) return extracted.error;
+  const baseUrl = extracted.baseUrl;
+  args = extracted.rest;
 
   const valueOf = (arg: string, prefix: string, next: string | undefined): string | undefined =>
     arg.startsWith(prefix) ? arg.slice(prefix.length) : next;
@@ -80,7 +87,14 @@ export function parseVerifyArgs(args: string[]): VerifyArgs | string {
   if (projectPath === undefined) return 'verify requires a project path';
   if (scenarioFile === undefined) return 'verify requires --scenario <file>';
 
-  return { projectPath, scenarioFile, baselineFile, record, skipChecks };
+  return {
+    projectPath,
+    scenarioFile,
+    baselineFile,
+    record,
+    skipChecks,
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
+  };
 }
 
 export async function runVerify(args: string[]): Promise<number> {
@@ -91,7 +105,9 @@ export async function runVerify(args: string[]): Promise<number> {
   }
 
   const projectRoot = path.resolve(parsed.projectPath);
-  const scenario = loadScenarioFile(parsed.scenarioFile);
+  const scenario = loadScenarioFile(parsed.scenarioFile, {
+    ...(parsed.baseUrl !== undefined ? { baseUrl: parsed.baseUrl } : {}),
+  });
   if (typeof scenario === 'string') {
     console.error(scenario);
     return 1;

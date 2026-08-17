@@ -11,9 +11,8 @@ import * as path from 'node:path';
 import { correlate } from '../correlate';
 import { investigateHeap, type HeapInvestigationResult } from '../heap/investigate';
 import { assessRisk, RiskError } from '../risk';
+import { extractBaseUrlArg, loadScenarioFile as load } from '../scenario/load';
 import { runScenario, ScenarioError, type ScenarioRun } from '../scenario/runner';
-import type { Scenario } from '../scenario/types';
-import { validateScenario } from '../scenario/validate';
 import type { CorrelationResult } from '../types/correlation';
 import {
   clearProgressLine,
@@ -34,6 +33,8 @@ export interface CorrelateArgs {
   detail: number;
   useTypes: boolean;
   skipHeap: boolean;
+  /** Overrides the scenario's own baseUrl for this run. */
+  baseUrl?: string;
 }
 
 export function parseCorrelateArgs(args: string[]): CorrelateArgs | string {
@@ -43,6 +44,11 @@ export function parseCorrelateArgs(args: string[]): CorrelateArgs | string {
   let detail = 10;
   let useTypes = false;
   let skipHeap = false;
+
+  const extracted = extractBaseUrlArg(args);
+  if (extracted.error !== undefined) return extracted.error;
+  const baseUrl = extracted.baseUrl;
+  args = extracted.rest;
 
   const valueOf = (arg: string, prefix: string, next: string | undefined): string | undefined =>
     arg.startsWith(prefix) ? arg.slice(prefix.length) : next;
@@ -89,29 +95,14 @@ export function parseCorrelateArgs(args: string[]): CorrelateArgs | string {
     detail,
     useTypes,
     skipHeap,
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
   };
 }
 
-export function loadScenarioFile(file: string): Scenario | string {
-  const target = path.resolve(file);
-  if (!fs.existsSync(target)) return `Scenario file not found: ${target}`;
-
-  let raw = fs.readFileSync(target, 'utf8');
-  if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    return `${target} is not valid JSON: ${(err as Error).message}`;
-  }
-
-  const validation = validateScenario(parsed);
-  if (!validation.valid) {
-    return `Scenario is invalid:\n${validation.errors.map((e) => '  - ' + e).join('\n')}`;
-  }
-  return parsed as Scenario;
-}
+// Scenario loading lives in scenario/load.ts so the --base-url override
+// behaves identically in every command. Re-exported for the commands that
+// already import it from here.
+export const loadScenarioFile = load;
 
 export async function runCorrelate(args: string[]): Promise<number> {
   const parsed = parseCorrelateArgs(args);
@@ -120,7 +111,9 @@ export async function runCorrelate(args: string[]): Promise<number> {
     return 1;
   }
 
-  const scenario = loadScenarioFile(parsed.scenarioFile);
+  const scenario = loadScenarioFile(parsed.scenarioFile, {
+    ...(parsed.baseUrl !== undefined ? { baseUrl: parsed.baseUrl } : {}),
+  });
   if (typeof scenario === 'string') {
     console.error(scenario);
     return 1;
@@ -128,6 +121,7 @@ export async function runCorrelate(args: string[]): Promise<number> {
 
   console.log('');
   console.log(`Correlating ${colour.cyan(path.resolve(parsed.projectPath))}`);
+  console.log(colour.dim(`Against ${scenario.baseUrl}`));
 
   /* ---- static ---- */
   let risk;

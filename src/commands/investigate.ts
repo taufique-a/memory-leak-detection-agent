@@ -19,6 +19,7 @@ import { buildInvestigation } from '../report/investigation';
 import { renderHtml } from '../report/html';
 import { renderMarkdown } from '../report/markdown';
 import { RiskError, assessRisk } from '../risk';
+import { extractBaseUrlArg, loadScenarioFile } from '../scenario/load';
 import { runScenario, ScenarioError, type ScenarioRun } from '../scenario/runner';
 import type { Scenario } from '../scenario/types';
 import { validateScenario } from '../scenario/validate';
@@ -45,6 +46,8 @@ export interface InvestigateArgs {
   headed: boolean;
   /** Skip the browser run and produce a static-only investigation. */
   staticOnly: boolean;
+  /** Overrides the scenario's own baseUrl for this run. */
+  baseUrl?: string;
 }
 
 export function parseInvestigateArgs(args: string[]): InvestigateArgs | string {
@@ -56,6 +59,11 @@ export function parseInvestigateArgs(args: string[]): InvestigateArgs | string {
   let limit = 50;
   let headed = false;
   let staticOnly = false;
+
+  const extracted = extractBaseUrlArg(args);
+  if (extracted.error !== undefined) return extracted.error;
+  const baseUrl = extracted.baseUrl;
+  args = extracted.rest;
 
   const valueOf = (arg: string, prefix: string, next: string | undefined): string | undefined =>
     arg.startsWith(prefix) ? arg.slice(prefix.length) : next;
@@ -125,6 +133,7 @@ export function parseInvestigateArgs(args: string[]): InvestigateArgs | string {
     limit,
     headed,
     staticOnly,
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
   };
 }
 
@@ -138,7 +147,9 @@ export async function runInvestigate(args: string[]): Promise<number> {
   /* ---- load and check the scenario BEFORE doing any work ---- */
   let scenario: Scenario | undefined;
   if (parsed.scenarioFile !== undefined) {
-    const loaded = loadScenario(parsed.scenarioFile);
+    const loaded = loadScenarioFile(parsed.scenarioFile, {
+      ...(parsed.baseUrl !== undefined ? { baseUrl: parsed.baseUrl } : {}),
+    });
     if (typeof loaded === 'string') {
       console.error(loaded);
       return 1;
@@ -244,31 +255,8 @@ export async function runInvestigate(args: string[]): Promise<number> {
   return runtimeError !== undefined ? 1 : 0;
 }
 
-function loadScenario(file: string): Scenario | string {
-  const target = path.resolve(file);
-  if (!fs.existsSync(target)) return `Scenario file not found: ${target}`;
-
-  let raw: string;
-  try {
-    raw = fs.readFileSync(target, 'utf8');
-  } catch (err) {
-    return `Could not read ${target}: ${(err as Error).message}`;
-  }
-  if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    return `${target} is not valid JSON: ${(err as Error).message}`;
-  }
-
-  const result = validateScenario(parsed);
-  if (!result.valid) {
-    return `Scenario is invalid:\n${result.errors.map((e) => '  - ' + e).join('\n')}`;
-  }
-  return parsed as Scenario;
-}
+// Scenario loading, including the --base-url override, lives in
+// scenario/load.ts so every command behaves identically.
 
 function printSummary(
   inv: Investigation,

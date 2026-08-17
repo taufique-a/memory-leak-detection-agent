@@ -291,6 +291,89 @@ describe('saved-session safety', () => {
   );
 });
 
+describe('base URL override', () => {
+  it('extracts --base-url in both forms and leaves the rest alone', async () => {
+    const { extractBaseUrlArg } = await import('../src/scenario/load');
+
+    const a = extractBaseUrlArg(['file.json', '--base-url', 'http://x:1', '--headed']);
+    expect(a.baseUrl).toBe('http://x:1');
+    expect(a.rest).toEqual(['file.json', '--headed']);
+
+    const b = extractBaseUrlArg(['file.json', '--base-url=http://y:2']);
+    expect(b.baseUrl).toBe('http://y:2');
+    expect(b.rest).toEqual(['file.json']);
+  });
+
+  it('errors when --base-url has no value', async () => {
+    const { extractBaseUrlArg } = await import('../src/scenario/load');
+    expect(extractBaseUrlArg(['f.json', '--base-url']).error).toContain('requires a URL');
+    expect(extractBaseUrlArg(['f.json', '--base-url', '--headed']).error).toBeDefined();
+  });
+
+  it('re-points a scenario without touching the file on disk', async () => {
+    // THE FIX: a scenario file records the port it was written against. A
+    // user serving elsewhere would otherwise get ERR_CONNECTION_REFUSED
+    // against a URL they never typed.
+    const { loadScenarioFile } = await import('../src/scenario/load');
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const nodePath = await import('node:path');
+
+    const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'memory-agent-baseurl-'));
+    const file = nodePath.join(dir, 's.json');
+    const original = JSON.stringify(baseScenario({ baseUrl: 'http://localhost:7400' }));
+    fs.writeFileSync(file, original, 'utf8');
+
+    try {
+      const loaded = loadScenarioFile(file, { baseUrl: 'http://localhost:7500' });
+      if (typeof loaded === 'string') throw new Error(loaded);
+      expect(loaded.baseUrl).toBe('http://localhost:7500');
+
+      // Silently rewriting a committed scenario would be worse than the bug.
+      expect(fs.readFileSync(file, 'utf8')).toBe(original);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a non-http override rather than using it', async () => {
+    const { loadScenarioFile } = await import('../src/scenario/load');
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const nodePath = await import('node:path');
+
+    const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'memory-agent-baseurl2-'));
+    const file = nodePath.join(dir, 's.json');
+    fs.writeFileSync(file, JSON.stringify(baseScenario()), 'utf8');
+
+    try {
+      expect(loadScenarioFile(file, { baseUrl: 'file:///etc/passwd' })).toContain('http');
+      expect(loadScenarioFile(file, { baseUrl: 'not a url' })).toContain('not a valid URL');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('strips a trailing slash so URLs join cleanly', async () => {
+    const { loadScenarioFile } = await import('../src/scenario/load');
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const nodePath = await import('node:path');
+
+    const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'memory-agent-baseurl3-'));
+    const file = nodePath.join(dir, 's.json');
+    fs.writeFileSync(file, JSON.stringify(baseScenario()), 'utf8');
+
+    try {
+      const loaded = loadScenarioFile(file, { baseUrl: 'http://localhost:7500/' });
+      if (typeof loaded === 'string') throw new Error(loaded);
+      expect(loaded.baseUrl).toBe('http://localhost:7500');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('scenario file loading', () => {
   it('REGRESSION: tolerates a UTF-8 BOM', async () => {
     // PowerShell's `Out-File -Encoding utf8`, Notepad and several editors

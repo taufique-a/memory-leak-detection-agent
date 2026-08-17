@@ -23,8 +23,8 @@ import { investigateHeap, type HeapInvestigationResult } from '../heap/investiga
 import { assessRisk } from '../risk';
 import { runScenario, type ScenarioRun } from '../scenario/runner';
 import { majorVersion, readWorkspace, supportedCleanupIdioms } from '../scanner/workspace';
+import { extractBaseUrlArg, loadScenarioFile } from '../scenario/load';
 import { runVerification } from '../verify/checks';
-import { loadScenarioFile } from './correlate';
 import { colour, duration, field, heading, info, num, warn } from '../utils/logger';
 
 export interface FixArgs {
@@ -36,6 +36,8 @@ export interface FixArgs {
   skipVerify: boolean;
   /** Answer yes to every prompt. Requires --apply and is logged loudly. */
   yes: boolean;
+  /** Overrides the scenario's own baseUrl for this run. */
+  baseUrl?: string;
 }
 
 export function parseFixArgs(args: string[]): FixArgs | string {
@@ -46,6 +48,11 @@ export function parseFixArgs(args: string[]): FixArgs | string {
   let skipHeap = false;
   let skipVerify = false;
   let yes = false;
+
+  const extracted = extractBaseUrlArg(args);
+  if (extracted.error !== undefined) return extracted.error;
+  const baseUrl = extracted.baseUrl;
+  args = extracted.rest;
 
   const valueOf = (arg: string, prefix: string, next: string | undefined): string | undefined =>
     arg.startsWith(prefix) ? arg.slice(prefix.length) : next;
@@ -90,7 +97,16 @@ export function parseFixArgs(args: string[]): FixArgs | string {
   }
   if (yes && !apply) return '--yes only makes sense together with --apply';
 
-  return { projectPath, scenarioFile, apply, maxFixes, skipHeap, skipVerify, yes };
+  return {
+    projectPath,
+    scenarioFile,
+    apply,
+    maxFixes,
+    skipHeap,
+    skipVerify,
+    yes,
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
+  };
 }
 
 export async function runFix(args: string[]): Promise<number> {
@@ -101,7 +117,9 @@ export async function runFix(args: string[]): Promise<number> {
   }
 
   const projectRoot = path.resolve(parsed.projectPath);
-  const scenario = loadScenarioFile(parsed.scenarioFile);
+  const scenario = loadScenarioFile(parsed.scenarioFile, {
+    ...(parsed.baseUrl !== undefined ? { baseUrl: parsed.baseUrl } : {}),
+  });
   if (typeof scenario === 'string') {
     console.error(scenario);
     return 1;

@@ -368,6 +368,31 @@ export function findAction(id: string): ActionDefinition | undefined {
 }
 
 /**
+ * Actions whose scenario should follow the app URL the user set.
+ *
+ * A scenario file records the URL it was written against. When the user is
+ * serving on a different port - which is normal, it is their choice - the
+ * run fails with ERR_CONNECTION_REFUSED against a URL they never typed
+ * anywhere in the UI. These actions therefore receive --base-url from the
+ * app URL bar, which re-points the scenario for that run only. The file on
+ * disk is never rewritten.
+ */
+const FOLLOWS_APP_URL: ReadonlySet<string> = new Set([
+  'scenarioRun',
+  'heap',
+  'correlate',
+  'fixDryRun',
+  'fixApply',
+  'investigate',
+  'auto',
+  'validate',
+]);
+
+export function followsAppUrl(actionId: string): boolean {
+  return FOLLOWS_APP_URL.has(actionId);
+}
+
+/**
  * Turn a client request into argv, safely.
  *
  * Every value is validated against its declared type before reaching the
@@ -380,6 +405,17 @@ export function buildArgs(
   raw: Record<string, unknown>,
 ): { args: string[] } | { error: string } {
   const values: Record<string, string> = {};
+
+  /* ---- the app URL override ---- */
+  let baseUrlArgs: string[] = [];
+  if (followsAppUrl(action.id)) {
+    const supplied = raw['__baseUrl'];
+    if (typeof supplied === 'string' && supplied !== '') {
+      const validated = validate('url', supplied);
+      if (validated === undefined) return { error: 'The app URL is not a valid http(s) URL.' };
+      baseUrlArgs = ['--base-url', validated];
+    }
+  }
 
   for (const param of action.params) {
     const provided = raw[param.name];
@@ -398,7 +434,7 @@ export function buildArgs(
     values[param.name] = validated;
   }
 
-  return { args: action.build(values) };
+  return { args: [...action.build(values), ...baseUrlArgs] };
 }
 
 /**

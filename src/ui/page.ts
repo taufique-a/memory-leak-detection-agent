@@ -452,6 +452,15 @@ function collect(action) {
     if (!el) continue;
     params[p.name] = p.type === 'flag' ? String(el.checked) : el.value;
   }
+  /**
+   * Send the app URL alongside every scenario action.
+   *
+   * The scenario file records whichever port it was written against. If the
+   * user is serving elsewhere, the run would otherwise fail against a URL
+   * they never typed. The server turns this into --base-url for the actions
+   * that accept it, and ignores it for the rest.
+   */
+  if (appUrl) params.__baseUrl = appUrl;
   return params;
 }
 
