@@ -141,8 +141,15 @@ export const ACTIONS: readonly ActionDefinition[] = [
       'A Chrome window has opened. Sign in there, and once you are on a normal page of ' +
       'the application, press the button below.',
     params: [
-      { name: 'url', type: 'url', required: true, label: 'App URL', default: 'http://localhost:7400' },
-      { name: 'authFile', type: 'authFile', required: false, label: 'Save to', default: '.auth/iosense.auth.json' },
+      /**
+       * No default port.
+       *
+       * The user serves on whatever port they choose. The page fills this
+       * from the app URL they entered and checked at the top, so a wrong
+       * guess here cannot send the sign-in browser to the wrong place.
+       */
+      { name: 'url', type: 'url', required: true, label: 'App URL' },
+      { name: 'authFile', type: 'authFile', required: false, label: 'Save to', default: '.auth/app.auth.json' },
     ],
     build: (v) => [
       'scenario',

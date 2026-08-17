@@ -127,14 +127,32 @@ button:disabled{opacity:.4;cursor:not-allowed}
 button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
 .expect{color:var(--muted);font-size:.78rem;margin-left:.6rem}
 .blocked{color:var(--warn);font-size:.8rem;margin-top:.4rem}
-#console{position:sticky;top:1.5rem;border:1px solid var(--line);border-radius:8px;
-  background:var(--card);display:flex;flex-direction:column;max-height:calc(100vh - 3rem)}
-#console h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
-  margin:0;padding:.7rem 1rem;border-bottom:1px solid var(--line);
-  display:flex;justify-content:space-between;align-items:center}
-#out{flex:1;overflow:auto;margin:0;padding:.8rem 1rem;background:var(--code);
+/**
+ * The right-hand rail.
+ *
+ * One sticky flex column holding both panels. Every child needs
+ * min-height:0 - without it a flex item refuses to shrink below its content
+ * and the panels spill past the viewport instead of scrolling inside it,
+ * which is what made them overlap.
+ */
+.rail{position:sticky;top:1.5rem;display:flex;flex-direction:column;gap:1rem;
+  max-height:calc(100vh - 3rem);min-height:0}
+.panel{border:1px solid var(--line);border-radius:8px;background:var(--card);
+  display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.panel h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
+  margin:0;padding:.7rem 1rem;border-bottom:1px solid var(--line);flex:0 0 auto;
+  display:flex;justify-content:space-between;align-items:center;gap:.5rem}
+#consolePanel{flex:1 1 auto;min-height:14rem}
+#filesPanel{flex:0 1 auto;max-height:40%}
+#out{flex:1 1 auto;overflow:auto;margin:0;padding:.8rem 1rem;background:var(--code);
   font:12px/1.55 ui-monospace,Consolas,"Courier New",monospace;white-space:pre-wrap;
-  word-break:break-word;min-height:22rem}
+  word-break:break-word;min-height:0}
+/* On a narrow screen the rail stacks under the steps, where sticky is wrong. */
+@media (max-width:900px){
+  .rail{position:static;max-height:none}
+  #consolePanel{min-height:20rem}
+  #filesPanel{max-height:24rem}
+}
 .status{padding:.6rem 1rem;border-top:1px solid var(--line);font-size:.82rem;color:var(--muted)}
 .pill{display:inline-block;padding:.1em .5em;border-radius:4px;font-size:.72rem;
   font-weight:600;border:1px solid;margin-left:.4rem}
@@ -175,6 +193,19 @@ a{color:var(--accent)}
 
 <main>
   <section id="steps">
+    <div class="banner">
+      <strong>Your app</strong>
+      <div class="row" style="margin-top:.5rem">
+        <input type="text" id="appUrl" placeholder="http://localhost:4200" style="flex:1;min-width:12rem">
+        <button class="ghost" id="checkUrl">check</button>
+        <span id="appStatus" class="sub">not checked</span>
+      </div>
+      <div class="sub" style="margin-top:.4rem">
+        Whatever port you serve on. This is used to decide which steps are ready, and
+        pre-fills the sign-in URL. Press <strong>check</strong> after starting your app.
+      </div>
+    </div>
+
     <div class="banner warn">
       <strong>One action writes to your code</strong> &mdash; &ldquo;Apply a fix&rdquo; in
       step 7, which asks you to type a confirmation first and then approves each change
@@ -185,43 +216,41 @@ a{color:var(--accent)}
   </section>
 
   <section>
-    <div id="console">
-      <h2>
-        <span id="running">idle</span>
-        <span>
-          <button class="ghost mini" id="copyBtn">copy output</button>
-          <button class="ghost mini" id="stopBtn" disabled>stop</button>
-          <button class="ghost mini" id="clearBtn">clear</button>
-        </span>
-      </h2>
-      <pre id="out">Pick a step on the left.
+    <div class="rail">
+      <div class="panel" id="consolePanel">
+        <h2>
+          <span id="running">idle</span>
+          <span>
+            <button class="ghost mini" id="copyBtn">copy output</button>
+            <button class="ghost mini" id="stopBtn" disabled>stop</button>
+            <button class="ghost mini" id="clearBtn">clear</button>
+          </span>
+        </h2>
+        <pre id="out">Pick a step on the left.
 
 If you have never run this before, start with "Try it first" - it needs no
 app and no login, and shows what a real result looks like.</pre>
 
-      <div id="reply">
-        <div class="hint" id="replyHint"></div>
-        <div class="row">
-          <button id="replyEnter">I have signed in / continue</button>
-          <button class="ghost" id="replyYes">yes</button>
-          <button class="ghost" id="replyNo">no</button>
-          <input type="text" id="replyText" placeholder="or type an answer">
-          <button class="ghost" id="replySend">send</button>
+        <div id="reply">
+          <div class="hint" id="replyHint"></div>
+          <div class="row">
+            <button id="replyEnter">I have signed in / continue</button>
+            <button class="ghost" id="replyYes">yes</button>
+            <button class="ghost" id="replyNo">no</button>
+            <input type="text" id="replyText" placeholder="or type an answer">
+            <button class="ghost" id="replySend">send</button>
+          </div>
         </div>
+
+        <div class="status" id="status">&nbsp;</div>
       </div>
 
-      <div class="status" id="status">&nbsp;</div>
-    </div>
-
-    <div id="console" style="position:static;margin-top:1rem">
-      <h2>
-        <span>Generated files</span>
-        <button class="ghost mini" id="filesRefresh">refresh</button>
-      </h2>
-      <div class="files" id="files"><div class="status">nothing yet</div></div>
-      <div class="status">
-        Reports open in a new tab. <strong>Copy</strong> puts the file contents on your
-        clipboard; <strong>download</strong> saves it.
+      <div class="panel" id="filesPanel">
+        <h2>
+          <span>Generated files</span>
+          <button class="ghost mini" id="filesRefresh">refresh</button>
+        </h2>
+        <div class="files" id="files"><div class="status">nothing yet</div></div>
       </div>
     </div>
   </section>
@@ -266,12 +295,41 @@ async function refreshState() {
   render();
 }
 
+/* ---- the app URL the user actually serves on ---- */
+let appUrl = localStorage.getItem('memoryAgentAppUrl') || '';
+let appUp = false;
+
+async function checkApp() {
+  const value = $('appUrl').value.trim();
+  if (!value) { $('appStatus').textContent = 'enter a URL first'; return; }
+  appUrl = value;
+  localStorage.setItem('memoryAgentAppUrl', appUrl);
+  $('appStatus').textContent = 'checking...';
+  try {
+    const r = await api('/api/check?url=' + encodeURIComponent(appUrl));
+    appUp = !!r.reachable;
+    $('appStatus').innerHTML = appUp
+      ? '<span class="pill ok">reachable</span>'
+      : '<span class="pill bad">not reachable</span>';
+  } catch {
+    appUp = false;
+    $('appStatus').innerHTML = '<span class="pill bad">check failed</span>';
+  }
+  render();
+}
+
 /* ---- is a step usable right now? ---- */
 function blockedReason(action) {
   if (!action.needsApp) return null;
-  const anyReachable = Object.values(state.reachable).some(Boolean);
-  if (!anyReachable) {
-    return 'Your app is not reachable. Start it first (see the note above), then press Refresh.';
+
+  // Reachability comes from the URL the user entered, falling back to any
+  // scenario baseUrl the server found live. Assuming a port would block
+  // steps that are actually fine.
+  const anyScenarioUp = Object.values(state.reachable).some(Boolean);
+  if (!appUp && !anyScenarioUp) {
+    return appUrl
+      ? 'Your app at ' + appUrl + ' is not reachable. Start it, then press check above.'
+      : 'Enter your app URL at the top and press check. Any port is fine.';
   }
   if (action.id !== 'login' && state.sessions.length === 0 &&
       state.scenarios.some((x) => x.needsAuth)) {
@@ -295,7 +353,13 @@ function paramField(action, p) {
     return '<label>' + esc(p.label) +
       '<input type="number" id="' + id + '" value="' + esc(p.default ?? '') + '"></label>';
   }
-  const dflt = p.type === 'project' ? (p.default ?? DEFAULT_PROJECT) : (p.default ?? '');
+  // The URL field follows whatever the user entered at the top, so they do
+  // not have to type their port twice.
+  const dflt = p.type === 'project'
+    ? (p.default ?? DEFAULT_PROJECT)
+    : p.type === 'url'
+      ? (appUrl || p.default || '')
+      : (p.default ?? '');
   return '<label>' + esc(p.label) +
     '<input type="text" id="' + id + '" value="' + esc(dflt) + '"></label>';
 }
@@ -514,8 +578,22 @@ $('stopBtn').addEventListener('click', async () => {
 });
 $('clearBtn').addEventListener('click', () => { $('out').textContent = ''; });
 
-refreshState();
-refreshFiles();
+$('checkUrl').addEventListener('click', checkApp);
+$('appUrl').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); checkApp(); }
+});
+
+/* Seed the URL box: last used, else the first scenario's baseUrl. */
+(async () => {
+  await refreshState();
+  if (!appUrl && state.scenarios.length && state.scenarios[0].baseUrl) {
+    appUrl = state.scenarios[0].baseUrl;
+  }
+  $('appUrl').value = appUrl;
+  if (appUrl) checkApp();
+  refreshFiles();
+})();
+
 setInterval(() => { if (!currentRun) { refreshState(); refreshFiles(); } }, 15000);
 </script>
 </body>

@@ -162,6 +162,48 @@ describe('page', () => {
     expect(page).toContain('prefers-color-scheme: dark');
   });
 
+  it('REGRESSION: no duplicate element ids', () => {
+    // The console and the files panel both had id="console". Duplicate ids
+    // are invalid, getElementById only finds the first, and both inherited
+    // max-height:100vh - so stacked they overflowed the viewport and
+    // visibly overlapped.
+    //
+    // Scan the MARKUP only: the client builds ids by concatenation, so the
+    // script text contains literals that are not ids.
+    const markup = page.slice(0, page.indexOf('<script>'));
+    const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
+    const duplicates = ids.filter((v, i) => ids.indexOf(v) !== i);
+    expect(duplicates).toEqual([]);
+  });
+
+  it('gives flex children min-height:0 so panels scroll instead of overflowing', () => {
+    // Without it a flex item will not shrink below its content, which is
+    // what pushed the panels past the viewport.
+    expect(page).toContain('min-height:0');
+    expect(page).toContain('class="rail"');
+  });
+
+  it('drops sticky positioning on a narrow screen', () => {
+    expect(page).toContain('max-width:900px');
+    expect(page).toContain('position:static');
+  });
+
+  it('lets the user set any app URL rather than assuming a port', () => {
+    expect(page).toContain('id="appUrl"');
+    expect(page).toContain('id="checkUrl"');
+    expect(page).toContain('/api/check');
+    // No hardcoded port anywhere in the guidance.
+    expect(page).not.toContain('localhost:7400');
+  });
+
+  it('has balanced markup', () => {
+    const markup = page.slice(0, page.indexOf('<script>'));
+    expect((markup.match(/<div\b/g) ?? []).length).toBe((markup.match(/<\/div>/g) ?? []).length);
+    expect((markup.match(/<section\b/g) ?? []).length).toBe(
+      (markup.match(/<\/section>/g) ?? []).length,
+    );
+  });
+
   it('embeds the token so API calls can authenticate', () => {
     expect(page).toContain('deadbeef');
   });
@@ -375,6 +417,39 @@ describe('server security', () => {
       body: JSON.stringify({ text: 'y' }),
     });
     expect(res.status).toBe(403);
+  });
+
+  /* ---- runtime app URL check ---- */
+
+  it('checks an arbitrary app URL, so any port works', async () => {
+    // The port is the user's choice; the UI must not assume one.
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/check?token=${server.token}` +
+        `&url=${encodeURIComponent(`http://127.0.0.1:${server.port}/`)}`,
+    );
+    const body = (await res.json()) as { reachable?: boolean };
+    expect(body.reachable).toBe(true);
+  }, 20_000);
+
+  it('reports an unreachable URL rather than erroring', async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/check?token=${server.token}` +
+        `&url=${encodeURIComponent('http://127.0.0.1:1/')}`,
+    );
+    const body = (await res.json()) as { reachable?: boolean };
+    expect(body.reachable).toBe(false);
+  }, 20_000);
+
+  it('REFUSES to fetch a non-http scheme on the caller behalf', async () => {
+    // Without this the endpoint is a file-read and internal-scan primitive.
+    for (const bad of ['file:///etc/passwd', 'ftp://x/', 'javascript:alert(1)']) {
+      const res = await fetch(
+        `http://127.0.0.1:${server.port}/api/check?token=${server.token}&url=${encodeURIComponent(bad)}`,
+      );
+      const body = (await res.json()) as { reachable?: boolean; error?: string };
+      expect(body.reachable).toBe(false);
+      expect(body.error).toBeDefined();
+    }
   });
 
   it('reports state the UI needs to guide the next step', async () => {
