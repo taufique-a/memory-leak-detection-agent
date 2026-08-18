@@ -806,8 +806,9 @@ function pickEntity(entity) {
           ' — ' + esc(c.route) + '</option>').join('') +
       '</select></label>' +
       '<label>Iterations<input type="number" id="pickIterations" value="12" min="5" max="60"></label>' +
-      '<label>Saved session<input type="text" id="pickAuth" value=".auth/iosense.auth.json"></label>' +
+      '<label>Saved session' + sessionOptions() + '</label>' +
     '</div>' +
+    sessionWarning() +
     '<button id="pickGo">find and fix ' + esc(entity.name) + '</button>' +
     '<button class="ghost" id="pickMeasure">just measure it</button>' +
     '<span class="expect">3 to 5 minutes — static, runtime, heap, correlation, proposed fixes, report</span>';
@@ -816,6 +817,58 @@ function pickEntity(entity) {
   $('pickMeasure').addEventListener('click', () => createAndRun('scenarioRun'));
 }
 
+/**
+ * The saved sessions, with the ones that fit the current app URL first.
+ *
+ * A session is tied to an ORIGIN, and an origin includes the port. One
+ * captured while serving on a different port restores no localStorage at
+ * all, so the app redirects to /login - which reads as "expired" to someone
+ * who just signed in. So the choice is shown, not guessed at.
+ */
+function sessionOptions() {
+  const wanted = originOfUrl(appUrl);
+  const list = (state.sessions || []).slice().sort((a, b) => {
+    const fit = Number(matchesOrigin(b, wanted)) - Number(matchesOrigin(a, wanted));
+    return fit !== 0 ? fit : a.ageMinutes - b.ageMinutes;
+  });
+
+  if (!list.length) {
+    return '<select id="pickAuth"><option value="">no saved session - run step 3</option></select>';
+  }
+
+  return '<select id="pickAuth">' + list.map((sess) => {
+    const fits = matchesOrigin(sess, wanted);
+    const where = (sess.origins && sess.origins.length) ? sess.origins[0] : 'cookies only';
+    return '<option value="' + esc(sess.file) + '">' + esc(sess.file) +
+      ' - ' + esc(where) + ' - ' + humanAge(sess.ageMinutes) +
+      (fits ? '' : '  (wrong origin)') + '</option>';
+  }).join('') + '</select>';
+}
+
+/** Say so plainly when no saved session can work at this URL. */
+function sessionWarning() {
+  const wanted = originOfUrl(appUrl);
+  const list = state.sessions || [];
+  if (!list.length) {
+    return '<div class="danger" style="margin-top:.3rem">No saved session. ' +
+      'Run step 3 first, or the run will stop at the login page.</div>';
+  }
+  if (list.some((sess) => matchesOrigin(sess, wanted))) return '';
+  return '<div class="danger" style="margin-top:.3rem">Every saved session was captured ' +
+    'at a different origin than <code>' + esc(appUrl) + '</code>. A session is tied to ' +
+    'the port, so none of them will be restored and the app will redirect to its login ' +
+    'page. Sign in again at this URL in step 3.</div>';
+}
+function matchesOrigin(sess, wanted) {
+  // No localStorage at all means cookie-only auth, which ignores the port.
+  if (!sess.origins || !sess.origins.length) return true;
+  if (!wanted) return true;
+  return sess.origins.indexOf(wanted) !== -1;
+}
+
+function originOfUrl(value) {
+  try { return new URL(value).origin; } catch { return ''; }
+}
 async function createAndRun(actionId) {
   if (!selectedEntity) return;
   if (!appUrl) {

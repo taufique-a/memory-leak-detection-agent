@@ -32,7 +32,8 @@ import { explainPath, findRetainingPaths, type RetainingPath } from './retainers
 import { launchBrowser } from '../runtime/browser';
 import { enableMetrics } from '../runtime/metrics';
 import type { Scenario, Step } from '../scenario/types';
-import { detectExpiredSession, ScenarioError } from '../scenario/runner';
+import { detectExpiredSession, diagnoseLoginRedirect, ScenarioError } from '../scenario/runner';
+import { explainSessionMismatch, readSavedSession } from '../scenario/session';
 import { describeStep } from '../scenario/validate';
 
 export interface HeapInvestigationOptions {
@@ -90,6 +91,17 @@ export async function investigateHeap(
   const storageStateFile =
     scenario.auth?.type === 'storageState' ? path.resolve(scenario.auth.file) : undefined;
 
+  // Same pre-flight as the scenario runner: a session saved on another port
+  // restores no localStorage, and the redirect that follows looks exactly
+  // like an expired session. See scenario/session.ts.
+  if (storageStateFile !== undefined) {
+    const saved = readSavedSession(storageStateFile);
+    const shown = scenario.auth?.type === 'storageState' ? scenario.auth.file : storageStateFile;
+    const mismatch =
+      saved === undefined ? undefined : explainSessionMismatch({ ...saved, file: shown }, scenario.baseUrl);
+    if (mismatch !== undefined) throw new ScenarioError(mismatch);
+  }
+
   const session = await launchBrowser({
     headed: options.headed === true,
     timeoutMs: scenario.timeoutMs ?? 60_000,
@@ -107,7 +119,11 @@ export async function investigateHeap(
       if (step.action === 'goto') {
         await settle(session, 3000);
         const expired = detectExpiredSession(session.page.url(), scenario);
-        if (expired !== undefined) throw new ScenarioError(expired);
+        if (expired !== undefined) {
+          throw new ScenarioError(
+            await diagnoseLoginRedirect(session, scenario, session.page.url()),
+          );
+        }
       }
     }
 

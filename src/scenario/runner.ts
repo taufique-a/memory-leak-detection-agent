@@ -24,6 +24,7 @@ import type { Page } from 'playwright';
 import { launchBrowser, type BrowserSession } from '../runtime/browser';
 import { enableMetrics, takeMemorySample, type MemorySample } from '../runtime/metrics';
 import { analyseTrend, type TrendAnalysis } from '../runtime/trend';
+import { explainSessionMismatch, originOf, readSavedSession } from './session';
 import { describeStep } from './validate';
 import type { AuthConfig, ConsoleEntry, Scenario, Step, StepResult } from './types';
 
@@ -86,6 +87,27 @@ export async function runScenario(
         `  memory-agent scenario login --base-url ${scenario.baseUrl} --out ${scenario.auth?.type === 'storageState' ? scenario.auth.file : '.auth/app.auth.json'}\n` +
         'That opens a browser for you to sign in manually. The agent never sees your password.',
     );
+  }
+
+  /**
+   * Does the saved session even apply to this URL?
+   *
+   * Checked BEFORE launching, because the alternative is a browser start, a
+   * navigation, a redirect to /login and a message blaming expiry - which
+   * sends someone who signed in a minute ago off to sign in again.
+   *
+   * The real cause is almost always the PORT: localStorage is scoped by
+   * origin, and an origin includes the port.
+   */
+  if (storageStateFile !== undefined) {
+    const saved = readSavedSession(storageStateFile);
+    if (saved !== undefined) {
+      // Report the path as written in the scenario, not the resolved
+      // absolute one - that is what the user has to edit.
+      const shown = scenario.auth?.type === 'storageState' ? scenario.auth.file : saved.file;
+      const mismatch = explainSessionMismatch({ ...saved, file: shown }, scenario.baseUrl);
+      if (mismatch !== undefined) throw new ScenarioError(mismatch);
+    }
   }
 
   const session = await launchBrowser({
@@ -166,12 +188,22 @@ export async function runScenario(
            */
           await waitForUrlToSettle(session, 3000);
           const expired = detectExpiredSession(session.page.url(), scenario);
-          if (expired !== undefined) throw new ScenarioError(expired);
+          if (expired !== undefined) {
+            // Costs one navigation, and turns "your session died" into
+            // "that route refused you" when that is what happened.
+            throw new ScenarioError(
+              await diagnoseLoginRedirect(session, scenario, session.page.url()),
+            );
+          }
         }
 
         if (!result.ok) {
           const expired = detectExpiredSession(session.page.url(), scenario);
-          if (expired !== undefined) throw new ScenarioError(expired);
+          if (expired !== undefined) {
+            throw new ScenarioError(
+              await diagnoseLoginRedirect(session, scenario, session.page.url()),
+            );
+          }
 
           throw new ScenarioError(
             `Setup step ${i} (${result.description}) failed: ${result.error}. ` +
@@ -501,15 +533,96 @@ export function detectExpiredSession(
   }
   if (!matches) return undefined;
 
+  /**
+   * Say WHY, and do not assert an expiry we have not established.
+   *
+   * The origin check runs before launch and catches the common case, so
+   * by the time we reach here the session did apply and was still
+   * refused. But if the file was captured somewhere else entirely, say
+   * that rather than repeating "it expired" at somebody who knows they
+   * signed in a minute ago.
+   */
+  const saved = readSavedSession(scenario.auth.file);
+  const wanted = originOf(scenario.baseUrl);
+  const mismatched =
+    saved !== undefined &&
+    wanted !== undefined &&
+    saved.origins.length > 0 &&
+    !saved.origins.includes(wanted);
+
+  const why = mismatched
+    ? `  It was saved at ${saved?.origins.join(', ')}, but this run points at ${wanted}.\n` +
+      '  localStorage is scoped by origin - including the port - so none of it\n' +
+      '  was restored. The session is not expired; it was never applied.\n\n'
+    : '  This is normal - sessions expire. Nothing is wrong with the scenario or\n' +
+      '  its selectors.\n\n';
+
   return (
     `The application redirected to a login page (${currentUrl}), so the saved session in ` +
-    `"${scenario.auth.file}" has expired or was rejected.\n\n` +
+    `"${scenario.auth.file}" was not accepted.\n\n` +
+    why +
     '  Sign in again with:\n' +
-    `    memory-agent scenario login --base-url ${scenario.baseUrl} --out ${scenario.auth.file}\n\n` +
-    '  This is normal - sessions expire. Nothing is wrong with the scenario or its selectors.'
+    `    memory-agent scenario login --base-url ${scenario.baseUrl} --out ${scenario.auth.file}`
   );
 }
 
+/**
+ * A login redirect does not prove the session is dead.
+ *
+ * WHAT WENT WRONG BEFORE
+ * ----------------------
+ * A generated scenario picked /rfids as its control route. The account
+ * running the investigation had no permission for it, so the guard sent
+ * the browser to /login - and the tool announced an expired session to
+ * somebody who had signed in twelve minutes earlier. Every other route in
+ * the app was working fine.
+ *
+ * One extra navigation separates the two cases. If the application root
+ * still loads while signed in, the session is good and the ROUTE is the
+ * problem. That is a completely different fix - change the route, not the
+ * credentials - so it is worth the second or two it costs.
+ */
+export async function diagnoseLoginRedirect(
+  session: BrowserSession,
+  scenario: Scenario,
+  redirectedUrl: string,
+): Promise<string> {
+  const generic = detectExpiredSession(redirectedUrl, scenario) ?? '';
+
+  // Which route were we actually asking for? The guard usually says.
+  let attempted = '';
+  try {
+    attempted = new URL(redirectedUrl).searchParams.get('returnUrl') ?? '';
+  } catch {
+    attempted = '';
+  }
+
+  let rootIsFine = false;
+  try {
+    await session.page.goto(joinUrl(scenario.baseUrl, '/'), {
+      waitUntil: 'domcontentloaded',
+      timeout: 20_000,
+    });
+    await waitForUrlToSettle(session, 3000);
+    rootIsFine = detectExpiredSession(session.page.url(), scenario) === undefined;
+  } catch {
+    // Could not check. Fall back to the generic message rather than guess.
+    return generic;
+  }
+
+  if (!rootIsFine) return generic;
+
+  return (
+    `Navigating to ${attempted !== '' ? attempted : redirectedUrl} redirected to the login ` +
+    `page, but ${scenario.baseUrl} itself loads while signed in.\n\n` +
+    '  So the session is FINE. That one route refused it - normally because this' + 
+    '\n  account has no permission for it, or a route guard rejected it.\n\n' +
+    '  Signing in again will not help. Change the route instead:\n' +
+    `    edit ${scenario.auth?.type === 'storageState' ? 'the setup/steps in' : ''} the scenario file and pick a page you can open yourself.` +
+    '\n\n  If this was a generated scenario, the control route is picked automatically' +
+    '\n  and cannot know what your account may see.'
+  );
+}
 /** Join a base URL and a path without producing a double slash. */
 export function joinUrl(baseUrl: string, pathPart: string): string {
   const base = baseUrl.replace(/\/+$/, '');

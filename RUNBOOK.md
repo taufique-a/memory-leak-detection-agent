@@ -367,8 +367,34 @@ Wrong shell or wrong file. See section 1.
 ### `node -v` says `v14.20.0`
 The environment is not active in *this* window. Activate it again.
 
-### `The application redirected to a login page … session has expired`
-Normal. Re-run **Step 2** above. Nothing is wrong with your scenario.
+### `The application redirected to a login page …`
+**Do not just sign in again.** There are three different causes and only one
+of them is an expired session. The tool now tells you which:
+
+1. **`The saved session … was captured at http://localhost:7400, but this run
+   points at http://localhost:7500`** — the **port**. A Playwright session
+   stores two things with different scopes: cookies are scoped by *domain*
+   (the port is irrelevant), but **`localStorage` is scoped by *origin*, and
+   an origin includes the port**. IOSense keeps its session in `localStorage`,
+   so a session captured on one port restores *nothing* on another and the app
+   bounces to `/login`. Nothing has expired. Either serve on the port the
+   session was captured at, or capture one for the port you are using. This is
+   now caught **before** the browser launches.
+
+2. **`… but http://localhost:7500 itself loads while signed in`** — the
+   **route**, not the session. That one page refused you: usually your account
+   has no permission for it, or a route guard rejected it. Signing in again
+   will not help — change the route. This bites generated scenarios, because
+   the control route is picked automatically and cannot know what your account
+   may see. On IOSense, `/rfids` does this.
+
+3. **`This is normal - sessions expire`** — genuinely expired. Re-run
+   **Step 2**.
+
+The UI helps with (1) before you start: the *Saved session* dropdown lists
+every session with the origin it was captured at, puts the ones that fit your
+current app URL first, and marks the rest **(wrong origin)**. Generating a
+scenario against a mismatched session is refused outright.
 
 ### `waitForSelector: Timeout … exceeded`
 The selector did not appear. Common causes, in order of likelihood:

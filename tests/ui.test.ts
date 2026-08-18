@@ -310,6 +310,33 @@ describe('page', () => {
     expect(page).toContain('ambiguous route');
   });
 
+  /* ---- saved sessions ---- */
+
+  it('offers the sessions that exist instead of a hardcoded filename', () => {
+    // A run was pointed at .auth/iosense.auth.json - a stale file from
+    // another port - while the session the user had just captured sat in
+    // .auth/app.auth.json. The page hardcoded the wrong name.
+    expect(page).toContain('sessionOptions()');
+    expect(page).not.toContain('.auth/iosense.auth.json');
+  });
+
+  it('marks a session captured at the wrong origin', () => {
+    expect(page).toContain('wrong origin');
+    expect(page).toContain('matchesOrigin');
+  });
+
+  it('treats a cookie-only session as valid on any port', () => {
+    // Cookies are scoped by domain, not origin - refusing them would block
+    // a setup that works.
+    const script = page.slice(page.indexOf('function matchesOrigin'));
+    expect(script.slice(0, 400)).toContain('return true');
+  });
+
+  it('warns when no saved session can work at the current URL', () => {
+    expect(page).toContain('sessionWarning()');
+    expect(page).toContain('tied to');
+  });
+
   /* ---- generated files ---- */
 
   it('shows only what the latest run produced', () => {
@@ -635,6 +662,52 @@ describe('server security', () => {
     );
     const body = (await res.json()) as { error?: string };
     expect(body.error).toBeDefined();
+  }, 30_000);
+
+  it('reports the ORIGIN each saved session was captured at', async () => {
+    // The page needs it to tell a usable session from one saved on another
+    // port, which restores no localStorage and looks like an expiry.
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/state?token=${server.token}`);
+    const body = (await res.json()) as { sessions?: Array<{ origins?: unknown }> };
+    for (const sess of body.sessions ?? []) expect(Array.isArray(sess.origins)).toBe(true);
+  }, 20_000);
+
+  it('REFUSES to generate a scenario against a session from another port', async () => {
+    const fsMod = await import('node:fs');
+    const pathMod = await import('node:path');
+    const authDir = pathMod.join(process.cwd(), '.auth');
+    fsMod.mkdirSync(authDir, { recursive: true });
+    const name = `ui-origin-test-${Date.now()}.auth.json`;
+    fsMod.writeFileSync(
+      pathMod.join(authDir, name),
+      JSON.stringify({
+        cookies: [],
+        origins: [{ origin: 'http://localhost:7400', localStorage: [{ name: 'urid', value: 'x' }] }],
+      }),
+      'utf8',
+    );
+
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${server.port}/api/scenario/generate?token=${server.token}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            project: process.cwd(),
+            target: 'Whatever',
+            control: 'Something',
+            baseUrl: 'http://localhost:7500',
+            authFile: `.auth/${name}`,
+          }),
+        },
+      );
+      const body = (await res.json()) as { error?: string };
+      expect(body.error).toContain('7400');
+      expect(body.error).toContain('not expired');
+    } finally {
+      fsMod.rmSync(pathMod.join(authDir, name), { force: true });
+    }
   }, 30_000);
 
   it('reports state the UI needs to guide the next step', async () => {

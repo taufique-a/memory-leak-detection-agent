@@ -308,11 +308,14 @@ describe('detectExpiredSession', () => {
       scenario,
     );
     expect(message).toBeDefined();
-    expect(message).toContain('expired');
+    // "was not accepted" rather than "expired": at this point we know it was
+    // refused, not why. The origin check and diagnoseLoginRedirect establish
+    // the why; this function must not assert more than it has.
+    expect(message).toContain('was not accepted');
     // Must hand the user the exact command, not a diagnosis to figure out.
     expect(message).toContain('scenario login');
     expect(message).toContain('.auth/x.auth.json');
-    expect(message).toContain('Nothing is wrong with the scenario or its selectors');
+    expect(message).toContain('sessions expire');
   });
 
   it('says nothing on a normal page', () => {

@@ -32,6 +32,7 @@ import { ACTIONS, buildArgs, findAction } from './actions';
 import { getEntityIndex, searchEntities } from './entities';
 import { generateScenario, writeGeneratedScenario } from './generateScenario';
 import { renderPage } from './page';
+import { explainSessionMismatch, readSavedSession } from '../scenario/session';
 
 export interface UiServerOptions {
   /** 0 asks the OS for a free port. */
@@ -148,6 +149,31 @@ async function generateScenarioEndpoint(
   } catch {
     sendJson(res, { error: 'App URL is not a valid URL.' });
     return;
+  }
+
+  /**
+   * Refuse a session that cannot possibly work here.
+   *
+   * Generating a scenario that points at a session captured on another port
+   * produces a run that dies at the first navigation with a message about
+   * expiry - to someone who signed in a minute ago. Catch it while there is
+   * still something useful to say.
+   */
+  if (payload.authFile !== undefined && payload.authFile !== '') {
+    const saved = readSavedSession(path.resolve(ctx.options.agentRoot, payload.authFile));
+    if (saved === undefined) {
+      sendJson(res, {
+        error:
+          `No readable session at "${payload.authFile}". Run "Sign in and save the session" ` +
+          'in step 3 first.',
+      });
+      return;
+    }
+    const mismatch = explainSessionMismatch({ ...saved, file: payload.authFile }, payload.baseUrl);
+    if (mismatch !== undefined) {
+      sendJson(res, { error: mismatch });
+      return;
+    }
   }
 
   const index = getEntityIndex(project);
@@ -453,17 +479,35 @@ async function readState(options: UiServerOptions): Promise<Record<string, unkno
     /* no scenarios directory yet */
   }
 
+  /**
+   * Saved sessions, WITH the origin each was captured at.
+   *
+   * The origin matters more than the age. A session saved at
+   * http://localhost:7400 restores no localStorage at :7500 - browsers
+   * scope it by origin, and an origin includes the port - so the app
+   * redirects to /login and it looks like an expired session. The page
+   * uses this to offer the session that actually fits the app URL.
+   */
   const authDir = path.join(agentRoot, '.auth');
-  const sessions: Array<{ file: string; ageMinutes: number }> = [];
+  const sessions: Array<{
+    file: string;
+    ageMinutes: number;
+    origins: string[];
+  }> = [];
   try {
     for (const entry of fs.readdirSync(authDir)) {
       if (!entry.endsWith('.json')) continue;
+      const relative = `.auth/${entry}`;
       const stat = fs.statSync(path.join(authDir, entry));
+      const saved = readSavedSession(path.join(authDir, entry));
       sessions.push({
-        file: `.auth/${entry}`,
+        file: relative,
         ageMinutes: Math.round((Date.now() - stat.mtimeMs) / 60000),
+        origins: saved?.origins ?? [],
       });
     }
+    // Newest first: the one you just captured is the one you want.
+    sessions.sort((a, b) => a.ageMinutes - b.ageMinutes);
   } catch {
     /* no sessions yet */
   }
