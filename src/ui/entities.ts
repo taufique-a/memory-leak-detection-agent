@@ -47,6 +47,20 @@ export interface Entity {
   /** True when it declares ngOnDestroy. */
   hasOnDestroy: boolean;
   /**
+   * How many things this file starts that someone has to stop.
+   *
+   * A crude count of subscribe / addEventListener / setInterval /
+   * setTimeout in the source text, NOT the analyzer's considered opinion -
+   * this index only parses, it does not analyse, and running the full
+   * analyzer here would turn a six-second scan into a thirty-second one.
+   *
+   * It exists so "most suspicious" can order by something real. A component
+   * with no teardown hook and twenty subscriptions is a better place to
+   * look than one with no teardown hook and none, and alphabetical order
+   * cannot tell you that. Use "Rank what looks risky" for a scored answer.
+   */
+  resourceCount: number;
+  /**
    * Can a scenario be generated automatically?
    *
    * Needs a route to navigate to AND a selector to wait for. Without a
@@ -109,6 +123,7 @@ function buildEntityIndex(projectRoot: string): EntityIndex {
     line: number;
     kind: string;
     hasOnDestroy: boolean;
+    resourceCount: number;
   }> = [];
 
   for (const absolute of walk.files) {
@@ -120,6 +135,10 @@ function buildEntityIndex(projectRoot: string): EntityIndex {
 
     routeDeclarations.push(...extractRouteArrays(parsed.sourceFile, relative));
 
+    // Counted from the text once per file, not per class - a file with two
+    // components is rare and the number is a hint, not a measurement.
+    const resourceCount = countResources(parsed.sourceFile.text);
+
     for (const cls of classifyAngularClasses(parsed.sourceFile, relative)) {
       // NgModules and pipes are not things you navigate to.
       if (cls.kind === 'NgModule' || cls.kind === 'Pipe') continue;
@@ -130,6 +149,7 @@ function buildEntityIndex(projectRoot: string): EntityIndex {
         line: cls.line,
         kind: cls.kind,
         hasOnDestroy: cls.hasOnDestroyMethod,
+        resourceCount,
       });
     }
   }
@@ -181,6 +201,7 @@ function buildEntityIndex(projectRoot: string): EntityIndex {
       routes,
       routed: reachable,
       hasOnDestroy: cls.hasOnDestroy,
+      resourceCount: cls.resourceCount,
       investigable,
       ...(blockedReason !== undefined ? { blockedReason } : {}),
       ...(ambiguous ? { ambiguousName: true } : {}),
@@ -214,6 +235,26 @@ function buildEntityIndex(projectRoot: string): EntityIndex {
     controlCandidates,
     durationMs: Date.now() - started,
   };
+}
+
+/**
+ * Count the things in a file that have to be stopped later.
+ *
+ * Text matching, deliberately. The analyzer does this properly with an AST
+ * and takes six seconds over the whole project on its own; this index has
+ * already spent that budget parsing, and all the search needs is a rough
+ * "is there a lot going on here" number to order by.
+ */
+function countResources(text: string): number {
+  const patterns = [
+    /\.subscribe\s*\(/g,
+    /addEventListener\s*\(/g,
+    /setInterval\s*\(/g,
+    /setTimeout\s*\(/g,
+  ];
+  let total = 0;
+  for (const pattern of patterns) total += (text.match(pattern) ?? []).length;
+  return total;
 }
 
 /** Routes that end a session rather than just leaving a page. */
@@ -274,8 +315,9 @@ export function searchEntities(index: EntityIndex, query: string, limit = 30): S
 
     // Something you can actually run beats something you can only read.
     if (entity.investigable) score += 15;
-    // A component with no teardown hook is the more interesting hit.
-    if (!entity.hasOnDestroy) score += 5;
+    // A component with no teardown hook is the more interesting hit, more
+    // so when it has a lot to tear down.
+    if (!entity.hasOnDestroy) score += 5 + Math.min(entity.resourceCount, 10);
     // An uncertain route is a worse answer than a certain one.
     if (entity.ambiguousName === true) score -= 20;
 

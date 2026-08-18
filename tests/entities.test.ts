@@ -71,9 +71,14 @@ beforeAll(() => {
   /* ---- a normal, investigable component ---- */
   write(
     'src/app/energy/energy.component.ts',
-    `import { Component, OnDestroy } from '@angular/core';
+    `import { Component, OnDestroy, OnInit } from '@angular/core';
      @Component({ selector: 'app-energy', template: '' })
-     export class EnergyComponent implements OnDestroy {
+     export class EnergyComponent implements OnInit, OnDestroy {
+       ngOnInit(): void {
+         this.a.readings$.subscribe(() => {});
+         window.addEventListener('resize', () => {});
+         setInterval(() => {}, 1000);
+       }
        ngOnDestroy(): void {}
      }`,
   );
@@ -215,6 +220,22 @@ describe('entity index', () => {
     }
   });
 
+  it('counts what each file starts, so results can be ordered by it', () => {
+    /**
+     * Not the analyzer's opinion - a text count of subscribe /
+     * addEventListener / setInterval / setTimeout, used only to order the
+     * search. Alphabetical order cannot tell you that one component has no
+     * teardown and twenty subscriptions while another has no teardown and
+     * none, and that difference is the whole point of the list.
+     */
+    const index = getEntityIndex(fixtureRoot);
+    const energy = index.entities.find((e) => e.name === 'EnergyComponent');
+    const gauge = index.entities.find((e) => e.name === 'GaugeComponent');
+
+    // EnergyComponent subscribes twice; GaugeComponent does nothing.
+    expect(energy?.resourceCount).toBeGreaterThan(0);
+    expect(gauge?.resourceCount).toBe(0);
+  });
   it('caches the index, because a scan costs seconds', () => {
     const first = getEntityIndex(fixtureRoot);
     const second = getEntityIndex(fixtureRoot);

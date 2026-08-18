@@ -46,6 +46,26 @@ const STEP_TITLES: Record<number, string> = {
   8: 'Write it up',
 };
 
+/**
+ * Which of the three pages each step belongs to.
+ *
+ * The split follows what you are actually doing, not the order the code
+ * runs in. Reading the source and measuring the browser both belong with
+ * fixing, because that is the question they answer; signing in belongs with
+ * setup, because you do it once and forget it.
+ */
+const STEP_PAGE: Record<number, 'setup' | 'fix' | 'report'> = {
+  0: 'setup',
+  1: 'setup',
+  2: 'fix',
+  3: 'setup',
+  4: 'fix',
+  5: 'fix',
+  6: 'fix',
+  7: 'fix',
+  8: 'report',
+};
+
 const STEP_NOTES: Record<number, string> = {
   0: 'Uses a built-in page that leaks on purpose. Nothing to install, no app, no login. Good place to start.',
   1: 'Two quick checks. The second one matters far more than it sounds - read its note.',
@@ -102,9 +122,61 @@ header{border-bottom:1px solid var(--line);padding:1.2rem 1.5rem;
   display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap}
 h1{font-size:1.15rem;margin:0}
 .sub{color:var(--muted);font-size:.85rem}
-main{max-width:70rem;margin:0 auto;padding:1.5rem;display:grid;
-  grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:1.5rem}
-@media (max-width:900px){main{grid-template-columns:1fr}}
+/**
+ * Three columns: where you are, what you are doing, what it is saying.
+ *
+ * One long page put setup, searching, fixing and the report in a single
+ * scroll, so you could never see where you were in the process. Splitting
+ * it into three named pages means each one holds about a screenful and the
+ * sidebar says which of the three you are on.
+ */
+main{max-width:88rem;margin:0 auto;padding:1.25rem;display:grid;
+  grid-template-columns:13rem minmax(0,1.1fr) minmax(0,1fr);gap:1.25rem;
+  align-items:start}
+/**
+ * Every grid child must be allowed to shrink.
+ *
+ * Without this a track sized 1fr refuses to go below the min-content width
+ * of its contents - and min-content ignores max-width, so one long
+ * unwrappable filename in a search result was setting the width of the
+ * whole page. At 420px the grid track measured 822px and the sidebar,
+ * headings and console all stretched to match it.
+ */
+main > *{min-width:0}
+
+/* ---- the sidebar ---- */
+.side{position:sticky;top:1.25rem;display:flex;flex-direction:column;gap:1rem;min-width:0}
+.nav{display:flex;flex-direction:column;gap:.3rem}
+.navitem{display:flex;align-items:flex-start;gap:.6rem;padding:.55rem .7rem;border-radius:7px;
+  border:1px solid transparent;background:transparent;color:var(--fg);cursor:pointer;
+  text-align:left;font-size:.9rem;width:100%;line-height:1.35;transition:background .12s}
+.navitem:hover{background:var(--card)}
+.navitem.on{background:var(--card);border-color:var(--line);font-weight:600}
+.navitem .num{flex:0 0 1.4rem;height:1.4rem;border-radius:50%;border:1px solid var(--line);
+  display:grid;place-items:center;font-size:.72rem;font-weight:600;color:var(--muted)}
+.navitem.on .num{border-color:var(--accent);color:var(--accent)}
+.navitem .lbl{min-width:0}
+.navitem .lbl small{display:block;font-weight:400;font-size:.72rem;color:var(--muted)}
+
+/* ---- one page visible at a time ---- */
+.page{display:none;min-width:0}
+.page.on{display:block;animation:fadein .16s ease-out}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+.pagehead{margin:0 0 .8rem}
+.pagehead h2{margin:0;font-size:1.05rem}
+.pagehead p{margin:.2rem 0 0;color:var(--muted);font-size:.86rem}
+
+@media (max-width:1250px){
+  main{grid-template-columns:11rem minmax(0,1fr)}
+  .rail{grid-column:1 / -1}
+}
+@media (max-width:900px){
+  main{grid-template-columns:1fr}
+  .side{position:static}
+  .nav{flex-direction:row;flex-wrap:wrap}
+  .navitem{width:auto;flex:1 1 8rem}
+  .navitem .lbl small{display:none}
+}
 .step{border:1px solid var(--line);border-radius:8px;margin-bottom:1rem;background:var(--card)}
 .step h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
   margin:0;padding:.7rem 1rem;border-bottom:1px solid var(--line)}
@@ -146,8 +218,8 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
  * and the panels spill past the viewport instead of scrolling inside it,
  * which is what made them overlap.
  */
-.rail{position:sticky;top:1.5rem;display:flex;flex-direction:column;gap:1rem;
-  height:calc(100vh - 3rem);min-height:0}
+.rail{position:sticky;top:1.25rem;display:flex;flex-direction:column;gap:1rem;
+  height:calc(100vh - 2.5rem);min-height:0}
 .panel{border:1px solid var(--line);border-radius:8px;background:var(--card);
   display:flex;flex-direction:column;min-height:0;overflow:hidden}
 .panel h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
@@ -168,24 +240,28 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
   font:12px/1.55 ui-monospace,Consolas,"Courier New",monospace;white-space:pre-wrap;
   word-break:break-word;min-height:0}
 /* On a narrow screen the rail stacks under the steps, where sticky is wrong. */
-/* Two columns need room. Below this the rail is more useful stacked. */
-@media (max-width:1000px){
-  main{grid-template-columns:1fr}
+/* Below this the console is more useful stacked under the content. */
+@media (max-width:1250px){
   .rail{position:static;height:auto}
-  #consolePanel{min-height:22rem}
+  #consolePanel{min-height:20rem}
 }
 @media (max-width:620px){
-  main{padding:1rem}
+  main{padding:.85rem}
   header{padding:1rem}
   .action{padding:.8rem}
   input[type=text],input[type=number],select{max-width:none}
-  .eroute,.efile{max-width:9rem}
+  .eroute{max-width:100%}
+  /* The source path is the least useful thing on a small screen, and the
+     longest. The name and the route are what you pick from. */
+  .efile{display:none}
+  .pagehead h2{font-size:.98rem}
 }
 .status{padding:.6rem 1rem;border-top:1px solid var(--line);font-size:.82rem;color:var(--muted)}
 /* ---- live status: what the tool can see right now ---- */
-.ready{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem}
-.chip{flex:1 1 11rem;border:1px solid var(--line);border-left-width:4px;border-radius:6px;
-  background:var(--card);padding:.5rem .7rem;min-width:0}
+.ready{display:flex;flex-direction:column;gap:.4rem}
+.chip{border:1px solid var(--line);border-left-width:4px;border-radius:6px;
+  background:var(--card);padding:.4rem .6rem;min-width:0}
+@media (max-width:900px){.ready{flex-direction:row;flex-wrap:wrap}.chip{flex:1 1 10rem}}
 .chip .k{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .chip .v{font-size:.86rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap}
@@ -223,17 +299,22 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 .facts{display:flex;gap:.3rem;opacity:.35;transition:opacity .15s}
 .frow:hover .facts{opacity:1}
 /* ---- entity search ---- */
-#entityResults{max-height:18rem;overflow:auto;margin-top:.5rem}
+.sortbar{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;margin-top:.5rem;
+  font-size:.75rem;color:var(--muted)}
+.sortbar button{background:transparent;color:var(--muted);border:1px solid var(--line);
+  border-radius:4px;padding:.15rem .5rem;font-size:.75rem}
+.sortbar button.on{color:var(--accent);border-color:var(--accent);font-weight:600}
+#entityResults{max-height:22rem;overflow:auto;margin-top:.5rem}
 .erow{display:flex;align-items:center;gap:.5rem;padding:.35rem .45rem;border-radius:5px;
-  cursor:pointer;border:1px solid transparent}
+  cursor:pointer;border:1px solid transparent;flex-wrap:wrap;min-width:0}
 .erow:hover{background:var(--code);border-color:var(--line)}
 .erow.sel{background:var(--code);border-color:var(--accent)}
 .ename{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   font-size:.85rem;font-weight:600}
 .eroute{font-size:.75rem;color:var(--muted);white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis;max-width:16rem}
+  overflow:hidden;text-overflow:ellipsis;max-width:16rem;min-width:0}
 .efile{font-size:.7rem;color:var(--muted);white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis;max-width:18rem}
+  overflow:hidden;text-overflow:ellipsis;max-width:18rem;min-width:0}
 .etag{font-size:.66rem;padding:.05em .4em;border-radius:3px;border:1px solid;white-space:nowrap}
 .etag.warn{color:var(--warn);border-color:var(--warn)}
 .etag.bad{color:var(--bad);border-color:var(--bad)}
@@ -279,99 +360,152 @@ a{color:var(--accent)}
 </header>
 
 <main>
-  <section id="steps">
+  <aside class="side">
+    <nav class="nav" id="nav">
+      <button class="navitem on" data-page="setup">
+        <span class="num">1</span>
+        <span class="lbl">Set up<small>Point it at your app</small></span>
+      </button>
+      <button class="navitem" data-page="fix">
+        <span class="num">2</span>
+        <span class="lbl">Find &amp; fix<small>Search, measure, repair</small></span>
+      </button>
+      <button class="navitem" data-page="report">
+        <span class="num">3</span>
+        <span class="lbl">Report<small>Write it up, take the files</small></span>
+      </button>
+    </nav>
+
     <div class="ready" id="ready"></div>
+  </aside>
 
-    <div class="banner">
-      <strong>1. Where is your app running?</strong>
-      <div class="row" style="margin-top:.5rem">
-        <input type="text" id="appUrl" placeholder="http://localhost:4200" style="flex:1;min-width:12rem">
-        <button class="ghost" id="checkUrl">check</button>
-        <span id="appStatus" class="sub">not checked</span>
+  <section id="content">
+
+    <!-- ============ 1. SET UP ============ -->
+    <div class="page on" id="page-setup">
+      <div class="pagehead">
+        <h2>Set up</h2>
+        <p>Tell it where your app is, check the tools are there, and sign in once.</p>
       </div>
-      <div class="sub" style="margin-top:.4rem">
-        Any port is fine &mdash; paste the address you open the app at. Start your app
-        first, then press <strong>check</strong>. Everything below uses this address, so
-        you never have to type your port twice.
-      </div>
-    </div>
 
-    <div class="banner" id="findBanner">
-      <strong>2. What do you want to check?</strong>
-      <div class="row" style="margin-top:.5rem">
-        <input type="text" id="entitySearch" placeholder="Type a page or component name — try energy, oee, report">
-        <button class="ghost" id="entityRefresh" title="Read the project files again">rescan</button>
-      </div>
-      <div class="sub" id="entityStatus" style="margin-top:.4rem">
-        Search every page and component in your project. Pick one and everything else is
-        set up for you &mdash; you do not need the steps below unless you want them.
-      </div>
-      <div id="entityResults"></div>
-      <div id="entityPick" style="display:none;margin-top:.6rem"></div>
-    </div>
-
-    <div class="banner warn">
-      <strong>Only one button ever changes your code.</strong> That is
-      &ldquo;Apply a fix&rdquo; in step 7. It makes you type a confirmation, then shows
-      you every change and asks about each one on its own. It also refuses to run if you
-      have unsaved work, puts its changes on a separate branch, and tells you how to undo
-      them. Everything else on this page only reads.
-    </div>
-
-    <div class="sub" style="margin:0 0 .6rem">
-      Or work through the steps yourself:
-    </div>
-    <div id="stepList"></div>
-
-    <div class="panel" id="filesPanel">
-      <h2>
-        <span>Your results</span>
-        <button class="ghost mini" id="filesRefresh">refresh</button>
-      </h2>
-      <div class="files" id="files"><div class="status">Nothing yet. Run a step and the
-        files it makes will appear here.</div></div>
-    </div>
-  </section>
-
-  <section>
-    <div class="rail">
-      <div class="panel" id="consolePanel">
-        <h2>
-          <span id="running">idle</span>
-          <span>
-            <button class="ghost mini" id="copyBtn">copy output</button>
-            <button class="ghost mini" id="stopBtn" disabled>stop</button>
-            <button class="ghost mini" id="clearBtn">clear</button>
-          </span>
-        </h2>
-        <div class="bar idle" id="bar"><span></span></div>
-        <pre id="out">Whatever you run shows up here, live.
-
-New to this? Press "Try it first" on the left. It uses a built-in page that
-leaks on purpose, so it needs no app and no login, and it shows you what a
-real result looks like in about 20 seconds.</pre>
-
-        <div id="reply">
-          <div class="hint" id="replyHint"></div>
-          <div class="row">
-            <button id="replyEnter">I have signed in / continue</button>
-            <button class="ghost" id="replyYes">yes</button>
-            <button class="ghost" id="replyNo">no</button>
-            <input type="text" id="replyText" placeholder="or type your answer here">
-            <button class="ghost" id="replySend">send</button>
-          </div>
+      <div class="banner">
+        <strong>Where is your app running?</strong>
+        <div class="row" style="margin-top:.5rem">
+          <input type="text" id="appUrl" placeholder="http://localhost:4200">
+          <button class="ghost" id="checkUrl">check</button>
+          <span id="appStatus" class="sub">not checked</span>
         </div>
+        <div class="sub" style="margin-top:.4rem">
+          Any port is fine &mdash; paste the address you open the app at. Start your app
+          first, then press <strong>check</strong>. Everything else uses this address, so
+          you never have to type your port twice.
+        </div>
+      </div>
 
-        <div class="status" id="status">&nbsp;</div>
+      <div id="steps-setup"></div>
+
+      <div class="banner warn">
+        <strong>Only one button in this whole tool changes your code.</strong> It is on
+        the <em>Find &amp; fix</em> page, it makes you type a confirmation first, and then
+        it shows you every single change and asks about each one on its own. It also
+        refuses to run if you have unsaved work, puts its changes on a separate branch,
+        and tells you how to undo them.
       </div>
     </div>
+
+    <!-- ============ 2. FIND & FIX ============ -->
+    <div class="page" id="page-fix">
+      <div class="pagehead">
+        <h2>Find &amp; fix</h2>
+        <p>Search for a page, measure it, and see what to do about it.</p>
+      </div>
+
+      <div class="banner" id="findBanner">
+        <strong>What do you want to check?</strong>
+        <div class="row" style="margin-top:.5rem">
+          <input type="text" id="entitySearch" placeholder="Type a page or component name — try energy, oee, report">
+          <button class="ghost" id="entityRefresh" title="Read the project files again">rescan</button>
+        </div>
+        <div class="sortbar">
+          <span>Sort by</span>
+          <button data-sort="best" class="on">best match</button>
+          <button data-sort="risk">most suspicious</button>
+          <button data-sort="name">name</button>
+          <button data-sort="route">page address</button>
+        </div>
+        <div class="sub" id="entityStatus" style="margin-top:.4rem">
+          Search every page and component in your project. Pick one and everything else is
+          set up for you.
+        </div>
+        <div id="entityResults"></div>
+        <div id="entityPick" style="display:none;margin-top:.6rem"></div>
+      </div>
+
+      <div class="sub" style="margin:0 0 .6rem">
+        Or work through it step by step:
+      </div>
+      <div id="steps-fix"></div>
+    </div>
+
+    <!-- ============ 3. REPORT ============ -->
+    <div class="page" id="page-report">
+      <div class="pagehead">
+        <h2>Report</h2>
+        <p>Turn what was found into something you can send to someone.</p>
+      </div>
+
+      <div id="steps-report"></div>
+
+      <div class="panel" id="filesPanel">
+        <h2>
+          <span>Your results</span>
+          <button class="ghost mini" id="filesRefresh">refresh</button>
+        </h2>
+        <div class="files" id="files"><div class="status">Nothing yet. Run a step and the
+          files it makes will appear here.</div></div>
+      </div>
+    </div>
+
   </section>
+
+  <div class="rail">
+    <div class="panel" id="consolePanel">
+      <h2>
+        <span id="running">nothing running</span>
+        <span>
+          <button class="ghost mini" id="copyBtn">copy output</button>
+          <button class="ghost mini" id="stopBtn" disabled>stop</button>
+          <button class="ghost mini" id="clearBtn">clear</button>
+        </span>
+      </h2>
+      <div class="bar idle" id="bar"><span></span></div>
+      <pre id="out">Whatever you run shows up here, live.
+
+New to this? Open "Set up" and press "Try it first". It uses a built-in page
+that leaks on purpose, so it needs no app and no login, and it shows you what
+a real result looks like in about 20 seconds.</pre>
+
+      <div id="reply">
+        <div class="hint" id="replyHint"></div>
+        <div class="row">
+          <button id="replyEnter">I have signed in / continue</button>
+          <button class="ghost" id="replyYes">yes</button>
+          <button class="ghost" id="replyNo">no</button>
+          <input type="text" id="replyText" placeholder="or type your answer here">
+          <button class="ghost" id="replySend">send</button>
+        </div>
+      </div>
+
+      <div class="status" id="status">&nbsp;</div>
+    </div>
+  </div>
 </main>
 
 <script>
 const TOKEN = ${JSON.stringify(options.token)};
 const ACTIONS = ${actionsJson};
 const STEP_TITLES = ${JSON.stringify(STEP_TITLES)};
+const STEP_PAGE = ${JSON.stringify(STEP_PAGE)};
 const STEP_NOTES = ${JSON.stringify(STEP_NOTES)};
 const STEPS = ${JSON.stringify(steps)};
 const DEFAULT_PROJECT = ${JSON.stringify(options.defaultProject)};
@@ -535,15 +669,17 @@ function paramField(action, p) {
 }
 
 function render() {
-  let html = '';
+  const html = { setup: '', fix: '', report: '' };
+
   for (const step of STEPS) {
     const actions = ACTIONS.filter((a) => a.step === step);
     if (!actions.length) continue;
-    html += '<div class="step"><h2>' + step + '. ' + esc(STEP_TITLES[step] || '') + '</h2>';
-    if (STEP_NOTES[step]) html += '<div class="note">' + esc(STEP_NOTES[step]) + '</div>';
+    const page = STEP_PAGE[step] || 'fix';
+    html[page] += '<div class="step"><h2>' + step + '. ' + esc(STEP_TITLES[step] || '') + '</h2>';
+    if (STEP_NOTES[step]) html[page] += '<div class="note">' + esc(STEP_NOTES[step]) + '</div>';
     for (const a of actions) {
       const blocked = blockedReason(a);
-      html += '<div class="action' + (a.requiresConfirmation ? ' writes' : '') + '">' +
+      html[page] += '<div class="action' + (a.requiresConfirmation ? ' writes' : '') + '">' +
         '<h3>' + esc(a.title) + '</h3>' +
         '<div class="summary">' + esc(a.summary) + '</div>' +
         '<details><summary>what is this for?</summary><div class="why">' + esc(a.why) + '</div></details>' +
@@ -560,10 +696,10 @@ function render() {
         (blocked ? '<div class="blocked">' + esc(blocked) + '</div>' : '') +
         '</div>';
     }
-    html += '</div>';
+    html[page] += '</div>';
   }
 
-  html += '<div class="step"><h2>Everything the tool can see</h2><div class="action">' +
+  html.report += '<div class="step"><h2>Everything the tool can see</h2><div class="action">' +
     '<ul class="state">' +
     '<li><strong>Saved journeys</strong> — ' + (state.scenarios.length || 'none yet') + '</li>' +
     state.scenarios.map((s) => '<li>&nbsp;&nbsp;' + esc(s.name) + ' at ' + esc(s.baseUrl) +
@@ -578,7 +714,9 @@ function render() {
     '<button class="ghost" id="refreshBtn">refresh</button>' +
     '</div></div>';
 
-  $('stepList').innerHTML = html;
+  $('steps-setup').innerHTML = html.setup;
+  $('steps-fix').innerHTML = html.fix;
+  $('steps-report').innerHTML = html.report;
 
   for (const btn of document.querySelectorAll('button[data-action]')) {
     btn.addEventListener('click', () => run(btn.getAttribute('data-action')));
@@ -830,6 +968,9 @@ $('clearBtn').addEventListener('click', () => { $('out').textContent = ''; });
 
 let entityControls = [];
 let entityTotal = 0;
+/** The last set of results, kept so sorting is instant and offline. */
+let entityResults = [];
+let entitySort = 'best';
 let selectedEntity = null;
 let searchTimer = null;
 
@@ -866,11 +1007,25 @@ async function searchEntities(refresh) {
 
   entityControls = data.controls || [];
   entityTotal = data.total || 0;
+  entityResults = data.results || [];
   renderReady();
-  const results = data.results || [];
   $('entityStatus').textContent = q
-    ? 'Showing ' + results.length + ' of ' + data.total + ' components matching "' + q + '"'
+    ? 'Showing ' + entityResults.length + ' of ' + data.total + ' components matching "' + q + '"'
     : 'Showing pages with no cleanup code first — ' + data.total + ' components in total';
+
+  renderEntityResults();
+}
+
+/**
+ * Draw the results in the chosen order.
+ *
+ * Separate from searching so that changing the order is instant and needs
+ * no server round trip - the results are already here, and re-running a
+ * six-second project scan to reorder a list nobody has scrolled yet would
+ * be absurd.
+ */
+function renderEntityResults() {
+  const results = sortedEntities();
 
   if (!results.length) {
     $('entityResults').innerHTML =
@@ -884,6 +1039,10 @@ async function searchEntities(refresh) {
     if (!r.investigable) tags.push('<span class="etag bad">cannot open in a browser</span>');
     else if (r.ambiguousName) tags.push('<span class="etag warn">page may be wrong</span>');
     if (!r.hasOnDestroy) tags.push('<span class="etag warn">no cleanup code</span>');
+    if (r.resourceCount > 0) {
+      // What it starts, so "most suspicious" has something visible behind it.
+      tags.push('<span class="etag">' + r.resourceCount + ' to clean up</span>');
+    }
     return '<div class="erow" data-i="' + i + '">' +
       '<div class="ename">' + esc(r.name) + '</div>' +
       '<div class="eroute">' + esc(r.routes[0] || 'not routed') + '</div>' +
@@ -899,6 +1058,56 @@ async function searchEntities(refresh) {
       pickEntity(results[Number(row.getAttribute('data-i'))]);
     });
   }
+}
+
+/**
+ * The four orders, and why each exists.
+ *
+ *   best match      what the search itself thinks, which is right when you
+ *                   typed a name and want that name
+ *   most suspicious no cleanup code first, then no route - the order to
+ *                   read in when you do not know where to start
+ *   name            alphabetical, for when you know it exists and want to
+ *                   find it in a long list
+ *   page address    groups a feature area together, because routes share
+ *                   prefixes and components do not
+ */
+function sortedEntities() {
+  const list = entityResults.slice();
+
+  if (entitySort === 'name') {
+    return list.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  if (entitySort === 'route') {
+    return list.sort((a, b) => {
+      const ra = a.routes[0] || '~';
+      const rb = b.routes[0] || '~';
+      return ra.localeCompare(rb) || a.name.localeCompare(b.name);
+    });
+  }
+  if (entitySort === 'risk') {
+    return list.sort((a, b) => {
+      // No teardown hook first, then whoever has the most to tear down.
+      // Alphabetical last, so the order is stable when nothing separates two.
+      const tier = (e) => (e.hasOnDestroy ? 0 : 2) + (e.investigable ? 1 : 0) + (e.ambiguousName ? -1 : 0);
+      return (
+        tier(b) - tier(a) ||
+        (b.resourceCount || 0) - (a.resourceCount || 0) ||
+        a.name.localeCompare(b.name)
+      );
+    });
+  }
+  return list; // already in the server's ranked order
+}
+
+for (const btn of document.querySelectorAll('.sortbar button')) {
+  btn.addEventListener('click', () => {
+    entitySort = btn.getAttribute('data-sort');
+    for (const other of document.querySelectorAll('.sortbar button')) {
+      other.classList.toggle('on', other === btn);
+    }
+    renderEntityResults();
+  });
 }
 
 function pickEntity(entity) {
@@ -1072,6 +1281,35 @@ $('entitySearch').addEventListener('input', () => {
 });
 $('entityRefresh').addEventListener('click', () => searchEntities(true));
 
+/* ------------------------------------------------------------------ */
+/* Which page are we on                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Remembered across reloads.
+ *
+ * A run takes minutes and people reload. Landing back on step one every
+ * time, having already set everything up, is a small insult that adds up.
+ */
+let page = localStorage.getItem('memoryAgentPage') || 'setup';
+
+function showPage(name) {
+  page = name;
+  localStorage.setItem('memoryAgentPage', name);
+  for (const el of document.querySelectorAll('.page')) {
+    el.classList.toggle('on', el.id === 'page-' + name);
+  }
+  for (const el of document.querySelectorAll('.navitem')) {
+    el.classList.toggle('on', el.getAttribute('data-page') === name);
+  }
+  // A page switch is a new view, so start it at the top.
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+
+for (const btn of document.querySelectorAll('.navitem')) {
+  btn.addEventListener('click', () => showPage(btn.getAttribute('data-page')));
+}
+
 $('checkUrl').addEventListener('click', checkApp);
 $('appUrl').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); checkApp(); }
@@ -1086,6 +1324,7 @@ $('appUrl').addEventListener('keydown', (e) => {
   $('appUrl').value = appUrl;
   if (appUrl) checkApp();
   refreshFiles();
+  showPage(page);
 })();
 
 setInterval(() => { if (!currentRun) { refreshState(); refreshFiles(); } }, 15000);

@@ -185,7 +185,7 @@ describe('page', () => {
   });
 
   it('states clearly which action can write, rather than burying it', () => {
-    expect(page).toContain('Only one button ever changes your code');
+    expect(page).toContain('Only one button in this whole tool changes your code');
     expect(page).toContain('undo');
     expect(page).toContain('nothing leaves this computer');
   });
@@ -338,18 +338,82 @@ describe('page', () => {
   });
   /* ---- layout ---- */
 
-  it("keeps the right-hand rail for the console alone", () => {
+  it("keeps the rail for the console alone", () => {
     /**
      * Results and a live console were sharing one column, so both were
      * squeezed. They are different jobs: you watch a run, and you fetch
-     * files afterwards. The files panel now sits under the steps.
+     * files afterwards. Results now live on the Report page.
      */
-    const rail = page.slice(page.indexOf('class="rail"'), page.indexOf('</main>'));
+    const rail = page.slice(page.indexOf('<div class="rail">'), page.indexOf('</main>'));
     expect(rail).toContain('id="consolePanel"');
     expect(rail).not.toContain('id="filesPanel"');
 
-    const left = page.slice(page.indexOf('<section id="steps">'), page.indexOf('class="rail"'));
-    expect(left).toContain('id="filesPanel"');
+    const content = page.slice(page.indexOf('<section id="content">'), page.indexOf('<div class="rail">'));
+    expect(content).toContain('id="filesPanel"');
+  });
+
+  /* ---- three pages, one sidebar ---- */
+
+  it("splits the work across three named pages", () => {
+    /**
+     * One long scroll held setup, searching, fixing and the report, so you
+     * could never tell where you were in the process. Three pages, and a
+     * sidebar that says which one you are on.
+     */
+    for (const id of ['page-setup', 'page-fix', 'page-report']) {
+      expect(page).toContain('id="' + id + '"');
+    }
+    for (const id of ['steps-setup', 'steps-fix', 'steps-report']) {
+      expect(page).toContain('id="' + id + '"');
+    }
+    expect(page).toContain('class="side"');
+    expect(page).toContain('data-page="setup"');
+    expect(page).toContain('data-page="fix"');
+    expect(page).toContain('data-page="report"');
+  });
+
+  it("shows exactly one page at a time", () => {
+    const markup = page.slice(page.indexOf('<main>'), page.indexOf('</main>'));
+    const open = [...markup.matchAll(/class="page( on)?"/g)].map((m) => m[1] ?? '');
+    expect(open).toHaveLength(3);
+    expect(open.filter((x) => x.trim() === 'on')).toHaveLength(1);
+  });
+
+  it("puts every step on exactly one page", () => {
+    // A step with no page assignment would silently vanish from the UI.
+    const shown = new Set(ACTIONS.map((a) => a.step));
+    const mapMatch = /const STEP_PAGE = (\{[^}]*\})/.exec(page);
+    expect(mapMatch).not.toBeNull();
+    const mapping = JSON.parse(String(mapMatch?.[1])) as Record<string, string>;
+    for (const step of shown) {
+      expect(['setup', 'fix', 'report']).toContain(mapping[String(step)]);
+    }
+  });
+
+  it("remembers which page you were on", () => {
+    // Runs take minutes and people reload. Landing back on step one after
+    // setting everything up is a small insult that adds up.
+    expect(page).toContain('memoryAgentPage');
+  });
+
+  it("keeps the console visible on every page", () => {
+    // The rail sits outside the page sections, so a run stays watchable
+    // while you move between them.
+    const content = page.slice(page.indexOf('<section id="content">'), page.indexOf('</section>\n\n  <div class="rail">'));
+    expect(content).not.toContain('id="consolePanel"');
+  });
+
+  /* ---- sorting ---- */
+
+  it("lets the results be reordered without another scan", () => {
+    // A project scan costs about six seconds. Re-running it to reorder a
+    // list already on screen would be absurd.
+    expect(page).toContain('class="sortbar"');
+    for (const key of ['best', 'risk', 'name', 'route']) {
+      expect(page).toContain('data-sort="' + key + '"');
+    }
+    expect(page).toContain('function sortedEntities');
+    expect(page).toContain('renderEntityResults');
   });
 
   it("defines every layout class it uses", () => {

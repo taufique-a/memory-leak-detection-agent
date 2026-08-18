@@ -64,12 +64,20 @@ A browser opens on a local page that walks you from **step 0 (see how it works)*
 through to **step 8 (write it up)**. Each step says what it does, why it matters
 and roughly how long it takes, in plain language.
 
-**The layout.** Steps and your results are on the **left**; the **right** is the
-live console and nothing else. A run takes minutes and you watch it there, while
-the files it produces are something you go and fetch afterwards — different jobs,
-so they no longer squeeze each other into half a column.
+**Three pages, one sidebar.** One long scroll held setup, searching, fixing and
+the report together, so you could never tell where you were in the process:
 
-**Four status cards** at the top say what the tool can see right now:
+| Page | What is on it |
+|---|---|
+| **1. Set up** | Your app's address, the environment checks, the demo, signing in |
+| **2. Find &amp; fix** | The search, reading the code, measuring, heap, correlation, fixes |
+| **3. Report** | Writing the document, and every file the run produced |
+
+The **live console stays on the right on all three**, so a five-minute run is
+still watchable while you move between them. The page you were on is remembered
+across reloads.
+
+**Four status cards** in the sidebar say what the tool can see right now:
 
 | Card | Tells you |
 |---|---|
@@ -109,6 +117,20 @@ second route to navigate away to, and then **generates a scenario file for it
 and runs the whole find-and-fix pipeline** — static analysis, measurement, heap
 snapshots, correlation, proposed fixes and a report. *"Just measure it"* runs
 only the measurement, which is about a minute instead of five.
+
+**Sorting.** The results reorder instantly — no second scan:
+
+| Order | Use it when |
+|---|---|
+| best match | You typed a name and want that name |
+| most suspicious | You do not know where to start: no cleanup code first, then whoever has the most to clean up |
+| name | You know it exists and want to find it in a long list |
+| page address | You want a whole feature area together, since routes share prefixes and class names do not |
+
+The **"N to clean up"** badge behind *most suspicious* is a text count of
+`subscribe` / `addEventListener` / `setInterval` / `setTimeout` in the file. It
+is a hint for ordering, not a verdict — use *"Rank what looks risky"* for a
+scored answer.
 
 The search is honest about what it cannot do:
 
@@ -354,7 +376,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~59s, 568 tests)
+npm test                       # everything (~59s, 575 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -1563,7 +1585,7 @@ src/
   heap/        snapshot capture, parsing, retaining paths
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search
-tests/         568 tests, mirrors src/
+tests/         575 tests, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)
