@@ -50,7 +50,8 @@ export interface RawSnapshotArrays {
   nodeCount: number;
   edgeCount: number;
   nodes: Uint32Array;
-  edges: Uint32Array;
+  /** Signed, because name_or_index can be negative. */
+  edges: Int32Array;
   strings: string[];
   /** File size in bytes, for reporting. */
   bytes: number;
@@ -225,7 +226,15 @@ class ByteReader {
     }
   }
 
-  /** Read a non-negative integer. Returns -1 when the next token is not one. */
+  /**
+   * Read an integer. Returns NaN when the next token is not one.
+   *
+   * The sentinel used to be -1, which was wrong in a way that only shows up
+   * on real data: V8 writes -2147483648 in the name_or_index field of some
+   * edges, and the caller rejected every negative value as malformed. A
+   * 325 MB IOSense snapshot died 215 MB in on a number that was perfectly
+   * valid. NaN cannot be confused with a value.
+   */
   readNumber(): number {
     this.skipWhitespace();
     let value = 0;
@@ -249,7 +258,7 @@ class ByteReader {
       this.pos++;
     }
 
-    if (digits === 0) return -1;
+    if (digits === 0) return Number.NaN;
     return negative ? -value : value;
   }
 
@@ -365,11 +374,25 @@ class ByteReader {
     }
   }
 
-  /** Read `[1,2,3]` straight into a typed array. */
-  readUintArray(expected: number, onProgress?: (read: number) => void): Uint32Array {
+  /**
+   * Read `[1,2,3]` straight into a typed array.
+   *
+   * `signed` picks the container. Node fields are all counts, sizes and
+   * table offsets, so they are unsigned and can use the full 4-billion
+   * range that a large snapshot's ids need. Edge fields include
+   * name_or_index, which V8 writes as a negative sentinel for some internal
+   * edges, so those must be signed.
+   */
+  readIntArray(
+    expected: number,
+    signed: boolean,
+    onProgress?: (read: number) => void,
+  ): Uint32Array | Int32Array {
     this.expect(OPEN_BRACKET, 'the start of an array');
 
-    let out = new Uint32Array(expected > 0 ? expected : 1024);
+    const make = (size: number): Uint32Array | Int32Array =>
+      signed ? new Int32Array(size) : new Uint32Array(size);
+    let out = make(expected > 0 ? expected : 1024);
     let count = 0;
     let sinceReport = 0;
 
@@ -381,10 +404,25 @@ class ByteReader {
 
     for (;;) {
       const value = this.readNumber();
-      if (value < 0) throw new Error(`Malformed snapshot: expected a number at ${this.offset()}`);
+      if (Number.isNaN(value)) {
+        throw new Error(`Malformed snapshot: expected a number at ${this.offset()}`);
+      }
+      if (!signed && value < 0) {
+        throw new Error(
+          `Malformed snapshot: negative value ${value} at ${this.offset()} in an unsigned array.`,
+        );
+      }
+      // Silently wrapping is worse than stopping: every later index would be
+      // wrong and the result would look plausible.
+      if (value > 0x7fffffff || value < -0x80000000) {
+        throw new Error(
+          `Snapshot value ${value} at ${this.offset()} does not fit a 32-bit slot. This ` +
+            'snapshot is larger than the reader supports - reduce the iteration count.',
+        );
+      }
 
       if (count === out.length) {
-        const bigger = new Uint32Array(Math.max(out.length * 2, 1024));
+        const bigger = make(Math.max(out.length * 2, 1024));
         bigger.set(out);
         out = bigger;
       }
@@ -461,7 +499,7 @@ export function readSnapshotFile(
     let nodeCount = 0;
     let edgeCount = 0;
     let nodes: Uint32Array | undefined;
-    let edges: Uint32Array | undefined;
+    let edges: Int32Array | undefined;
     let strings: string[] | undefined;
 
     for (;;) {
@@ -496,18 +534,19 @@ export function readSnapshotFile(
       if (key === 'nodes') {
         const width = meta?.node_fields.length ?? 6;
         report('reading nodes');
-        nodes = reader.readUintArray(nodeCount * width, (read) =>
+        nodes = reader.readIntArray(nodeCount * width, false, (read) =>
           report(`  ${(read / width / 1e6).toFixed(1)}M nodes`),
-        );
+        ) as Uint32Array;
         continue;
       }
 
       if (key === 'edges') {
         const width = meta?.edge_fields.length ?? 3;
         report('reading edges');
-        edges = reader.readUintArray(edgeCount * width, (read) =>
+        // Signed: V8 writes a negative sentinel in name_or_index.
+        edges = reader.readIntArray(edgeCount * width, true, (read) =>
           report(`  ${(read / width / 1e6).toFixed(1)}M edges`),
-        );
+        ) as Int32Array;
         continue;
       }
 

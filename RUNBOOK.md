@@ -354,7 +354,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~59s, 559 tests)
+npm test                       # everything (~59s, 568 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -460,6 +460,16 @@ message again, you are on an old build.
 Big snapshots are still worth avoiding: they mean slow stages later. Drop
 `iterations` in the scenario, or pass `--trace-top 0` to skip retaining-path
 tracing.
+
+### `Malformed snapshot: expected a number at <offset>`
+
+Fixed. The reader used -1 as its "no number here" signal and rejected every
+negative value as corruption — but V8 legitimately writes **-2147483648** in
+the `name_or_index` field of some internal element edges. A 325 MB IOSense
+snapshot died 215 MB in on a number that was perfectly valid.
+
+Edges are now read into a signed array; node fields stay unsigned and a
+negative there is still reported, because it would be real corruption.
 
 ### `... does not end with a closing brace, so it was never finished writing`
 
@@ -1553,7 +1563,7 @@ src/
   heap/        snapshot capture, parsing, retaining paths
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search
-tests/         559 tests, mirrors src/
+tests/         568 tests, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)

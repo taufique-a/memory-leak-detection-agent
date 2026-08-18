@@ -34,6 +34,7 @@ const CHUNKS = [64, 67, 101, 257, 4096];
 
 interface SnapshotShape {
   nodes: number[];
+  /** May contain negatives - name_or_index does, in real snapshots. */
   edges: number[];
   strings: string[];
   extras?: Record<string, unknown>;
@@ -133,6 +134,71 @@ describe('strings', () => {
     const got = readSnapshotFile(file, { chunkSize: 64 });
     expect(got.strings).toEqual([]);
     expect(got.nodes).toHaveLength(0);
+  });
+});
+
+describe('negative values, which the format really does contain', () => {
+  /**
+   * A 325 MB IOSense snapshot died 215 MB in with "expected a number at
+   * 215369221". The byte at that offset was the minus sign of
+   * -2147483648, which V8 writes in the name_or_index field of some
+   * internal element edges.
+   *
+   * Two mistakes met there: -1 was being used as the "no number here"
+   * sentinel, so it could not be told apart from data, and every negative
+   * value was rejected outright. Real snapshots were unreadable for a
+   * reason that never appears in a small fixture.
+   */
+  const shape = {
+    nodes: [3, 1, 1, 40, 3, 1, 3, 2, 3, 24, 0, 0],
+    edges: [
+      1, -2147483648, 6, // the exact value from the real snapshot
+      1, -1, 6,          // the other sentinel that used to be ambiguous
+      2, 1, 0,           // and an ordinary one
+    ],
+    strings: ['', 'Window', 'Thing'],
+  };
+
+  it.each(CHUNKS)('reads a negative name_or_index with a %i byte buffer', (chunkSize) => {
+    const file = write(`negative-${chunkSize}.heapsnapshot`, build(shape));
+    const got = readSnapshotFile(file, { chunkSize });
+    expect(Array.from(got.edges)).toEqual(shape.edges);
+  });
+
+  it('agrees with JSON.parse, minus signs and all', () => {
+    const text = build(shape);
+    const file = write('negative-agree.heapsnapshot', text);
+    const baseline = JSON.parse(text) as { edges: number[] };
+    expect(Array.from(readSnapshotFile(file, { chunkSize: 64 }).edges)).toEqual(baseline.edges);
+  });
+
+  it('surfaces a negative index as a name rather than an empty string', () => {
+    // DevTools shows these as-is. Silently blanking them would hide which
+    // internal slot an edge came from.
+    const file = write('negative-parsed.heapsnapshot', build(shape));
+    const snap = loadHeapSnapshot(file, { chunkSize: 67 });
+    expect(snap.edgeType(0)).toBe('element');
+    expect(snap.edgeName(0)).toBe('-2147483648');
+    expect(snap.edgeTarget(0)).toBe(1);
+  });
+
+  it('REFUSES a negative where one cannot legitimately appear', () => {
+    // Node fields are counts, sizes and table offsets. A negative there is
+    // corruption, and quietly wrapping it into a huge unsigned number would
+    // produce a plausible-looking wrong answer.
+    const file = write(
+      'negative-node.heapsnapshot',
+      build({ nodes: [3, 1, -5, 40, 0, 0], edges: [], strings: [''] }),
+    );
+    expect(() => readSnapshotFile(file, { chunkSize: 64 })).toThrow(/negative/i);
+  });
+
+  it('REFUSES a value too large for a 32-bit slot instead of wrapping it', () => {
+    const file = write(
+      'too-big.heapsnapshot',
+      build({ nodes: [3, 1, 9999999999, 40, 0, 0], edges: [], strings: [''] }),
+    );
+    expect(() => readSnapshotFile(file, { chunkSize: 64 })).toThrow(/32-bit/);
   });
 });
 
