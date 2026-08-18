@@ -458,6 +458,32 @@ describe('page', () => {
       expect(markup).not.toContain(word);
     }
   });
+  /* ---- deleting ---- */
+
+  it("offers a delete for each file and for a whole group", () => {
+    expect(page).toContain('data-del=');
+    expect(page).toContain('data-delgroup=');
+    expect(page).toContain('/api/delete');
+  });
+
+  it("makes deleting take two clicks", () => {
+    // A confirm() is easy to click through without reading. Turning the
+    // button red and making it say what happens is enough friction, and
+    // it disarms itself if you walk away.
+    expect(page).toContain('really delete?');
+    expect(page).toContain('function arm(');
+  });
+
+  it("shows how much is on disk before offering to clear it", () => {
+    // Heap snapshots are hundreds of megabytes and it writes two a run.
+    expect(page).toContain('id="diskline"');
+    expect(page).toContain('in total');
+  });
+
+  it("can list everything, not just the last run", () => {
+    expect(page).toContain('id="filesAll"');
+    expect(page).toContain("'?all=1'");
+  });
   /* ---- saved sessions ---- */
 
   it('offers the sessions that exist instead of a hardcoded filename', () => {
@@ -682,6 +708,151 @@ describe('server security', () => {
       `http://127.0.0.1:${server.port}/api/download?path=${encodeURIComponent('artifacts/x.json')}`,
     );
     expect(res.status).toBe(403);
+  });
+
+  /* ---- deleting ---- */
+
+  /**
+   * This is the only endpoint that destroys anything, so it gets the
+   * hardest scrutiny in the file. Every one of these is a way somebody
+   * could lose work.
+   */
+
+  it('DELETES a file inside the allowlist', async () => {
+    const fsMod = await import('node:fs');
+    const pathMod = await import('node:path');
+    const dir = pathMod.join(process.cwd(), 'artifacts');
+    fsMod.mkdirSync(dir, { recursive: true });
+    const name = `ui-delete-test-${Date.now()}.txt`;
+    const full = pathMod.join(dir, name);
+    fsMod.writeFileSync(full, 'delete me', 'utf8');
+
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/delete?token=${server.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ paths: [`artifacts/${name}`] }),
+    });
+    const body = (await res.json()) as { deleted?: number };
+    expect(body.deleted).toBe(1);
+    expect(fsMod.existsSync(full)).toBe(false);
+  });
+
+  it('REFUSES to delete without the token', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/delete`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ paths: ['artifacts/x.json'] }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it.each([
+    ['parent traversal', '../package.json'],
+    ['deep traversal', '../../../../Windows/System32/drivers/etc/hosts'],
+    ['absolute path', 'C:/Windows/win.ini'],
+    ['source code', 'src/cli.ts'],
+    ['the tool itself', 'package.json'],
+    ['THE SAVED SESSION', '.auth/iosense.auth.json'],
+    ['the whole auth dir', '.auth'],
+    ['an allowed directory itself', 'artifacts'],
+    ['a quoted path', 'artifacts/"; rm -rf /'],
+  ])('REFUSES to delete %s', async (_label, badPath) => {
+    // .auth holds live session credentials. Nothing here may touch it.
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/delete?token=${server.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ paths: [badPath] }),
+    });
+    const body = (await res.json()) as { deleted?: number; refused?: unknown[] };
+    expect(body.deleted).toBe(0);
+    expect(body.refused?.length).toBe(1);
+  });
+
+  it('leaves the file on disk when it refuses', async () => {
+    const fsMod = await import('node:fs');
+    expect(fsMod.existsSync('package.json')).toBe(true);
+    await fetch(`http://127.0.0.1:${server.port}/api/delete?token=${server.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ paths: ['../package.json', 'package.json'] }),
+    });
+    expect(fsMod.existsSync('package.json')).toBe(true);
+  });
+
+  it('PROTECTS a hand-written scenario, but allows a generated one', async () => {
+    /**
+     * scenarios/ is the one directory here that can hold work somebody did
+     * by hand. Only this tool's own output - auto-*.json - can be removed
+     * by name.
+     */
+    const fsMod = await import('node:fs');
+    const pathMod = await import('node:path');
+    const dir = pathMod.join(process.cwd(), 'scenarios');
+    fsMod.mkdirSync(dir, { recursive: true });
+
+    const handWritten = `ui-handwritten-${Date.now()}.json`;
+    const generated = `auto-ui-test-${Date.now()}.json`;
+    fsMod.writeFileSync(pathMod.join(dir, handWritten), '{}', 'utf8');
+    fsMod.writeFileSync(pathMod.join(dir, generated), '{}', 'utf8');
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/api/delete?token=${server.token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ paths: [`scenarios/${handWritten}`, `scenarios/${generated}`] }),
+      });
+      const body = (await res.json()) as { deleted?: number; refused?: Array<{ reason: string }> };
+
+      expect(body.deleted).toBe(1);
+      expect(fsMod.existsSync(pathMod.join(dir, handWritten))).toBe(true);
+      expect(fsMod.existsSync(pathMod.join(dir, generated))).toBe(false);
+      expect(body.refused?.[0]?.reason).toContain('Hand-written');
+    } finally {
+      fsMod.rmSync(pathMod.join(dir, handWritten), { force: true });
+      fsMod.rmSync(pathMod.join(dir, generated), { force: true });
+    }
+  });
+
+  it('REFUSES a bulk clear of scenarios entirely', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/delete?token=${server.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ group: 'scenarios' }),
+    });
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toContain('one at a time');
+  });
+
+  it('rejects a request that names nothing', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/delete?token=${server.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toBeDefined();
+  });
+
+  it('caps how many paths one request may name', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/delete?token=${server.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ paths: new Array(600).fill('artifacts/x.json') }),
+    });
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toContain('too many');
+  });
+
+  it('reports totals so the disk usage is visible before deleting', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/files?token=${server.token}&all=1`);
+    const body = (await res.json()) as {
+      totalBytes?: number;
+      totals?: Record<string, { count: number; bytes: number }>;
+      showingLatestOnly?: boolean;
+    };
+    expect(typeof body.totalBytes).toBe('number');
+    expect(body.showingLatestOnly).toBe(false);
+    expect(body.totals).toBeDefined();
   });
 
   /* ---- replying to a prompt ---- */

@@ -156,9 +156,37 @@ scenario it did not generate**.
 Link selectors are **guessed** from the route path, so the notes printed before
 the run tell you what to fix if a step times out. See section 6.
 
-**Generated files** are listed at the bottom right — **only what the latest run
-produced**, not the whole history. Each has **copy** (contents to clipboard)
-and **download**. There is also **copy output** for the console panel.
+**Your results** are on the Report page — by default **only what the latest run
+produced**, not the whole history. Each has **copy** (contents to clipboard),
+**save** (download) and **delete**. There is also **copy output** for the
+console panel.
+
+### Clearing up
+
+Heap snapshots are the reason this matters: they run to **hundreds of megabytes
+each** and every heap run writes two. A handful of investigations put a gigabyte
+on the disk without anyone noticing.
+
+The panel shows the total across everything on disk, and **show everything**
+switches from the latest run to the full list. Then:
+
+- **delete** on any row
+- **delete all data and snapshots** — clears `artifacts/`
+- **delete all reports** — clears `reports/`
+
+Deleting takes **two clicks**: the button turns red and says *really delete?*,
+and disarms itself after four seconds if you walk away. There is no dialog to
+click through without reading.
+
+What it will **not** do, by design:
+
+| Refused | Why |
+|---|---|
+| Anything outside `reports/`, `artifacts/`, `scenarios/` | Same allowlist as downloading, same function — two copies of a path check drift, and the weaker one is the one that deletes |
+| `.auth/` | Live session credentials. No endpoint here can read or remove them |
+| A hand-written scenario | Only `auto-*.json` — this tool's own output — can be deleted by name |
+| Any bulk clear of `scenarios/` | Delete those one at a time |
+| Anything at all while a run is going | A heap capture writing 900 MB should not have its output pulled out from under it |
 
 The `.auth/` directory is deliberately *not* downloadable — it holds live
 session tokens.
@@ -376,7 +404,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~59s, 575 tests)
+npm test                       # everything (~60s, 596 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -1585,7 +1613,7 @@ src/
   heap/        snapshot capture, parsing, retaining paths
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search
-tests/         575 tests, mirrors src/
+tests/         596 tests, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)

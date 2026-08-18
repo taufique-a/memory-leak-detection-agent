@@ -323,6 +323,12 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
   background:transparent;color:var(--accent);border:1px solid var(--line);cursor:pointer;
   text-decoration:none;display:inline-block;line-height:1.4}
 .mini:hover{border-color:var(--accent)}
+.mini.danger{color:var(--bad);border-color:var(--line);margin:0}
+.mini.danger:hover{border-color:var(--bad)}
+.mini.armed{color:#fff;background:var(--bad);border-color:var(--bad)}
+.diskline{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;
+  padding:.5rem .6rem;border-bottom:1px solid var(--line);font-size:.78rem;color:var(--muted)}
+.diskline .grow{flex:1}
 
 /* ---- motion ---- */
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -459,8 +465,12 @@ a{color:var(--accent)}
       <div class="panel" id="filesPanel">
         <h2>
           <span>Your results</span>
-          <button class="ghost mini" id="filesRefresh">refresh</button>
+          <span>
+            <button class="ghost mini" id="filesAll">show everything</button>
+            <button class="ghost mini" id="filesRefresh">refresh</button>
+          </span>
         </h2>
+        <div class="diskline" id="diskline"><span class="grow">&nbsp;</span></div>
         <div class="files" id="files"><div class="status">Nothing yet. Run a step and the
           files it makes will appear here.</div></div>
       </div>
@@ -857,7 +867,26 @@ $('replyText').addEventListener('keydown', (e) => {
 function humanBytes(n) {
   if (n < 1024) return n + ' B';
   if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
-  return (n / 1048576).toFixed(1) + ' MB';
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+  // Heap snapshots are hundreds of megabytes each, so the total reaches
+  // gigabytes quickly. "1408.3 MB" is a number you have to stop and divide.
+  return (n / 1073741824).toFixed(2) + ' GB';
+}
+
+/**
+ * Append to the console, clearing the welcome text the first time.
+ *
+ * Without this the first message runs straight on from "...in about 20
+ * seconds." with no break, which reads as one garbled sentence.
+ */
+function say(text) {
+  const out = $('out');
+  if (out.dataset.placeholder !== 'gone') {
+    out.textContent = '';
+    out.dataset.placeholder = 'gone';
+  }
+  out.textContent += text;
+  out.scrollTop = out.scrollHeight;
 }
 
 /** "4690m" is unreadable. Say it the way a person would. */
@@ -869,6 +898,9 @@ function humanAge(minutes) {
   const days = Math.round(hours / 24);
   return days + (days === 1 ? ' day ago' : ' days ago');
 }
+
+/** false = just the last run, true = everything on disk. */
+let showAllFiles = false;
 
 const GROUP_LABEL = {
   reports: 'Reports you can read',
@@ -886,8 +918,12 @@ const GROUP_LABEL = {
  */
 async function refreshFiles() {
   let data;
-  try { data = await api('/api/files'); } catch { return; }
+  try {
+    data = await api('/api/files' + (showAllFiles ? '?all=1' : ''));
+  } catch { return; }
   const files = data.files || [];
+
+  renderDiskLine(data);
   if (!files.length) {
     $('files').innerHTML =
       '<div class="status">Nothing yet. Run a step and generated files appear here.</div>';
@@ -923,10 +959,15 @@ async function refreshFiles() {
         '<div class="facts">' +
           (f.textual ? '<button class="mini" data-copy="' + esc(f.path) + '">copy</button>' : '') +
           '<a class="mini" href="' + href + '" download>save</a>' +
+          '<button class="mini danger" data-del="' + esc(f.path) + '">delete</button>' +
         '</div></div>';
     }
   }
   $('files').innerHTML = html;
+
+  for (const btn of document.querySelectorAll('button[data-del]')) {
+    arm(btn, () => removeFiles({ paths: [btn.getAttribute('data-del')] }));
+  }
 
   for (const btn of document.querySelectorAll('button[data-copy]')) {
     btn.addEventListener('click', async () => {
@@ -944,7 +985,108 @@ async function refreshFiles() {
   }
 }
 
+/**
+ * How much is on disk, and the two buttons that clear it.
+ *
+ * Heap snapshots are hundreds of megabytes each and this tool writes two
+ * per run. Without a number here nobody notices until the disk is full,
+ * and without a button they have to go find the folder themselves.
+ */
+function renderDiskLine(data) {
+  const totals = data.totals || {};
+  const parts = [];
+  for (const key of ['reports', 'artifacts', 'scenarios']) {
+    const t = totals[key];
+    if (t && t.count) parts.push(t.count + ' ' + (GROUP_LABEL[key] || key).toLowerCase() + ', ' + humanBytes(t.bytes));
+  }
+
+  $('diskline').innerHTML =
+    '<span class="grow">' +
+      (parts.length
+        ? esc(parts.join(' &middot; ').replace(/&middot;/g, '·')) + ' — ' + humanBytes(data.totalBytes || 0) + ' in total'
+        : 'Nothing on disk yet') +
+    '</span>' +
+    ((totals.artifacts && totals.artifacts.count)
+      ? '<button class="mini danger" data-delgroup="artifacts">delete all data and snapshots</button>'
+      : '') +
+    ((totals.reports && totals.reports.count)
+      ? '<button class="mini danger" data-delgroup="reports">delete all reports</button>'
+      : '');
+
+  for (const btn of document.querySelectorAll('[data-delgroup]')) {
+    arm(btn, () => removeFiles({ group: btn.getAttribute('data-delgroup') }));
+  }
+}
+
+/**
+ * Two clicks, not a dialog.
+ *
+ * A confirm() is easy to click through without reading, and a modal for
+ * deleting one generated file is heavy. Turning the button red and making
+ * it say what will happen is enough friction to stop an accident, and it
+ * goes back to normal on its own if you walk away.
+ */
+function arm(btn, action) {
+  const original = btn.textContent;
+  let armed = false;
+  let timer = null;
+
+  btn.addEventListener('click', async () => {
+    if (!armed) {
+      armed = true;
+      btn.classList.add('armed');
+      btn.textContent = 'really delete?';
+      timer = setTimeout(() => {
+        armed = false;
+        btn.classList.remove('armed');
+        btn.textContent = original;
+      }, 4000);
+      return;
+    }
+    if (timer) clearTimeout(timer);
+    armed = false;
+    btn.classList.remove('armed');
+    btn.textContent = 'deleting...';
+    await action();
+  });
+}
+
+async function removeFiles(body) {
+  let result;
+  try {
+    result = await api('/api/delete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    say('Could not reach the server to delete.\\n\\n');
+    refreshFiles();
+    return;
+  }
+
+  if (result.error) {
+    say(result.error + '\\n\\n');
+  } else {
+    say(
+      'Deleted ' + result.deleted + ' file' + (result.deleted === 1 ? '' : 's') +
+      ', freeing ' + humanBytes(result.bytes || 0) + '.\\n'
+    );
+    for (const r of result.refused || []) {
+      say('  kept ' + r.path + ' - ' + r.reason + '\\n');
+    }
+    say('\\n');
+  }
+  refreshFiles();
+}
+
 $('filesRefresh').addEventListener('click', refreshFiles);
+
+$('filesAll').addEventListener('click', () => {
+  showAllFiles = !showAllFiles;
+  $('filesAll').textContent = showAllFiles ? 'show last run only' : 'show everything';
+  refreshFiles();
+});
 
 $('copyBtn').addEventListener('click', async () => {
   try {

@@ -466,9 +466,32 @@ async function handle(
   }
 
   if (url.pathname === '/api/files' && req.method === 'GET') {
+    /**
+     * Two views, because they answer different questions.
+     *
+     * The default is "what did the run I just watched produce", which is
+     * what you want ninety per cent of the time. `all=1` is for the other
+     * ten: finding the 900 MB heap snapshot from last Tuesday so you can
+     * delete it.
+     */
+    const showAll = url.searchParams.get('all') === '1';
+    const everything = collectArtifacts(ctx.options.agentRoot, { all: true });
+    const totals: Record<string, { count: number; bytes: number }> = {};
+    for (const file of everything) {
+      const entry = totals[file.group] ?? { count: 0, bytes: 0 };
+      entry.count++;
+      entry.bytes += file.bytes;
+      totals[file.group] = entry;
+    }
+
     sendJson(res, {
-      files: listArtifacts(ctx.options.agentRoot, ctx.lastRunStartedAt),
-      showingLatestOnly: true,
+      files: showAll
+        ? everything.slice(0, 400)
+        : listArtifacts(ctx.options.agentRoot, ctx.lastRunStartedAt),
+      showingLatestOnly: !showAll,
+      totalFiles: everything.length,
+      totalBytes: everything.reduce((sum, f) => sum + f.bytes, 0),
+      totals,
     });
     return;
   }
@@ -513,6 +536,11 @@ async function handle(
     return;
   }
 
+  if (url.pathname === '/api/delete' && req.method === 'POST') {
+    await deleteArtifacts(req, res, ctx);
+    return;
+  }
+
   if (url.pathname === '/api/download' && req.method === 'GET') {
     serveArtifact(url.searchParams.get('path') ?? '', ctx.options.agentRoot, res);
     return;
@@ -520,6 +548,120 @@ async function handle(
 
   res.writeHead(404, { 'content-type': 'text/plain' });
   res.end('not found');
+}
+
+/**
+ * Delete generated files.
+ *
+ * The only endpoint that destroys anything, so it is the most restrictive:
+ *
+ *   - the same allowlist as downloading, via the same function
+ *   - files only, never a directory
+ *   - refuses entirely while a run is in progress, because a heap capture
+ *     writing 900 MB does not need its output pulled out from under it
+ *   - hand-written scenarios are protected: a bulk delete skips scenarios
+ *     altogether, and deleting one by name refuses unless it is a
+ *     generated auto-*.json
+ *
+ * .auth is not in the allowlist and never has been - it holds live session
+ * credentials, and no endpoint here can read or remove it.
+ */
+async function deleteArtifacts(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  ctx: Context,
+): Promise<void> {
+  for (const run of ctx.runs.values()) {
+    if (run.finishedAt === undefined) {
+      sendJson(res, {
+        error:
+          'Something is still running. Wait for it to finish - a heap capture writing ' +
+          'hundreds of megabytes should not have its output deleted mid-write.',
+      });
+      return;
+    }
+  }
+
+  let payload: { paths?: unknown; group?: unknown };
+  try {
+    payload = JSON.parse(await readBody(req)) as typeof payload;
+  } catch {
+    sendJson(res, { error: 'invalid JSON' });
+    return;
+  }
+
+  const agentRoot = ctx.options.agentRoot;
+  let targets: string[] = [];
+
+  if (typeof payload.group === 'string') {
+    // Bulk: everything in one group. Scenarios are excluded on purpose -
+    // they are the only thing here somebody may have written by hand.
+    const group = payload.group;
+    if (group !== 'reports' && group !== 'artifacts') {
+      sendJson(res, {
+        error:
+          'Only reports and artifacts can be cleared in bulk. Scenarios may be ' +
+          'hand-written, so delete those one at a time.',
+      });
+      return;
+    }
+    targets = collectArtifacts(agentRoot, { all: true })
+      .filter((f) => f.group === group)
+      .map((f) => f.path);
+  } else if (Array.isArray(payload.paths)) {
+    if (payload.paths.length > 500) {
+      sendJson(res, { error: 'too many paths in one request' });
+      return;
+    }
+    targets = payload.paths.filter((x): x is string => typeof x === 'string');
+  } else {
+    sendJson(res, { error: 'nothing to delete' });
+    return;
+  }
+
+  const deleted: string[] = [];
+  const refused: Array<{ path: string; reason: string }> = [];
+  let bytes = 0;
+
+  for (const target of targets) {
+    const check = resolveInsideAllowedDirs(target, agentRoot);
+    if ('error' in check) {
+      refused.push({ path: target, reason: check.error });
+      continue;
+    }
+
+    // A hand-written scenario is somebody's work. Only this tool's own
+    // output can be removed by name.
+    if (target.startsWith('scenarios/') && !/(^|\/)auto-[^/]+\.json$/.test(target)) {
+      refused.push({
+        path: target,
+        reason: 'Hand-written scenario. Delete it yourself if you really mean to.',
+      });
+      continue;
+    }
+
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(check.path);
+    } catch {
+      refused.push({ path: target, reason: 'no longer there' });
+      continue;
+    }
+    if (!stat.isFile()) {
+      refused.push({ path: target, reason: 'not a file' });
+      continue;
+    }
+
+    try {
+      fs.rmSync(check.path);
+      deleted.push(target);
+      bytes += stat.size;
+    } catch (err) {
+      refused.push({ path: target, reason: (err as Error).message });
+    }
+  }
+
+  sendJson(res, { deleted: deleted.length, bytes, refused });
 }
 
 function sendJson(res: http.ServerResponse, body: unknown): void {
@@ -704,7 +846,19 @@ function listArtifacts(agentRoot: string, since?: number): ArtifactFile[] {
   return all.slice(0, 1);
 }
 
-function collectArtifacts(agentRoot: string): ArtifactFile[] {
+interface CollectOptions {
+  /**
+   * Return everything rather than the newest 200.
+   *
+   * The cap exists so the files panel cannot be handed thousands of rows.
+   * Deleting needs the opposite: a bulk clear that quietly skipped
+   * everything past the 200th newest file would report success and leave
+   * most of the disk still full.
+   */
+  all?: boolean;
+}
+
+function collectArtifacts(agentRoot: string, options: CollectOptions = {}): ArtifactFile[] {
   const out: ArtifactFile[] = [];
 
   const walk = (relative: string, group: string, depth: number): void => {
@@ -746,7 +900,7 @@ function collectArtifacts(agentRoot: string): ArtifactFile[] {
   for (const dir of DOWNLOADABLE_DIRS) walk(dir, dir, 0);
 
   out.sort((a, b) => b.modifiedAt - a.modifiedAt);
-  return out.slice(0, 200);
+  return options.all === true ? out : out.slice(0, 200);
 }
 
 /**
@@ -757,24 +911,54 @@ function collectArtifacts(agentRoot: string): ArtifactFile[] {
  * string checks on the input are defeated by "..", symlinks, and on Windows
  * by short names and mixed separators.
  */
-function serveArtifact(requested: string, agentRoot: string, res: http.ServerResponse): void {
+/**
+ * Resolve a client-supplied path, or refuse it.
+ *
+ * Shared by serving and DELETING, deliberately. Two copies of a
+ * path-traversal check is one copy too many: the day they drift, the
+ * weaker one is the one that deletes files.
+ *
+ * Comparing the RESOLVED absolute path is the only reliable test. String
+ * checks on the input are defeated by "..", by symlinks, and on Windows by
+ * short names and mixed separators.
+ */
+function resolveInsideAllowedDirs(
+  requested: string,
+  agentRoot: string,
+): { path: string } | { error: string; status: number } {
   if (requested === '' || requested.length > 400) {
-    res.writeHead(400, { 'content-type': 'text/plain' });
-    res.end('bad path');
-    return;
+    return { error: 'bad path', status: 400 };
+  }
+  // Nothing legitimate here contains a control character or a quote.
+  if (/["'`;&|$<>\u0000-\u001f]/.test(requested)) {
+    return { error: 'bad path', status: 400 };
   }
 
   const resolved = path.resolve(agentRoot, requested);
   const allowed = DOWNLOADABLE_DIRS.some((dir) => {
     const root = path.resolve(agentRoot, dir);
-    return resolved === root || resolved.startsWith(root + path.sep);
+    // Strictly INSIDE: the directory itself is not a deletable target.
+    return resolved.startsWith(root + path.sep);
   });
 
   if (!allowed) {
-    res.writeHead(403, { 'content-type': 'text/plain' });
-    res.end('Refused: that path is outside the downloadable directories.');
+    return {
+      error:
+        'Refused: that path is outside the reports, artifacts and scenarios directories.',
+      status: 403,
+    };
+  }
+  return { path: resolved };
+}
+
+function serveArtifact(requested: string, agentRoot: string, res: http.ServerResponse): void {
+  const check = resolveInsideAllowedDirs(requested, agentRoot);
+  if ('error' in check) {
+    res.writeHead(check.status, { 'content-type': 'text/plain' });
+    res.end(check.error);
     return;
   }
+  const resolved = check.path;
 
   let stat: fs.Stats;
   try {
