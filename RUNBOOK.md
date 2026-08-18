@@ -60,14 +60,26 @@ If you would rather not memorise commands, run this and work through the page:
 npm run dev -- ui --project "e:\taufique\io-sense\IOSense"
 ```
 
-A browser opens on a local page that walks you from **step 0 (try it with no app)**
-through to **step 8 (build the report)**. Each step says what it does, why it
-matters and roughly how long it takes. Output streams live into the panel on the
-right.
+A browser opens on a local page that walks you from **step 0 (see how it works)**
+through to **step 8 (write it up)**. Each step says what it does, why it matters
+and roughly how long it takes, in plain language.
 
-Steps that need your app running and a saved session are **visibly disabled**
-until both exist, with the reason shown — so you cannot accidentally run a
-measurement against a login page.
+**The layout.** Steps and your results are on the **left**; the **right** is the
+live console and nothing else. A run takes minutes and you watch it there, while
+the files it produces are something you go and fetch afterwards — different jobs,
+so they no longer squeeze each other into half a column.
+
+**Four status cards** at the top say what the tool can see right now:
+
+| Card | Tells you |
+|---|---|
+| Your app | Whether anything is answering at the address you gave |
+| Sign-in | Which saved session applies, how old it is, and **which address it was captured at** |
+| Your project | How many components are searchable |
+| Reports | How many exist and how recent the newest is |
+
+Steps that are not usable yet say **not ready** with a one-line reason, so you
+cannot accidentally measure a login page.
 
 ```powershell
 npm run dev -- ui --port 8080          # fixed port
@@ -342,7 +354,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~56s, 528 tests)
+npm test                       # everything (~57s, 533 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -490,7 +502,7 @@ src/
   heap/        snapshot capture, parsing, retaining paths
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search
-tests/         528 tests, mirrors src/
+tests/         533 tests, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)

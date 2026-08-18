@@ -35,27 +35,27 @@ function esc(text: string): string {
 }
 
 const STEP_TITLES: Record<number, string> = {
-  0: 'Try it first',
-  1: 'Check the setup',
-  2: 'Read the code',
+  0: 'See how it works',
+  1: 'Is everything ready?',
+  2: 'Look at your code',
   3: 'Connect to your app',
-  4: 'Measure',
-  5: 'Find what is retained',
-  6: 'Join the evidence',
-  7: 'Fixes',
-  8: 'Report',
+  4: 'Watch the memory',
+  5: 'Find what is holding it',
+  6: 'Put the evidence together',
+  7: 'Fix it',
+  8: 'Write it up',
 };
 
 const STEP_NOTES: Record<number, string> = {
-  0: 'Runs against a built-in page that leaks on purpose. Nothing to install, no login.',
-  1: 'Two checks. The second one matters more than it looks - see its note.',
-  2: 'Static analysis only. No browser, no login, and it never modifies anything.',
-  3: 'Your app must be running. Sign-in happens in a real browser window; the agent never sees your password.',
-  4: 'Validate first - the warnings catch setups that would give you a wrong answer.',
-  5: 'Heap snapshots. Slower, but this is what names the actual object.',
-  6: 'Ties the code analysis to what the browser actually did.',
-  7: 'See what would change before anything changes. Applying is separate and asks per change.',
-  8: 'A document you can send to someone.',
+  0: 'Uses a built-in page that leaks on purpose. Nothing to install, no app, no login. Good place to start.',
+  1: 'Two quick checks. The second one matters far more than it sounds - read its note.',
+  2: 'Reads your source files and nothing else. No browser, no login, and it never changes a thing.',
+  3: 'Your app needs to be running. A real browser opens and you sign in yourself - the tool never sees your password.',
+  4: 'Opens your app and repeats a journey, watching how much memory survives each time.',
+  5: 'Takes snapshots of the memory itself. Slower, but this is the part that names the actual object.',
+  6: 'Checks whether the code you were worried about is the code the browser actually struggled with.',
+  7: 'Shows you what would change first. Actually changing it is a separate button and asks about every edit.',
+  8: 'A document you can send to someone who was not here.',
 };
 
 export function renderPage(options: PageOptions): string {
@@ -119,13 +119,24 @@ main{max-width:70rem;margin:0 auto;padding:1.5rem;display:grid;
 .params{display:flex;flex-wrap:wrap;gap:.5rem;margin:.5rem 0}
 label{display:flex;flex-direction:column;gap:.2rem;font-size:.78rem;color:var(--muted)}
 input[type=text],input[type=number],select{background:var(--bg);color:var(--fg);
-  border:1px solid var(--line);border-radius:5px;padding:.35rem .5rem;font-size:.85rem;min-width:14rem}
+  border:1px solid var(--line);border-radius:5px;padding:.4rem .55rem;font-size:.85rem;
+  min-width:0;width:100%;max-width:22rem}
+label{max-width:100%}
 label.check{flex-direction:row;align-items:center;gap:.4rem}
 button{background:var(--accent);color:#fff;border:0;border-radius:5px;
   padding:.45rem .9rem;font-size:.86rem;cursor:pointer}
 button:disabled{opacity:.4;cursor:not-allowed}
 button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
 .expect{color:var(--muted);font-size:.78rem;margin-left:.6rem}
+/**
+ * A horizontal group that wraps.
+ *
+ * This was used by the app-URL bar and the search bar and never actually
+ * defined, so those inputs kept their 14rem minimum, refused to shrink and
+ * pushed out of their card on a narrow window.
+ */
+.row{display:flex;gap:.45rem;flex-wrap:wrap;align-items:center}
+.row > input{flex:1 1 12rem;min-width:0}
 .blocked{color:var(--warn);font-size:.8rem;margin-top:.4rem}
 /**
  * The right-hand rail.
@@ -136,24 +147,54 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
  * which is what made them overlap.
  */
 .rail{position:sticky;top:1.5rem;display:flex;flex-direction:column;gap:1rem;
-  max-height:calc(100vh - 3rem);min-height:0}
+  height:calc(100vh - 3rem);min-height:0}
 .panel{border:1px solid var(--line);border-radius:8px;background:var(--card);
   display:flex;flex-direction:column;min-height:0;overflow:hidden}
 .panel h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
   margin:0;padding:.7rem 1rem;border-bottom:1px solid var(--line);flex:0 0 auto;
   display:flex;justify-content:space-between;align-items:center;gap:.5rem}
 #consolePanel{flex:1 1 auto;min-height:14rem}
-#filesPanel{flex:0 1 auto;max-height:40%}
+/**
+ * Results live on the LEFT, under the steps, not in the rail.
+ *
+ * Sharing the rail with the console meant both were squeezed: the console
+ * is where you watch a five-minute run, and the files are something you go
+ * and fetch afterwards. Different jobs, so they no longer compete for the
+ * same column.
+ */
+#filesPanel{margin-top:1rem}
+#filesPanel .files{max-height:22rem}
 #out{flex:1 1 auto;overflow:auto;margin:0;padding:.8rem 1rem;background:var(--code);
   font:12px/1.55 ui-monospace,Consolas,"Courier New",monospace;white-space:pre-wrap;
   word-break:break-word;min-height:0}
 /* On a narrow screen the rail stacks under the steps, where sticky is wrong. */
-@media (max-width:900px){
-  .rail{position:static;max-height:none}
-  #consolePanel{min-height:20rem}
-  #filesPanel{max-height:24rem}
+/* Two columns need room. Below this the rail is more useful stacked. */
+@media (max-width:1000px){
+  main{grid-template-columns:1fr}
+  .rail{position:static;height:auto}
+  #consolePanel{min-height:22rem}
+}
+@media (max-width:620px){
+  main{padding:1rem}
+  header{padding:1rem}
+  .action{padding:.8rem}
+  input[type=text],input[type=number],select{max-width:none}
+  .eroute,.efile{max-width:9rem}
 }
 .status{padding:.6rem 1rem;border-top:1px solid var(--line);font-size:.82rem;color:var(--muted)}
+/* ---- live status: what the tool can see right now ---- */
+.ready{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem}
+.chip{flex:1 1 11rem;border:1px solid var(--line);border-left-width:4px;border-radius:6px;
+  background:var(--card);padding:.5rem .7rem;min-width:0}
+.chip .k{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.chip .v{font-size:.86rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.chip .n{font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.chip.ok{border-left-color:var(--ok)}
+.chip.bad{border-left-color:var(--bad)}
+.chip.warn{border-left-color:var(--warn)}
+.chip.idle{border-left-color:var(--line)}
 .pill{display:inline-block;padding:.1em .5em;border-radius:4px;font-size:.72rem;
   font-weight:600;border:1px solid;margin-left:.4rem}
 .pill.ok{color:var(--ok);border-color:var(--ok)}
@@ -232,47 +273,64 @@ a{color:var(--accent)}
 <header>
   <div>
     <h1>Memory Leak Agent</h1>
-    <div class="sub">Local UI &mdash; nothing leaves this machine</div>
+    <div class="sub">Runs on your machine only &mdash; nothing leaves this computer</div>
   </div>
   <div class="sub" id="envline">checking&hellip;</div>
 </header>
 
 <main>
   <section id="steps">
+    <div class="ready" id="ready"></div>
+
     <div class="banner">
-      <strong>Your app</strong>
+      <strong>1. Where is your app running?</strong>
       <div class="row" style="margin-top:.5rem">
         <input type="text" id="appUrl" placeholder="http://localhost:4200" style="flex:1;min-width:12rem">
         <button class="ghost" id="checkUrl">check</button>
         <span id="appStatus" class="sub">not checked</span>
       </div>
       <div class="sub" style="margin-top:.4rem">
-        Whatever port you serve on. This is used to decide which steps are ready, and
-        pre-fills the sign-in URL. Press <strong>check</strong> after starting your app.
+        Any port is fine &mdash; paste the address you open the app at. Start your app
+        first, then press <strong>check</strong>. Everything below uses this address, so
+        you never have to type your port twice.
       </div>
     </div>
 
     <div class="banner" id="findBanner">
-      <strong>Find something to investigate</strong>
+      <strong>2. What do you want to check?</strong>
       <div class="row" style="margin-top:.5rem">
-        <input type="text" id="entitySearch" placeholder="Search any component, route or selector — try energy, oee, report" style="flex:1;min-width:14rem">
-        <button class="ghost" id="entityRefresh" title="Re-scan the project">rescan</button>
+        <input type="text" id="entitySearch" placeholder="Type a page or component name — try energy, oee, report">
+        <button class="ghost" id="entityRefresh" title="Read the project files again">rescan</button>
       </div>
       <div class="sub" id="entityStatus" style="margin-top:.4rem">
-        Type to search every component in your project. Pick one and a scenario is
-        generated for it automatically.
+        Search every page and component in your project. Pick one and everything else is
+        set up for you &mdash; you do not need the steps below unless you want them.
       </div>
       <div id="entityResults"></div>
       <div id="entityPick" style="display:none;margin-top:.6rem"></div>
     </div>
 
     <div class="banner warn">
-      <strong>One action writes to your code</strong> &mdash; &ldquo;Apply a fix&rdquo; in
-      step 7, which asks you to type a confirmation first and then approves each change
-      separately. Everything else here only reads. Applying refuses a dirty working tree,
-      works on its own branch, and prints rollback commands when it finishes.
+      <strong>Only one button ever changes your code.</strong> That is
+      &ldquo;Apply a fix&rdquo; in step 7. It makes you type a confirmation, then shows
+      you every change and asks about each one on its own. It also refuses to run if you
+      have unsaved work, puts its changes on a separate branch, and tells you how to undo
+      them. Everything else on this page only reads.
+    </div>
+
+    <div class="sub" style="margin:0 0 .6rem">
+      Or work through the steps yourself:
     </div>
     <div id="stepList"></div>
+
+    <div class="panel" id="filesPanel">
+      <h2>
+        <span>Your results</span>
+        <button class="ghost mini" id="filesRefresh">refresh</button>
+      </h2>
+      <div class="files" id="files"><div class="status">Nothing yet. Run a step and the
+        files it makes will appear here.</div></div>
+    </div>
   </section>
 
   <section>
@@ -287,10 +345,11 @@ a{color:var(--accent)}
           </span>
         </h2>
         <div class="bar idle" id="bar"><span></span></div>
-        <pre id="out">Pick a step on the left.
+        <pre id="out">Whatever you run shows up here, live.
 
-If you have never run this before, start with "Try it first" - it needs no
-app and no login, and shows what a real result looks like.</pre>
+New to this? Press "Try it first" on the left. It uses a built-in page that
+leaks on purpose, so it needs no app and no login, and it shows you what a
+real result looks like in about 20 seconds.</pre>
 
         <div id="reply">
           <div class="hint" id="replyHint"></div>
@@ -298,20 +357,12 @@ app and no login, and shows what a real result looks like.</pre>
             <button id="replyEnter">I have signed in / continue</button>
             <button class="ghost" id="replyYes">yes</button>
             <button class="ghost" id="replyNo">no</button>
-            <input type="text" id="replyText" placeholder="or type an answer">
+            <input type="text" id="replyText" placeholder="or type your answer here">
             <button class="ghost" id="replySend">send</button>
           </div>
         </div>
 
         <div class="status" id="status">&nbsp;</div>
-      </div>
-
-      <div class="panel" id="filesPanel">
-        <h2>
-          <span>Generated files</span>
-          <button class="ghost mini" id="filesRefresh">refresh</button>
-        </h2>
-        <div class="files" id="files"><div class="status">nothing yet</div></div>
       </div>
     </div>
   </section>
@@ -345,15 +396,73 @@ async function refreshState() {
     $('envline').textContent = 'server unreachable';
     return;
   }
-  const s = state.sessions.length;
-  const live = Object.values(state.reachable).filter(Boolean).length;
-  $('envline').innerHTML =
-    'node ' + esc(state.nodeVersion) +
-    '<span class="pill ' + (live ? 'ok' : 'warn') + '">' +
-      (live ? live + ' app reachable' : 'no app reachable') + '</span>' +
-    '<span class="pill ' + (s ? 'ok' : 'warn') + '">' +
-      (s ? s + ' session' + (s > 1 ? 's' : '') : 'no session') + '</span>';
+  $('envline').textContent = 'Node ' + state.nodeVersion;
+  renderReady();
   render();
+}
+
+/**
+ * What can the tool see right now?
+ *
+ * Four plain statements, refreshed with the rest of the state. Before this
+ * the same information was one dense line of pills, which told you the
+ * counts but never what to do about them - so a blocked step further down
+ * came as a surprise.
+ */
+function renderReady() {
+  const cards = [];
+
+  /* ---- the app ---- */
+  const anyScenarioUp = Object.values(state.reachable || {}).some(Boolean);
+  cards.push(
+    appUp || anyScenarioUp
+      ? card('ok', 'Your app', appUrl || 'running', 'Reachable — measuring can run')
+      : card('bad', 'Your app', appUrl || 'not set',
+          appUrl ? 'Not answering. Start it, then press check.'
+                 : 'Enter the address above and press check.'),
+  );
+
+  /* ---- the sign-in ---- */
+  const wanted = originOfUrl(appUrl);
+  const usable = (state.sessions || []).filter((x) => matchesOrigin(x, wanted));
+  if (!state.sessions || state.sessions.length === 0) {
+    cards.push(card('warn', 'Sign-in', 'none saved',
+      'Only needed if your app has a login. Step 3.'));
+  } else if (usable.length > 0) {
+    const best = usable[0];
+    cards.push(card('ok', 'Sign-in', 'saved ' + humanAge(best.ageMinutes),
+      best.origins && best.origins.length ? 'For ' + best.origins[0] : 'Cookies only'));
+  } else {
+    cards.push(card('bad', 'Sign-in', 'wrong address',
+      'Saved for a different port. Sign in again at this one.'));
+  }
+
+  /* ---- what we can drive ---- */
+  cards.push(
+    entityTotal > 0
+      ? card('ok', 'Your project', entityTotal.toLocaleString() + ' components',
+          'Search any of them above')
+      : card('idle', 'Your project', 'not read yet', 'Search above to read it'),
+  );
+
+  /* ---- what has been produced ---- */
+  const reports = (state.reports || []).length;
+  cards.push(
+    reports > 0
+      ? card('ok', 'Reports', reports + (reports === 1 ? ' report' : ' reports'),
+          'Newest ' + humanAge(state.reports[0].ageMinutes))
+      : card('idle', 'Reports', 'none yet', 'Step 8 makes one you can send'),
+  );
+
+  $('ready').innerHTML = cards.join('');
+}
+
+function card(tone, key, value, note) {
+  return '<div class="chip ' + tone + '">' +
+    '<div class="k">' + esc(key) + '</div>' +
+    '<div class="v">' + esc(value) + '</div>' +
+    '<div class="n">' + esc(note) + '</div>' +
+    '</div>';
 }
 
 /* ---- the app URL the user actually serves on ---- */
@@ -362,20 +471,21 @@ let appUp = false;
 
 async function checkApp() {
   const value = $('appUrl').value.trim();
-  if (!value) { $('appStatus').textContent = 'enter a URL first'; return; }
+  if (!value) { $('appStatus').textContent = 'type an address first'; return; }
   appUrl = value;
   localStorage.setItem('memoryAgentAppUrl', appUrl);
-  $('appStatus').textContent = 'checking...';
+  $('appStatus').innerHTML = '<span class="spinner"></span>looking...';
   try {
     const r = await api('/api/check?url=' + encodeURIComponent(appUrl));
     appUp = !!r.reachable;
     $('appStatus').innerHTML = appUp
-      ? '<span class="pill ok">reachable</span>'
-      : '<span class="pill bad">not reachable</span>';
+      ? '<span class="pill ok">found it</span>'
+      : '<span class="pill bad">no answer</span>';
   } catch {
     appUp = false;
-    $('appStatus').innerHTML = '<span class="pill bad">check failed</span>';
+    $('appStatus').innerHTML = '<span class="pill bad">could not reach it</span>';
   }
+  renderReady();
   render();
 }
 
@@ -388,13 +498,12 @@ function blockedReason(action) {
   // steps that are actually fine.
   const anyScenarioUp = Object.values(state.reachable).some(Boolean);
   if (!appUp && !anyScenarioUp) {
-    return appUrl
-      ? 'Your app at ' + appUrl + ' is not reachable. Start it, then press check above.'
-      : 'Enter your app URL at the top and press check. Any port is fine.';
+    return appUrl ? 'Waiting for your app — see the top of the page.'
+                  : 'Needs your app’s address — see the top of the page.';
   }
   if (action.id !== 'login' && state.sessions.length === 0 &&
       state.scenarios.some((x) => x.needsAuth)) {
-    return 'No saved session. Run "Sign in and save the session" first.';
+    return 'Sign in first (step 3), or this will stop at a login page.';
   }
   return null;
 }
@@ -437,15 +546,16 @@ function render() {
       html += '<div class="action' + (a.requiresConfirmation ? ' writes' : '') + '">' +
         '<h3>' + esc(a.title) + '</h3>' +
         '<div class="summary">' + esc(a.summary) + '</div>' +
-        '<details><summary>why this matters</summary><div class="why">' + esc(a.why) + '</div></details>' +
+        '<details><summary>what is this for?</summary><div class="why">' + esc(a.why) + '</div></details>' +
         '<div class="params">' + a.params.map((p) => paramField(a, p)).join('') + '</div>' +
         (a.requiresConfirmation
-          ? '<div class="danger">This modifies files in your project. Type <code>' +
-            esc(a.confirmWord) + '</code> to enable it.</div>' +
+          ? '<div class="danger">This one edits files in your project. Type <code>' +
+            esc(a.confirmWord) + '</code> below to unlock it.</div>' +
             '<div class="params"><label>Confirmation' +
             '<input type="text" id="' + a.id + '_confirm" placeholder="' + esc(a.confirmWord) + '"></label></div>'
           : '') +
-        '<button data-action="' + a.id + '"' + (blocked ? ' disabled' : '') + '>run</button>' +
+        '<button data-action="' + a.id + '"' + (blocked ? ' disabled' : '') + '>' +
+          (blocked ? 'not ready' : 'run this') + '</button>' +
         '<span class="expect">' + esc(a.expect) + '</span>' +
         (blocked ? '<div class="blocked">' + esc(blocked) + '</div>' : '') +
         '</div>';
@@ -453,14 +563,16 @@ function render() {
     html += '</div>';
   }
 
-  html += '<div class="step"><h2>state</h2><div class="action">' +
+  html += '<div class="step"><h2>Everything the tool can see</h2><div class="action">' +
     '<ul class="state">' +
-    '<li>scenarios: ' + (state.scenarios.length || 'none found') + '</li>' +
-    state.scenarios.map((s) => '<li>&nbsp;&nbsp;' + esc(s.name) + ' &rarr; ' + esc(s.baseUrl) +
-      (state.reachable[s.baseUrl] ? ' <span class="pill ok">up</span>' : ' <span class="pill bad">down</span>') +
+    '<li><strong>Saved journeys</strong> — ' + (state.scenarios.length || 'none yet') + '</li>' +
+    state.scenarios.map((s) => '<li>&nbsp;&nbsp;' + esc(s.name) + ' at ' + esc(s.baseUrl) +
+      (state.reachable[s.baseUrl] ? ' <span class="pill ok">running</span>' : ' <span class="pill bad">not running</span>') +
       '</li>').join('') +
-    '<li>sessions: ' + (state.sessions.map((x) => esc(x.file) + ' (' + x.ageMinutes + ' min old)').join(', ') || 'none') + '</li>' +
-    '<li>reports: ' + (state.reports.length || 'none yet') + '</li>' +
+    '<li><strong>Saved sign-ins</strong> — ' + (state.sessions.map((x) =>
+      esc(x.file) + ' (' + esc((x.origins && x.origins[0]) || 'cookies only') + ', ' +
+      humanAge(x.ageMinutes) + ')').join('; ') || 'none') + '</li>' +
+    '<li><strong>Reports written</strong> — ' + (state.reports.length || 'none yet') + '</li>' +
     state.reports.slice(0, 3).map((r) => '<li>&nbsp;&nbsp;' + esc(r.file) + '</li>').join('') +
     '</ul>' +
     '<button class="ghost" id="refreshBtn">refresh</button>' +
@@ -539,7 +651,8 @@ function attachRun(result, action) {
   $('consolePanel').classList.add('running');
   $('bar').classList.remove('idle');
   $('stopBtn').disabled = false;
-  $('status').innerHTML = '<span class="pill warn">running</span> ' + esc(action.expect);
+  $('status').innerHTML = '<span class="pill warn">working</span> Expect ' + esc(action.expect) +
+    '. You can keep reading while it runs.';
   for (const b of document.querySelectorAll('button[data-action]')) b.disabled = true;
 
   /* Show the reply controls for commands that will ask something. */
@@ -568,15 +681,17 @@ function attachRun(result, action) {
 function finish(exitCode) {
   if (source) { source.close(); source = null; }
   currentRun = null;
-  $('running').textContent = 'idle';
+  $('running').textContent = 'nothing running';
   $('consolePanel').classList.remove('running');
   $('bar').classList.add('idle');
   $('stopBtn').disabled = true;
   $('reply').classList.remove('on');
   $('status').innerHTML = exitCode === 0
-    ? '<span class="pill ok">finished</span> exit 0'
-    : '<span class="pill ' + (exitCode === null ? 'warn' : 'bad') + '">finished</span> exit ' + exitCode +
-      ' — a non-zero exit is not always a failure: some commands use it to report a finding.';
+    ? '<span class="pill ok">done</span> Finished cleanly. Anything it wrote is under ' +
+      '"Your results" on the left.'
+    : '<span class="pill ' + (exitCode === null ? 'warn' : 'bad') + '">done</span> ' +
+      'Finished with code ' + exitCode + '. That is not always a failure — some steps use ' +
+      'it to say "I found something". Read the output above.';
   refreshState();
   refreshFiles();
 }
@@ -618,9 +733,9 @@ function humanAge(minutes) {
 }
 
 const GROUP_LABEL = {
-  reports: 'Reports',
-  artifacts: 'Data and snapshots',
-  scenarios: 'Scenarios',
+  reports: 'Reports you can read',
+  artifacts: 'Raw data and memory snapshots',
+  scenarios: 'Saved journeys',
 };
 
 /**
@@ -647,8 +762,10 @@ async function refreshFiles() {
     (groups[f.group] = groups[f.group] || []).push(f);
   }
 
-  let html = '<div class="status" style="padding:0 0 .4rem">' +
-    (files.length === 1 ? 'Latest file' : 'From the latest run — ' + files.length + ' files') +
+  let html = '<div class="status" style="padding:0 0 .4rem;border:0">' +
+    (files.length === 1
+      ? 'The most recent file. Click the name to open it, or save to download.'
+      : 'From your last run — ' + files.length + ' files. Click a name to open it.') +
     '</div>';
 
   for (const key of ['reports', 'artifacts', 'scenarios']) {
@@ -712,6 +829,7 @@ $('clearBtn').addEventListener('click', () => { $('out').textContent = ''; });
 /* ------------------------------------------------------------------ */
 
 let entityControls = [];
+let entityTotal = 0;
 let selectedEntity = null;
 let searchTimer = null;
 
@@ -724,12 +842,12 @@ async function searchEntities(refresh) {
   const q = $('entitySearch').value.trim();
   const project = projectPath();
   if (!project) {
-    $('entityStatus').textContent = 'Set the project folder in step 2 first.';
+    $('entityStatus').textContent = 'Set your project folder in step 2 first.';
     return;
   }
 
   $('entityStatus').innerHTML = '<span class="spinner"></span>' +
-    (refresh ? 'Re-scanning the project (about 6 seconds)...' : 'Searching...');
+    (refresh ? 'Reading your project again, about 6 seconds...' : 'Searching...');
 
   let data;
   try {
@@ -747,21 +865,25 @@ async function searchEntities(refresh) {
   }
 
   entityControls = data.controls || [];
+  entityTotal = data.total || 0;
+  renderReady();
   const results = data.results || [];
-  $('entityStatus').textContent =
-    results.length + ' of ' + data.total + ' components' +
-    (q ? ' matching "' + q + '"' : ' — showing routed ones without ngOnDestroy first');
+  $('entityStatus').textContent = q
+    ? 'Showing ' + results.length + ' of ' + data.total + ' components matching "' + q + '"'
+    : 'Showing pages with no cleanup code first — ' + data.total + ' components in total';
 
   if (!results.length) {
-    $('entityResults').innerHTML = '<div class="sub" style="padding:.5rem">No match.</div>';
+    $('entityResults').innerHTML =
+      '<div class="sub" style="padding:.5rem">Nothing matched. Try part of a page name, ' +
+      'a URL like <code>energy</code>, or a folder name.</div>';
     return;
   }
 
   $('entityResults').innerHTML = results.map((r, i) => {
     const tags = [];
-    if (!r.investigable) tags.push('<span class="etag bad">static only</span>');
-    else if (r.ambiguousName) tags.push('<span class="etag warn">ambiguous route</span>');
-    if (!r.hasOnDestroy) tags.push('<span class="etag warn">no ngOnDestroy</span>');
+    if (!r.investigable) tags.push('<span class="etag bad">cannot open in a browser</span>');
+    else if (r.ambiguousName) tags.push('<span class="etag warn">page may be wrong</span>');
+    if (!r.hasOnDestroy) tags.push('<span class="etag warn">no cleanup code</span>');
     return '<div class="erow" data-i="' + i + '">' +
       '<div class="ename">' + esc(r.name) + '</div>' +
       '<div class="eroute">' + esc(r.routes[0] || 'not routed') + '</div>' +
@@ -787,16 +909,17 @@ function pickEntity(entity) {
   if (!entity.investigable) {
     box.innerHTML =
       '<div class="danger">' + esc(entity.blockedReason || 'Cannot be driven in a browser.') + '</div>' +
-      '<div class="sub">You can still analyse it statically: put <code>' +
+      '<div class="sub">You can still read its code: put <code>' +
       esc(entity.file.split('/').slice(-1)[0].replace('.ts','')) +
-      '</code> into the filter on "Inspect one component" in step 2.</div>';
+      '</code> into "Look closely at one component" in step 2.</div>';
     return;
   }
 
   const controls = entityControls.filter((c) => c.name !== entity.name);
   box.innerHTML =
-    '<div class="sub"><strong>' + esc(entity.name) + '</strong> at <code>' +
-      esc(entity.routes[0]) + '</code>, waits for <code>&lt;' + esc(entity.selector) + '&gt;</code></div>' +
+    '<div class="sub">Will open <strong>' + esc(entity.name) + '</strong> at <code>' +
+      esc(entity.routes[0]) + '</code> and wait until <code>&lt;' + esc(entity.selector) +
+      '&gt;</code> appears on the page.</div>' +
     (entity.ambiguousName
       ? '<div class="danger" style="margin-top:.3rem">' + esc(entity.blockedReason || '') + '</div>'
       : '') +
@@ -805,12 +928,12 @@ function pickEntity(entity) {
         controls.map((c) => '<option value="' + esc(c.name) + '">' + esc(c.name) +
           ' — ' + esc(c.route) + '</option>').join('') +
       '</select></label>' +
-      '<label>Iterations<input type="number" id="pickIterations" value="12" min="5" max="60"></label>' +
-      '<label>Saved session' + sessionOptions() + '</label>' +
+      '<label>How many times to repeat<input type="number" id="pickIterations" value="12" min="5" max="60"></label>' +
+      '<label>Sign in as' + sessionOptions() + '</label>' +
     '</div>' +
     sessionWarning() +
     '<button id="pickGo">find and fix ' + esc(entity.name) + '</button>' +
-    '<button class="ghost" id="pickMeasure">just measure it</button>' +
+    '<button class="ghost" id="pickMeasure">just measure it, do not go further</button>' +
     '<span class="expect">about 30 seconds to check the routes, then 3 to 5 minutes — ' +
       'static, runtime, heap, correlation, proposed fixes, report</span>';
 

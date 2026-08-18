@@ -86,9 +86,11 @@ export const ACTIONS: readonly ActionDefinition[] = [
   {
     id: 'doctor',
     step: 1,
-    title: 'Check the environment',
-    summary: 'Node, TypeScript, git and Chrome',
-    why: 'Confirms everything the agent needs is present before you spend time on a run.',
+    title: 'Check this machine is ready',
+    summary: 'Looks for Node, TypeScript, git and Chrome',
+    why:
+      'Makes sure the four things this tool needs are actually installed and working, ' +
+      'so you find out now rather than five minutes into a run.',
     expect: 'about 5 seconds',
     params: [],
     build: () => ['doctor'],
@@ -97,22 +99,26 @@ export const ACTIONS: readonly ActionDefinition[] = [
   {
     id: 'selftest',
     step: 1,
-    title: 'Prove the measurement works',
-    summary: 'Measures a page built to leak and one that does not',
+    title: 'Prove the measuring is trustworthy',
+    summary: 'Tests the tool on a page that leaks on purpose, and one that does not',
     why:
-      'If forced garbage collection ever breaks, every memory number silently becomes ' +
-      'noise. This is the only thing that would catch it. Re-run after Chrome updates.',
-    expect: 'about 15 seconds',
-    params: [{ name: 'iterations', type: 'number', required: false, label: 'Iterations', default: 10 }],
+      'This tool cleans up memory before every reading, so what you see is memory that ' +
+      'refused to go away. If that cleanup ever stops working, every number it gives you ' +
+      'quietly becomes meaningless - and this check is the only thing that would notice. ' +
+      'Worth running after Chrome updates itself.',
+    expect: 'about 15 seconds - watch it get both right',
+    params: [{ name: 'iterations', type: 'number', required: false, label: 'How many times to repeat', default: 10 }],
     build: (v) => ['selftest', '--iterations', v['iterations'] ?? '10'],
     needsApp: false,
   },
   {
     id: 'scan',
     step: 2,
-    title: 'Scan the project',
-    summary: 'Components, services, routes, risky libraries',
-    why: 'Builds the map that later ranking depends on. Read-only, no browser.',
+    title: 'Take stock of the project',
+    summary: 'Counts your components, services, pages and risky libraries',
+    why:
+      'Builds the map everything later relies on. It only reads your files - no browser, ' +
+      'no login, nothing changed.',
     expect: 'about 6 seconds',
     params: [{ name: 'project', type: 'project', required: true, label: 'Project folder' }],
     build: (v) => ['scan', v['project'] ?? ''],
@@ -121,12 +127,13 @@ export const ACTIONS: readonly ActionDefinition[] = [
   {
     id: 'analyzeOne',
     step: 2,
-    title: 'Inspect one component',
-    summary: 'Every resource operation in a single file or folder',
+    title: 'Look closely at one component',
+    summary: 'Line by line: what it opens, and whether it closes it',
     why:
-      'When you already suspect something, this shows exactly what it acquires and ' +
-      'releases, line by line, without the noise of thousands of other files. Put the ' +
-      'same filter into "Rank static risks" to see how those operations score.',
+      'When you already suspect something, this shows exactly what that one file starts ' +
+      '(subscriptions, timers, listeners) and whether it ever stops them - without the ' +
+      'noise of the other few thousand files. Type the same name into "Rank what looks ' +
+      'risky" to see how serious those are.',
     expect: 'about 6 seconds',
     params: [
       { name: 'project', type: 'project', required: true, label: 'Project folder' },
@@ -134,9 +141,9 @@ export const ACTIONS: readonly ActionDefinition[] = [
         name: 'filter',
         type: 'filter',
         required: true,
-        label: 'Component or folder, e.g. overview',
+        label: 'Which component or folder? e.g. overview',
       },
-      { name: 'limit', type: 'number', required: false, label: 'How many to print', default: 20 },
+      { name: 'limit', type: 'number', required: false, label: 'How many lines to show', default: 20 },
     ],
     build: (v) => [
       'analyze',
@@ -151,12 +158,13 @@ export const ACTIONS: readonly ActionDefinition[] = [
   {
     id: 'risk',
     step: 2,
-    title: 'Rank static risks',
-    summary: 'Every finding, scored and explained',
+    title: 'Rank what looks risky',
+    summary: 'A shortlist, worst first, with the reasoning shown',
     why:
-      'Turns raw findings into a ranked shortlist. Every score shows the factors that ' +
-      'produced it, so you can disagree with a specific one.',
-    expect: 'about 8 seconds, or 20 with type resolution',
+      'Turns thousands of observations into a list worth reading. Every score shows the ' +
+      'reasons behind it, so you can look at one and disagree with it. Remember these ' +
+      'are suspicions from reading code - not proof that anything leaks.',
+    expect: 'about 8 seconds, or 20 with the slower option ticked',
     params: [
       { name: 'project', type: 'project', required: true, label: 'Project folder' },
       {
@@ -165,8 +173,8 @@ export const ACTIONS: readonly ActionDefinition[] = [
         required: false,
         label: 'Only this component or folder (optional)',
       },
-      { name: 'detail', type: 'number', required: false, label: 'Findings to detail', default: 5 },
-      { name: 'types', type: 'flag', required: false, label: 'Resolve observable types (slower, more accurate)' },
+      { name: 'detail', type: 'number', required: false, label: 'How many to explain in full', default: 5 },
+      { name: 'types', type: 'flag', required: false, label: 'Work out exact types (slower, fewer false alarms)' },
     ],
     build: (v) => {
       const args = ['risk', v['project'] ?? '', '--detail', v['detail'] ?? '5'];
@@ -179,12 +187,14 @@ export const ACTIONS: readonly ActionDefinition[] = [
   {
     id: 'login',
     step: 3,
-    title: 'Sign in and save the session',
-    summary: 'Opens a real Chrome window for you to log in',
+    title: 'Sign in once, so runs can reuse it',
+    summary: 'Opens a real Chrome window for you to log in yourself',
     why:
-      'The agent never sees your password. A browser opens, you sign in normally, and ' +
-      'only the session cookie is saved. Sessions expire - repeat this when a run says so.',
-    expect: 'as long as you take, then press "I have signed in"',
+      'The tool never sees your password. A normal browser window opens, you sign in the ' +
+      'way you always do, and only the resulting session is saved so later runs do not ' +
+      'stop at a login page. Sessions are tied to the exact address including the port, ' +
+      'so sign in again if you switch ports.',
+    expect: 'takes as long as you need - then press the button below the console',
     interactive: true,
     interactiveHint:
       'A Chrome window has opened. Sign in there, and once you are on a normal page of ' +
@@ -198,7 +208,7 @@ export const ACTIONS: readonly ActionDefinition[] = [
        * guess here cannot send the sign-in browser to the wrong place.
        */
       { name: 'url', type: 'url', required: true, label: 'App URL' },
-      { name: 'authFile', type: 'authFile', required: false, label: 'Save to', default: '.auth/app.auth.json' },
+      { name: 'authFile', type: 'authFile', required: false, label: 'Save the sign-in as', default: '.auth/app.auth.json' },
     ],
     build: (v) => [
       'scenario',
@@ -213,25 +223,28 @@ export const ACTIONS: readonly ActionDefinition[] = [
   {
     id: 'validate',
     step: 4,
-    title: 'Check the scenario',
-    summary: 'Catches setups that would give a wrong answer',
+    title: 'Check the journey makes sense',
+    summary: 'Catches setups that would give you a confident wrong answer',
     why:
-      'Warns about the traps that produce confident wrong results: a full page load ' +
-      'inside the loop, networkidle on a live app, or no wait after navigating.',
-    expect: 'instant',
-    params: [{ name: 'scenario', type: 'scenario', required: true, label: 'Scenario' }],
+      'Some mistakes do not fail - they quietly produce a believable number that is ' +
+      'wrong. Reloading the whole page inside the loop wipes memory every time and hides ' +
+      'the leak completely. Not waiting for the page to finish measures a half-built one. ' +
+      'This looks for those before you spend five minutes.',
+    expect: 'instant — always worth doing',
+    params: [{ name: 'scenario', type: 'scenario', required: true, label: 'Which journey?' }],
     build: (v) => ['scenario', 'validate', v['scenario'] ?? ''],
     needsApp: false,
   },
   {
     id: 'scenarioRun',
     step: 4,
-    title: 'Measure memory',
-    summary: 'Drives the journey and watches the heap',
+    title: 'Measure the memory',
+    summary: 'Repeats the journey and watches what memory never comes back',
     why:
-      'Repeats the journey and measures after a forced garbage collection each time, so ' +
-      'what you see is memory that survived collection rather than uncollected garbage.',
-    expect: '30 to 60 seconds',
+      'Walks the same path over and over. Before every reading it forces the browser to ' +
+      'clean up, so what you see is memory that refused to be freed - not rubbish waiting ' +
+      'to be collected. That distinction is the whole point.',
+    expect: 'about a minute',
     params: [{ name: 'scenario', type: 'scenario', required: true, label: 'Scenario' }],
     build: (v) => ['scenario', 'run', v['scenario'] ?? '', '--json', 'artifacts/ui-run.json'],
     needsApp: true,
@@ -239,15 +252,16 @@ export const ACTIONS: readonly ActionDefinition[] = [
   {
     id: 'heap',
     step: 5,
-    title: 'Find what is retained',
-    summary: 'Heap snapshots and retaining chains',
+    title: 'Find out what is holding on',
+    summary: 'Names the objects piling up, and what is keeping them',
     why:
-      'Names the objects that accumulated and shows the reference chain keeping each one ' +
-      'alive. This is what turns "memory grows" into "here is the bug".',
-    expect: '60 to 120 seconds',
+      'Photographs the memory before and after, then works out which objects piled up and ' +
+      'follows the chain of references keeping each one alive. This is the step that turns ' +
+      '"memory is growing" into "here is the line".',
+    expect: 'one to two minutes',
     params: [
-      { name: 'scenario', type: 'scenario', required: true, label: 'Scenario' },
-      { name: 'traceTop', type: 'number', required: false, label: 'Chains to trace', default: 3 },
+      { name: 'scenario', type: 'scenario', required: true, label: 'Which journey?' },
+      { name: 'traceTop', type: 'number', required: false, label: 'How many chains to follow', default: 3 },
     ],
     build: (v) => ['heap', v['scenario'] ?? '', '--trace-top', v['traceTop'] ?? '3'],
     needsApp: true,
@@ -255,16 +269,16 @@ export const ACTIONS: readonly ActionDefinition[] = [
   {
     id: 'correlate',
     step: 6,
-    title: 'Join the evidence',
-    summary: 'Ties static findings to what the browser did',
+    title: 'Match the code to what happened',
+    summary: 'Checks whether the suspicious code is the code that misbehaved',
     why:
-      'A static finding that predicted a leak, in a component the heap then shows growing, ' +
-      'is a much stronger claim than either alone. Also lists runtime evidence that no ' +
-      'static finding explains.',
-    expect: '2 to 3 minutes',
+      'A worry from reading the code, in a component the browser then showed growing, is a ' +
+      'far stronger case than either on its own. It also flags the opposite: memory that ' +
+      'grew with no suspicious code to explain it, which is where the surprises live.',
+    expect: 'two to three minutes',
     params: [
       { name: 'project', type: 'project', required: true, label: 'Project folder' },
-      { name: 'scenario', type: 'scenario', required: true, label: 'Scenario' },
+      { name: 'scenario', type: 'scenario', required: true, label: 'Which journey?' },
     ],
     build: (v) => ['correlate', v['project'] ?? '', '--scenario', v['scenario'] ?? '', '--detail', '8'],
     needsApp: true,
@@ -272,15 +286,15 @@ export const ACTIONS: readonly ActionDefinition[] = [
   {
     id: 'fixDryRun',
     step: 7,
-    title: 'See proposed fixes',
-    summary: 'Diffs and risks. Nothing is written.',
+    title: 'See what it would change',
+    summary: 'The exact edits, and what each one could break. Nothing is written.',
     why:
-      'Shows exactly what would change and what could break. Applying is deliberately not ' +
-      'available here - it belongs in a terminal, next to your code.',
-    expect: '2 to 3 minutes',
+      'Shows you every line it would add or remove and what the risk of each one is. ' +
+      'Nothing touches your files. Read this first, every time.',
+    expect: 'two to three minutes',
     params: [
       { name: 'project', type: 'project', required: true, label: 'Project folder' },
-      { name: 'scenario', type: 'scenario', required: true, label: 'Scenario' },
+      { name: 'scenario', type: 'scenario', required: true, label: 'Which journey?' },
     ],
     build: (v) => ['fix', v['project'] ?? '', '--scenario', v['scenario'] ?? ''],
     needsApp: true,
@@ -288,17 +302,17 @@ export const ACTIONS: readonly ActionDefinition[] = [
   {
     id: 'fixApply',
     step: 7,
-    title: 'Apply a fix',
-    summary: 'Writes to your code. Each change confirmed separately.',
+    title: 'Actually change the code',
+    summary: 'The only button here that writes. Every edit confirmed one at a time.',
     why:
-      'Keeps every safety property: refuses a dirty working tree, works only on a ' +
-      'memory-agent branch so your own is untouched, records a rollback commit, and asks ' +
-      'about each change on its own. After applying it runs your build, lint and tests. ' +
-      'Rollback commands are printed at the end.',
-    expect: '3 to 6 minutes, and it will ask you questions',
+      'It refuses to start if you have unsaved work, so nothing of yours can be lost. It ' +
+      'works on its own branch, leaving yours untouched. It remembers where you started so ' +
+      'you can undo everything. It shows you each change and waits for a yes or no. Then it ' +
+      'runs your own build, lint and tests, and prints the commands to undo it all.',
+    expect: 'three to six minutes, and it will ask you about each change',
     params: [
       { name: 'project', type: 'project', required: true, label: 'Project folder' },
-      { name: 'scenario', type: 'scenario', required: true, label: 'Scenario' },
+      { name: 'scenario', type: 'scenario', required: true, label: 'Which journey?' },
     ],
     build: (v) => ['fix', v['project'] ?? '', '--scenario', v['scenario'] ?? '', '--apply'],
     needsApp: true,
@@ -312,13 +326,15 @@ export const ACTIONS: readonly ActionDefinition[] = [
   {
     id: 'investigate',
     step: 8,
-    title: 'Build the report',
-    summary: 'Static plus runtime, as a shareable document',
-    why: 'Produces Markdown, HTML and JSON. The HTML is self-contained and safe to email.',
-    expect: '1 to 2 minutes',
+    title: 'Write it up as a document',
+    summary: 'Everything found so far, in a form you can send to someone',
+    why:
+      'Produces three files: a web page, a Markdown file and raw data. The web page is ' +
+      'one self-contained file - safe to email, works with no internet.',
+    expect: 'one to two minutes',
     params: [
       { name: 'project', type: 'project', required: true, label: 'Project folder' },
-      { name: 'scenario', type: 'scenario', required: true, label: 'Scenario' },
+      { name: 'scenario', type: 'scenario', required: true, label: 'Which journey?' },
     ],
     build: (v) => [
       'investigate',
@@ -335,15 +351,16 @@ export const ACTIONS: readonly ActionDefinition[] = [
   {
     id: 'auto',
     step: 8,
-    title: 'Run everything',
-    summary: 'The whole pipeline, read-only',
+    title: 'Do the whole thing for me',
+    summary: 'Every step above, start to finish, without changing your code',
     why:
-      'Static, runtime, heap, correlation, proposals and report in one go. Stops early ' +
-      'when a stage makes the rest pointless. Never writes to your code.',
-    expect: '3 to 5 minutes',
+      'Reads the code, measures the browser, photographs the memory, joins it all up, ' +
+      'suggests fixes and writes the report - in one go. It stops early if a step makes ' +
+      'the rest pointless, so you are not waiting on a dead end. It never edits anything.',
+    expect: 'three to five minutes',
     params: [
       { name: 'project', type: 'project', required: true, label: 'Project folder' },
-      { name: 'scenario', type: 'scenario', required: true, label: 'Scenario' },
+      { name: 'scenario', type: 'scenario', required: true, label: 'Which journey?' },
     ],
     build: (v) => ['auto', v['project'] ?? '', '--scenario', v['scenario'] ?? ''],
     needsApp: true,
@@ -351,11 +368,11 @@ export const ACTIONS: readonly ActionDefinition[] = [
   {
     id: 'demo',
     step: 0,
-    title: 'Try it with no app',
-    summary: 'Runs the built-in leaky page',
+    title: 'Try it first',
+    summary: 'Runs on a built-in page that leaks on purpose',
     why:
-      'Nothing to install or log into. Good for seeing what a real result looks like ' +
-      'before pointing the tool at your own application.',
+      'Nothing to install, no app to start, nothing to log into. The best way to see what ' +
+      'a real answer looks like before you point this at your own application.',
     expect: 'about 20 seconds',
     params: [],
     build: () => ['scenario', 'demo', '--iterations', '10'],

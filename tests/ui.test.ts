@@ -185,13 +185,13 @@ describe('page', () => {
   });
 
   it('states clearly which action can write, rather than burying it', () => {
-    expect(page).toContain('One action writes to your code');
-    expect(page).toContain('rollback');
-    expect(page).toContain('nothing leaves this machine');
+    expect(page).toContain('Only one button ever changes your code');
+    expect(page).toContain('undo');
+    expect(page).toContain('nothing leaves this computer');
   });
 
   it('offers copy and download for generated files', () => {
-    expect(page).toContain('Generated files');
+    expect(page).toContain('Your results');
     expect(page).toContain('copy output');
     expect(page).toContain('/api/download');
   });
@@ -258,7 +258,7 @@ describe('page', () => {
   });
 
   it('lets the user target one component', () => {
-    expect(page).toContain('Inspect one component');
+    expect(page).toContain('Look closely at one component');
     expect(page).toContain('Only this component or folder');
   });
 
@@ -305,11 +305,11 @@ describe('page', () => {
 
   it('explains why a component cannot be driven instead of offering it anyway', () => {
     expect(page).toContain('blockedReason');
-    expect(page).toContain('static only');
+    expect(page).toContain('cannot open in a browser');
   });
 
   it('warns in the UI when a class name is ambiguous', () => {
-    expect(page).toContain('ambiguous route');
+    expect(page).toContain('page may be wrong');
   });
 
   it("THE CLIENT SCRIPT PARSES", () => {
@@ -335,6 +335,64 @@ describe('page', () => {
   it("does not present the control route as final", () => {
     // The server verifies it and may substitute a different one.
     expect(page).toContain('checked before use');
+  });
+  /* ---- layout ---- */
+
+  it("keeps the right-hand rail for the console alone", () => {
+    /**
+     * Results and a live console were sharing one column, so both were
+     * squeezed. They are different jobs: you watch a run, and you fetch
+     * files afterwards. The files panel now sits under the steps.
+     */
+    const rail = page.slice(page.indexOf('class="rail"'), page.indexOf('</main>'));
+    expect(rail).toContain('id="consolePanel"');
+    expect(rail).not.toContain('id="filesPanel"');
+
+    const left = page.slice(page.indexOf('<section id="steps">'), page.indexOf('class="rail"'));
+    expect(left).toContain('id="filesPanel"');
+  });
+
+  it("defines every layout class it uses", () => {
+    /**
+     * .row was used by the app-URL bar and the search bar and never
+     * defined, so those inputs kept a 14rem minimum, refused to shrink,
+     * and pushed out of their card on a narrow window.
+     */
+    const css = page.slice(page.indexOf('<style>'), page.indexOf('</style>'));
+    const markup = page.slice(page.indexOf('<body>'), page.indexOf('<script>'));
+    const used = new Set();
+    for (const m of markup.matchAll(/class="([^"]+)"/g)) {
+      for (const cls of String(m[1]).split(/\s+/)) if (cls) used.add(cls);
+    }
+    for (const cls of used) {
+      expect(css.includes('.' + cls)).toBe(true);
+    }
+  });
+
+  /* ---- plain language ---- */
+
+  it("shows live status as readable cards, not a line of counts", () => {
+    expect(page).toContain('id="ready"');
+    expect(page).toContain('renderReady');
+    expect(page).toContain('Your app');
+    expect(page).toContain('Sign-in');
+  });
+
+  it("labels a blocked button as not ready rather than leaving it dead", () => {
+    expect(page).toContain('not ready');
+    expect(page).toContain('run this');
+  });
+
+  it("avoids jargon the reader has no reason to know", () => {
+    /**
+     * Not a style rule for its own sake: each of these appeared in a
+     * label or a button, where there is no room to explain it. They are
+     * fine inside an explanation, so only the markup is checked.
+     */
+    const markup = page.slice(page.indexOf('<body>'), page.indexOf('<script>'));
+    for (const word of ['storageState', 'heap snapshot', 'AST', 'stdin', 'argv']) {
+      expect(markup).not.toContain(word);
+    }
   });
   /* ---- saved sessions ---- */
 
@@ -368,7 +426,7 @@ describe('page', () => {
   it('shows only what the latest run produced', () => {
     // A full history buries the file you just made under dozens of
     // near-identical names.
-    expect(page).toContain('From the latest run');
+    expect(page).toContain('From your last run');
     expect(page).not.toContain('list.slice(0, 40)');
   });
 });
