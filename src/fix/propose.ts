@@ -26,6 +26,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { addOnDestroyWithUnsubscribe, isFailure } from './addOnDestroy';
 import type { CorrelatedFinding } from '../types/correlation';
 import type { Finding } from '../types/finding';
 
@@ -108,6 +109,19 @@ export function proposeFix(
     if (fix !== undefined) return fix;
   }
 
+  /**
+   * No ngOnDestroy at all, but subscriptions that need one.
+   *
+   * The larger of the two generated changes: it creates the hook, the
+   * Subscription that feeds it, the interface and the imports. See
+   * addOnDestroy.ts for what it refuses to touch.
+   */
+  const missingOnDestroy = finding.lifecycleIssues?.find((i) => i.code === 'ONDESTROY_MISSING');
+  if (missingOnDestroy !== undefined) {
+    const created = createOnDestroy(finding, source, absolute);
+    if (created !== undefined) return created;
+  }
+
   const emptyOnDestroy = finding.lifecycleIssues?.find((i) => i.code === 'ONDESTROY_EMPTY');
   if (emptyOnDestroy !== undefined) {
     return describeManualFix(
@@ -123,8 +137,63 @@ export function proposeFix(
   );
 }
 
+/**
+ * Create an ngOnDestroy that releases what this class subscribes to.
+ *
+ * Bigger than the append-two-lines fix, and marked 'behavioural' rather
+ * than 'additive' because it genuinely changes teardown: subscriptions
+ * that used to outlive the component now stop with it. That is the point,
+ * and it is also exactly what breaks a component that was relying on one
+ * surviving - so the risks say so and nothing applies without approval.
+ */
+function createOnDestroy(
+  finding: Finding,
+  source: string,
+  absolutePath: string,
+): ProposedFix | undefined {
+  const className = finding.operations.find((o) => o.className !== undefined)?.className;
+  if (className === undefined) {
+    return describeManualFix(
+      finding,
+      'The subscriptions are not inside a class, so there is no lifecycle hook to add.',
+    );
+  }
+
+  const result = addOnDestroyWithUnsubscribe(source, path.basename(absolutePath), className);
+  if (isFailure(result)) return describeManualFix(finding, result.reason);
+
+  const relative = finding.location.file;
+  return {
+    findingId: finding.id,
+    file: relative,
+    title: `Add ngOnDestroy to ${className} and release ${result.wrapped} subscription(s)`,
+    rationale:
+      `${className} starts ${result.wrapped} subscription(s) and never stops them, so each ` +
+      'visit to this page leaves the previous set running. This adds a Subscription that ' +
+      'collects them and an ngOnDestroy that releases it - the pattern the Angular docs ' +
+      'describe, applied to the existing code rather than around it.',
+    safety: 'behavioural',
+    newContent: result.newContent,
+    diff: buildUnifiedDiff(relative, source, result.newContent),
+    functionalRisks: [
+      'Anything relying on one of these subscriptions outliving the component will now stop ' +
+        'when the component does. That is usually the bug being fixed and occasionally the ' +
+        'behaviour somebody wanted.',
+      'The class gains OnDestroy and two imports. If it already implements a lifecycle ' +
+        'interface from somewhere unusual, check the declaration reads correctly.',
+      ...result.notes,
+    ],
+    verificationPlan: [
+      'Build and run the application; the component should behave exactly as before.',
+      'Open and leave this page several times and re-measure - the growth should be gone.',
+      `Read the diff: ${result.wrapped} subscribe() call(s) are now wrapped, and nothing else ` +
+        'in the file changed.',
+    ],
+  };
+}
+
 /* ------------------------------------------------------------------ */
-/* The one pattern we generate                                         */
+/* The append-only pattern                                             */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -157,11 +226,10 @@ function fixBrokenDestroySubject(
   const onDestroyLine = lines.findIndex((l) => /\bngOnDestroy\s*\(/.test(l));
 
   if (onDestroyLine === -1) {
-    return describeManualFix(
-      finding,
-      `There is no ngOnDestroy to add the completion to. One must be added, along with ` +
-        `the OnDestroy interface - a larger change than this tool will make unattended.`,
-    );
+    // No hook to append to, so create one. This used to be where every
+    // IOSense finding stopped - all 30 broken-destroy$ components lack an
+    // ngOnDestroy, so every one came back "manual fix required".
+    return createOnDestroy(finding, source, absolutePath);
   }
 
   // Find the opening brace of the method, which may be on a later line.

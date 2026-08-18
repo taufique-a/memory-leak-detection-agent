@@ -303,18 +303,49 @@ export const ACTIONS: readonly ActionDefinition[] = [
     id: 'fixApply',
     step: 7,
     title: 'Actually change the code',
-    summary: 'The only button here that writes. Every edit confirmed one at a time.',
+    summary: 'The only button here that writes. Every edit shown and confirmed one at a time.',
     why:
       'It refuses to start if you have unsaved work, so nothing of yours can be lost. It ' +
-      'works on its own branch, leaving yours untouched. It remembers where you started so ' +
-      'you can undo everything. It shows you each change and waits for a yes or no. Then it ' +
-      'runs your own build, lint and tests, and prints the commands to undo it all.',
+      'remembers where you started so you can undo everything. It shows you each change in ' +
+      'a window and waits for a yes or no. Then it runs your own build, lint and tests, and ' +
+      'prints the commands to undo it all.\n\n' +
+      'By default it works on its own branch and commits, which keeps your branch untouched. ' +
+      'Tick "change my current branch" to work where you are instead, and leave "commit" ' +
+      'unticked to have the changes waiting in your working tree for you to review with ' +
+      'git diff and commit yourself.',
     expect: 'three to six minutes, and it will ask you about each change',
     params: [
       { name: 'project', type: 'project', required: true, label: 'Project folder' },
       { name: 'scenario', type: 'scenario', required: true, label: 'Which journey?' },
+      {
+        name: 'here',
+        type: 'flag',
+        required: false,
+        label: 'Change my current branch (not a separate one)',
+      },
+      {
+        name: 'commit',
+        type: 'flag',
+        required: false,
+        label: 'Commit the changes for me (otherwise they wait for you)',
+      },
     ],
-    build: (v) => ['fix', v['project'] ?? '', '--scenario', v['scenario'] ?? '', '--apply'],
+    /**
+     * --no-commit is only offered together with --here.
+     *
+     * On a dedicated branch an uncommitted change is the bug this code
+     * used to have: git carries it across the checkout in the rollback
+     * instructions, so it lands on the user's own branch and the branch
+     * deletion that follows throws away nothing.
+     */
+    build: (v) => {
+      const args = ['fix', v['project'] ?? '', '--scenario', v['scenario'] ?? '', '--apply'];
+      if (v['here'] === 'true') {
+        args.push('--here');
+        if (v['commit'] !== 'true') args.push('--no-commit');
+      }
+      return args;
+    },
     needsApp: true,
     interactive: true,
     interactiveHint:

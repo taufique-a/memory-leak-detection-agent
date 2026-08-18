@@ -326,6 +326,32 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 .mini.danger{color:var(--bad);border-color:var(--line);margin:0}
 .mini.danger:hover{border-color:var(--bad)}
 .mini.armed{color:#fff;background:var(--bad);border-color:var(--bad)}
+
+/**
+ * The approval dialog.
+ *
+ * Applying asks about each change on stdin, and the console already
+ * carries the diff - but a diff scrolling past in a log is not something
+ * anybody reads before typing y. A modal stops everything, shows the
+ * change on its own, and makes the two answers equally easy to give.
+ */
+.modalback{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;
+  align-items:center;justify-content:center;padding:1.5rem;z-index:50}
+.modalback.on{display:flex;animation:fadein .12s ease-out}
+.modal{background:var(--bg);border:1px solid var(--line);border-radius:10px;
+  max-width:58rem;width:100%;max-height:88vh;display:flex;flex-direction:column;
+  box-shadow:0 12px 40px rgba(0,0,0,.35)}
+.modal h3{margin:0;padding:.9rem 1.1rem;border-bottom:1px solid var(--line);font-size:.98rem}
+.modal .body{overflow:auto;padding:0;min-height:0;flex:1 1 auto}
+.modal pre{margin:0;padding:.9rem 1.1rem;background:var(--code);
+  font:12px/1.5 ui-monospace,Consolas,"Courier New",monospace;white-space:pre-wrap;
+  word-break:break-word}
+.modal .foot{padding:.8rem 1.1rem;border-top:1px solid var(--line);display:flex;
+  gap:.5rem;align-items:center;flex-wrap:wrap}
+.modal .foot .sub{flex:1;min-width:10rem}
+.dline.add{color:var(--ok)}
+.dline.del{color:var(--bad)}
+.dline.hunk{color:var(--muted)}
 .diskline{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;
   padding:.5rem .6rem;border-bottom:1px solid var(--line);font-size:.78rem;color:var(--muted)}
 .diskline .grow{flex:1}
@@ -477,6 +503,18 @@ a{color:var(--accent)}
     </div>
 
   </section>
+
+  <div class="modalback" id="approveBack">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="approveTitle">
+      <h3 id="approveTitle">Apply this change?</h3>
+      <div class="body"><pre id="approveBody"></pre></div>
+      <div class="foot">
+        <span class="sub" id="approveNote">Nothing is written until you say yes.</span>
+        <button class="ghost" id="approveNo">no, skip it</button>
+        <button id="approveYes">yes, apply it</button>
+      </div>
+    </div>
+  </div>
 
   <div class="rail">
     <div class="panel" id="consolePanel">
@@ -811,10 +849,12 @@ function attachRun(result, action) {
 
   $('out').textContent += '$ memory-agent ' + result.args.join(' ') + '\\n\\n';
 
+  proposalLines = [];
   source = new EventSource('/api/stream?id=' + result.id + '&token=' + TOKEN);
   source.onmessage = (event) => {
     const data = JSON.parse(event.data);
     if (data.done) {
+      closeApproval();
       finish(data.exitCode);
       return;
     }
@@ -822,6 +862,7 @@ function attachRun(result, action) {
     const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
     out.textContent += data.line + '\\n';
     if (atBottom) out.scrollTop = out.scrollHeight;
+    watchForApproval(data.line);
   };
   source.onerror = () => finish(null);
 }
@@ -843,6 +884,86 @@ function finish(exitCode) {
   refreshState();
   refreshFiles();
 }
+
+/* ------------------------------------------------------------------ */
+/* The approval dialog                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Everything printed since the last decision.
+ *
+ * The command writes the proposal - title, rationale, diff, risks - and
+ * then asks on stdin. The console has all of it, but a diff that has
+ * already scrolled past is not something anybody re-reads before typing y.
+ * So it is buffered and shown in a dialog that stops everything else.
+ */
+let proposalLines = [];
+
+/** Matches the question the fix command asks for each change. */
+const APPROVAL = /^\\s*Apply "(.+)" to (.+)\\? \\[y\\/N\\]/;
+
+function watchForApproval(line) {
+  const match = APPROVAL.exec(line);
+  if (match === null) {
+    proposalLines.push(line);
+    // Only the current proposal is interesting; older ones would make the
+    // dialog a transcript.
+    if (proposalLines.length > 400) proposalLines.shift();
+    return;
+  }
+  openApproval(match[1], match[2]);
+}
+
+function openApproval(title, file) {
+  $('approveTitle').textContent = 'Apply this change to ' + file + '?';
+  $('approveNote').textContent = title;
+
+  // Colour the diff so additions and removals are distinguishable at a
+  // glance - the whole reason for showing it rather than summarising it.
+  $('approveBody').innerHTML = proposalLines
+    .map((line) => {
+      const trimmed = line.replace(/^\\s{0,4}/, '');
+      let cls = '';
+      if (/^\\+/.test(trimmed) && !/^\\+\\+\\+/.test(trimmed)) cls = 'add';
+      else if (/^-/.test(trimmed) && !/^---/.test(trimmed)) cls = 'del';
+      else if (/^@@/.test(trimmed)) cls = 'hunk';
+      return '<span class="dline ' + cls + '">' + esc(line) + '</span>';
+    })
+    .join('\\n');
+
+  $('approveBack').classList.add('on');
+  $('approveYes').focus();
+}
+
+function closeApproval() {
+  $('approveBack').classList.remove('on');
+  proposalLines = [];
+}
+
+async function answerApproval(yes) {
+  closeApproval();
+  await reply(yes ? 'y' : 'n');
+}
+
+// Exposed so the dialog can be exercised without a five-minute fix run.
+window.watchForApproval = watchForApproval;
+window.attachRun = attachRun;
+window.ACTIONS = ACTIONS;
+
+$('approveYes').addEventListener('click', () => answerApproval(true));
+$('approveNo').addEventListener('click', () => answerApproval(false));
+
+/* Escape means no. The safe answer is the easy one. */
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('approveBack').classList.contains('on')) {
+    answerApproval(false);
+  }
+});
+
+/* Clicking the backdrop also means no, never yes. */
+$('approveBack').addEventListener('click', (e) => {
+  if (e.target === $('approveBack')) answerApproval(false);
+});
 
 /* ---- answering a prompt ---- */
 async function reply(text) {

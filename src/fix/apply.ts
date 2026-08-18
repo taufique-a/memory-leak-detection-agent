@@ -20,6 +20,7 @@ import {
   createSafeBranch,
   rollbackInstructions,
   rollbackToBaseline,
+  useCurrentBranch,
   type SafeBranch,
 } from './gitSafety';
 
@@ -33,6 +34,25 @@ export interface ApplyOptions {
    */
   approve: (fix: ProposedFix) => Promise<boolean> | boolean;
   onProgress?: (message: string) => void;
+
+  /**
+   * Work on the branch the user is already on, instead of a new one.
+   *
+   * The dedicated branch is the safer default. This is for the ordinary
+   * review flow - change, read the diff, run it, commit yourself - where a
+   * separate branch is an obstacle rather than a protection.
+   */
+  useCurrentBranch?: boolean;
+
+  /**
+   * Leave the change in the working tree instead of committing it.
+   *
+   * Only meaningful with useCurrentBranch. On a dedicated branch an
+   * uncommitted change is actively dangerous: git carries it across the
+   * checkout in the rollback instructions and it lands on the user's own
+   * branch, which is the bug this used to have.
+   */
+  commit?: boolean;
 }
 
 export interface AppliedFix {
@@ -68,9 +88,28 @@ export async function applyFixes(
 ): Promise<ApplyResult> {
   const report = options.onProgress ?? ((): void => {});
 
-  // Throws unless the tree is clean and a baseline can be recorded.
-  const branch = createSafeBranch(options.projectRoot, options.investigationId);
-  report(`working on branch ${branch.name} (baseline ${branch.baselineCommit.slice(0, 10)})`);
+  const inPlace = options.useCurrentBranch === true;
+
+  /**
+   * Committing is forced on a dedicated branch.
+   *
+   * An uncommitted change there is the bug this code used to have: git
+   * carries uncommitted work across a checkout, so the printed rollback
+   * moved the edit onto the user's own branch and then deleted the branch
+   * that was supposed to be holding it.
+   */
+  const shouldCommit = inPlace ? options.commit !== false : true;
+
+  // Both throw unless the tree is clean and a baseline can be recorded.
+  const branch = inPlace
+    ? useCurrentBranch(options.projectRoot)
+    : createSafeBranch(options.projectRoot, options.investigationId);
+
+  report(
+    inPlace
+      ? `working on your own branch ${branch.name} (baseline ${branch.baselineCommit.slice(0, 10)})`
+      : `working on branch ${branch.name} (baseline ${branch.baselineCommit.slice(0, 10)})`,
+  );
 
   const applied: AppliedFix[] = [];
   const changedFiles: string[] = [];
@@ -157,7 +196,7 @@ export async function applyFixes(
    * pile of unstaged edits.
    */
   let commit: string | undefined;
-  if (changedFiles.length > 0) {
+  if (changedFiles.length > 0 && shouldCommit) {
     const titles = applied.filter((a) => a.applied).map((a) => a.title);
     const header =
       `memory-agent: ${titles.length} fix${titles.length === 1 ? '' : 'es'}`;
@@ -172,13 +211,15 @@ export async function applyFixes(
 
     commit = commitOnBranch(options.projectRoot, branch, message);
     report(`committed as ${commit.slice(0, 10)}`);
+  } else if (changedFiles.length > 0) {
+    report('left uncommitted in your working tree - review it, then commit when you are happy');
   }
 
   return {
     branch,
     applied,
     changedFiles,
-    rollback: rollbackInstructions(branch),
+    rollback: rollbackInstructions(branch, commit !== undefined),
     ...(commit !== undefined ? { commit } : {}),
   };
 }

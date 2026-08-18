@@ -34,6 +34,15 @@ export interface FixArgs {
   maxFixes: number;
   skipHeap: boolean;
   skipVerify: boolean;
+  /**
+   * Write into the branch the user is already on, not a new one.
+   *
+   * The dedicated branch is the safer default; this is the ordinary review
+   * flow - change it, read the diff, run it, commit yourself.
+   */
+  here: boolean;
+  /** Leave the change uncommitted. Only meaningful with --here. */
+  noCommit: boolean;
   /** Answer yes to every prompt. Requires --apply and is logged loudly. */
   yes: boolean;
   /** Overrides the scenario's own baseUrl for this run. */
@@ -47,6 +56,8 @@ export function parseFixArgs(args: string[]): FixArgs | string {
   let maxFixes = 3;
   let skipHeap = false;
   let skipVerify = false;
+  let here = false;
+  let noCommit = false;
   let yes = false;
 
   const extracted = extractBaseUrlArg(args);
@@ -79,6 +90,10 @@ export function parseFixArgs(args: string[]): FixArgs | string {
       skipHeap = true;
     } else if (arg === '--skip-verify') {
       skipVerify = true;
+    } else if (arg === '--here') {
+      here = true;
+    } else if (arg === '--no-commit') {
+      noCommit = true;
     } else if (arg.startsWith('-')) {
       return `Unknown option for fix: ${arg}`;
     } else if (projectPath === undefined) {
@@ -96,6 +111,14 @@ export function parseFixArgs(args: string[]): FixArgs | string {
     );
   }
   if (yes && !apply) return '--yes only makes sense together with --apply';
+  if (here && !apply) return '--here only makes sense together with --apply';
+  if (noCommit && !here) {
+    return (
+      '--no-commit only makes sense together with --here. On a dedicated branch an ' +
+      'uncommitted change follows you across the checkout in the rollback instructions ' +
+      'and lands on your own branch.'
+    );
+  }
 
   return {
     projectPath,
@@ -104,6 +127,8 @@ export function parseFixArgs(args: string[]): FixArgs | string {
     maxFixes,
     skipHeap,
     skipVerify,
+    here,
+    noCommit,
     yes,
     ...(baseUrl !== undefined ? { baseUrl } : {}),
   };
@@ -232,6 +257,8 @@ export async function runFix(args: string[]): Promise<number> {
     projectRoot,
     investigationId: `fix-${Date.now().toString(36)}`,
     approve: (fix) => (parsed.yes ? true : askApproval(fix)),
+    useCurrentBranch: parsed.here,
+    commit: !parsed.noCommit,
     onProgress: (m) => console.log(colour.dim('  ' + m)),
   });
 
@@ -242,8 +269,11 @@ export async function runFix(args: string[]): Promise<number> {
         (a.skippedReason !== undefined ? colour.dim(` - ${a.skippedReason}`) : ''),
     );
   }
-  field('Branch', result.branch.name);
+  field('Branch', result.branch.name + (parsed.here ? ' (your own)' : ''));
   field('Baseline', result.branch.baselineCommit.slice(0, 10));
+  if (result.commit === undefined && result.changedFiles.length > 0) {
+    field('Committed', 'no - left in your working tree for you to review');
+  }
   if (result.commit !== undefined) {
     // Committed, not left loose in the working tree - which is what makes
     // the rollback commands below safe to follow.

@@ -171,6 +171,11 @@ export function checkSafeToModify(repoDir: string): { safe: boolean; reason?: st
 /* ------------------------------------------------------------------ */
 
 export interface SafeBranch {
+  /**
+   * False when we are working on the branch the user was already on, so
+   * nothing should try to delete it during a rollback.
+   */
+  createdBranch?: boolean;
   /** The branch created or reused. */
   name: string;
   /** The branch the user was on, so they can be returned to it. */
@@ -187,6 +192,43 @@ export interface SafeBranch {
  * Working on a branch the human did not create means `git checkout -` always
  * gets them home, and a bad fix is one `git branch -D` away from gone.
  */
+/**
+ * Stay where you are.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * The dedicated branch is the safer default and it is not what everyone
+ * wants. A normal review is: make the change, look at `git diff`, run the
+ * app, then commit and push yourself. Forcing that onto a memory-agent/
+ * branch means a checkout and a cherry-pick before any of it can happen.
+ *
+ * So this records the same baseline and the same rollback point, on the
+ * branch you are already on. The tree must still be clean, because
+ * `git checkout -- <file>` is only a guaranteed undo when there was
+ * nothing else in the file to lose.
+ */
+export function useCurrentBranch(repoDir: string): SafeBranch {
+  const safety = checkSafeToModify(repoDir);
+  if (!safety.safe) {
+    throw new GitSafetyError(safety.reason ?? 'The repository is not safe to modify.');
+  }
+
+  const branch = safety.state.branch ?? 'HEAD';
+  const baselineCommit = safety.state.headCommit;
+  if (baselineCommit === undefined) {
+    throw new GitSafetyError('Could not read HEAD, so there is no baseline to undo to.');
+  }
+
+  return {
+    name: branch,
+    originalBranch: branch,
+    baselineCommit,
+    createdBranch: false,
+    // Nothing was created, so nothing was reused either.
+    reused: false,
+  };
+}
+
 export function createSafeBranch(repoDir: string, investigationId: string): SafeBranch {
   const check = checkSafeToModify(repoDir);
   if (!check.safe) throw new GitSafetyError(check.reason ?? 'unsafe to modify');
@@ -269,8 +311,29 @@ export function commitOnBranch(
   return gitQuiet(repoDir, ['rev-parse', 'HEAD']) ?? '';
 }
 
-/** Human-readable instructions for undoing everything the agent did. */
-export function rollbackInstructions(branch: SafeBranch): string[] {
+/**
+ * How to undo everything, for the mode actually used.
+ *
+ * The two modes need genuinely different instructions, and printing the
+ * branch-mode ones after working in place would tell somebody to delete
+ * the branch they are standing on.
+ */
+export function rollbackInstructions(branch: SafeBranch, committed = true): string[] {
+  if (branch.createdBranch === false) {
+    return committed
+      ? [
+          'The changes are committed on your own branch. To undo:',
+          `git reset --hard ${branch.baselineCommit.slice(0, 10)}`,
+        ]
+      : [
+          'The changes are in your working tree, uncommitted. To undo all of them:',
+          `git checkout -- .`,
+          '',
+          'Or one file at a time:',
+          'git checkout -- path/to/file.ts',
+        ];
+  }
+
   return [
     `git checkout ${branch.originalBranch}`,
     `git branch -D ${branch.name}`,

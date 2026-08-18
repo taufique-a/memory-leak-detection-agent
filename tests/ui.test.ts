@@ -399,7 +399,7 @@ describe('page', () => {
   it("keeps the console visible on every page", () => {
     // The rail sits outside the page sections, so a run stays watchable
     // while you move between them.
-    const content = page.slice(page.indexOf('<section id="content">'), page.indexOf('</section>\n\n  <div class="rail">'));
+    const content = page.slice(page.indexOf('<section id="content">'), page.indexOf('<div class="modalback"'));
     expect(content).not.toContain('id="consolePanel"');
   });
 
@@ -457,6 +457,75 @@ describe('page', () => {
     for (const word of ['storageState', 'heap snapshot', 'AST', 'stdin', 'argv']) {
       expect(markup).not.toContain(word);
     }
+  });
+  /* ---- the approval dialog ---- */
+
+  it("shows each change in a dialog rather than a scrolling log", () => {
+    /**
+     * The command asks about every change on stdin and the console has
+     * the diff - but a diff that has already scrolled past is not
+     * something anybody re-reads before typing y.
+     */
+    expect(page).toContain('id="approveBack"');
+    expect(page).toContain('id="approveBody"');
+    expect(page).toContain('yes, apply it');
+    expect(page).toContain('no, skip it');
+    expect(page).toContain('function watchForApproval');
+  });
+
+  it("makes the safe answer the easy one", () => {
+    // Escape and clicking the backdrop both mean no. Neither means yes.
+    const script = page.slice(page.indexOf('function closeApproval'));
+    const escape = script.slice(script.indexOf("e.key === 'Escape'"), script.indexOf("e.key === 'Escape'") + 200);
+    expect(escape).toContain('answerApproval(false)');
+  });
+
+  it("colours the diff so additions and removals are distinguishable", () => {
+    expect(page).toContain('.dline.add');
+    expect(page).toContain('.dline.del');
+  });
+
+  /* ---- where the change lands ---- */
+
+  it("offers to work on your own branch and leave it uncommitted", () => {
+    const apply = ACTIONS.find((a) => a.id === "fixApply");
+    const names = (apply?.params ?? []).map((x) => x.name);
+    expect(names).toContain("here");
+    expect(names).toContain("commit");
+  });
+
+  it("only allows --no-commit together with --here", () => {
+    /**
+     * On a dedicated branch an uncommitted change is the bug this code
+     * used to have: git carries it across the checkout in the rollback
+     * instructions and it lands on the branch it was meant to protect.
+     */
+    const apply = findAction("fixApply");
+    if (apply === undefined) throw new Error("fixApply missing");
+
+    const base = { project: "C:/p", scenario: "scenarios/x.json" };
+
+    const dedicated = buildArgs(apply, base);
+    if (!("args" in dedicated)) throw new Error(dedicated.error);
+    expect(dedicated.args).not.toContain("--here");
+    expect(dedicated.args).not.toContain("--no-commit");
+
+    // Asking for "my branch" without asking for a commit gives both flags.
+    const inPlace = buildArgs(apply, { ...base, here: "true", commit: "false" });
+    if (!("args" in inPlace)) throw new Error(inPlace.error);
+    expect(inPlace.args).toContain("--here");
+    expect(inPlace.args).toContain("--no-commit");
+
+    // Asking for both gives --here alone.
+    const committed = buildArgs(apply, { ...base, here: "true", commit: "true" });
+    if (!("args" in committed)) throw new Error(committed.error);
+    expect(committed.args).toContain("--here");
+    expect(committed.args).not.toContain("--no-commit");
+
+    // And --no-commit can never appear on its own.
+    const commitOnly = buildArgs(apply, { ...base, commit: "false" });
+    if (!("args" in commitOnly)) throw new Error(commitOnly.error);
+    expect(commitOnly.args).not.toContain("--no-commit");
   });
   /* ---- deleting ---- */
 
