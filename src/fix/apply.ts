@@ -36,21 +36,26 @@ export interface ApplyOptions {
   onProgress?: (message: string) => void;
 
   /**
-   * Work on the branch the user is already on, instead of a new one.
+   * Put the change on a NEW branch instead of the one you are on.
    *
-   * The dedicated branch is the safer default. This is for the ordinary
-   * review flow - change, read the diff, run it, commit yourself - where a
-   * separate branch is an obstacle rather than a protection.
+   * Off by default. The ordinary review flow is: change it, read
+   * `git diff`, run the app, commit yourself - and a separate branch is an
+   * obstacle to all of that, not a protection. What actually protects you
+   * is the clean-tree requirement and the recorded baseline, and those
+   * apply either way.
    */
-  useCurrentBranch?: boolean;
+  useNewBranch?: boolean;
 
   /**
-   * Leave the change in the working tree instead of committing it.
+   * Commit the change.
    *
-   * Only meaningful with useCurrentBranch. On a dedicated branch an
-   * uncommitted change is actively dangerous: git carries it across the
-   * checkout in the rollback instructions and it lands on the user's own
-   * branch, which is the bug this used to have.
+   * Off by default when working in place, so the change is sitting in your
+   * working tree for you to read and commit yourself.
+   *
+   * FORCED ON for a new branch. An uncommitted change there is the bug
+   * this code used to have: git carries it across the checkout in the
+   * rollback instructions, so it lands on the branch it was meant to
+   * protect and the branch deletion that follows discards nothing.
    */
   commit?: boolean;
 }
@@ -88,7 +93,7 @@ export async function applyFixes(
 ): Promise<ApplyResult> {
   const report = options.onProgress ?? ((): void => {});
 
-  const inPlace = options.useCurrentBranch === true;
+  const inPlace = options.useNewBranch !== true;
 
   /**
    * Committing is forced on a dedicated branch.
@@ -98,7 +103,7 @@ export async function applyFixes(
    * moved the edit onto the user's own branch and then deleted the branch
    * that was supposed to be holding it.
    */
-  const shouldCommit = inPlace ? options.commit !== false : true;
+  const shouldCommit = inPlace ? options.commit === true : true;
 
   // Both throw unless the tree is clean and a baseline can be recorded.
   const branch = inPlace

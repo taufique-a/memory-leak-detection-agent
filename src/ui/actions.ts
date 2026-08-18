@@ -309,41 +309,41 @@ export const ACTIONS: readonly ActionDefinition[] = [
       'remembers where you started so you can undo everything. It shows you each change in ' +
       'a window and waits for a yes or no. Then it runs your own build, lint and tests, and ' +
       'prints the commands to undo it all.\n\n' +
-      'By default it works on its own branch and commits, which keeps your branch untouched. ' +
-      'Tick "change my current branch" to work where you are instead, and leave "commit" ' +
-      'unticked to have the changes waiting in your working tree for you to review with ' +
-      'git diff and commit yourself.',
+      'By default the change lands in your working tree, on the branch you are already on, ' +
+      'and is NOT committed - so you can read it with git diff, run the app, and commit and ' +
+      'push it yourself when you are happy. Undo is git checkout -- .\n\n' +
+      'Tick "separate branch" if you would rather it went somewhere else entirely; that mode ' +
+      'always commits, because an uncommitted change on a branch you then leave follows you ' +
+      'onto your own.',
     expect: 'three to six minutes, and it will ask you about each change',
     params: [
       { name: 'project', type: 'project', required: true, label: 'Project folder' },
       { name: 'scenario', type: 'scenario', required: true, label: 'Which journey?' },
       {
-        name: 'here',
+        name: 'newBranch',
         type: 'flag',
         required: false,
-        label: 'Change my current branch (not a separate one)',
+        label: 'Put it on a separate branch instead of mine',
       },
       {
         name: 'commit',
         type: 'flag',
         required: false,
-        label: 'Commit the changes for me (otherwise they wait for you)',
+        label: 'Commit it for me (otherwise it waits in your working tree)',
       },
     ],
     /**
-     * --no-commit is only offered together with --here.
+     * The default writes into your branch and leaves it uncommitted.
      *
-     * On a dedicated branch an uncommitted change is the bug this code
-     * used to have: git carries it across the checkout in the rollback
-     * instructions, so it lands on the user's own branch and the branch
-     * deletion that follows throws away nothing.
+     * --commit is ignored alongside --branch, because a new branch always
+     * commits: an uncommitted change there is the bug this code used to
+     * have, where git carried it across the checkout in the rollback
+     * instructions and it landed on the branch it was protecting.
      */
     build: (v) => {
       const args = ['fix', v['project'] ?? '', '--scenario', v['scenario'] ?? '', '--apply'];
-      if (v['here'] === 'true') {
-        args.push('--here');
-        if (v['commit'] !== 'true') args.push('--no-commit');
-      }
+      if (v['newBranch'] === 'true') args.push('--branch');
+      else if (v['commit'] === 'true') args.push('--commit');
       return args;
     },
     needsApp: true,

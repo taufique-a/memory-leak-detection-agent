@@ -175,10 +175,18 @@ describe('applying a fix', () => {
     expect(fs.readFileSync(path.join(repo, FILE), 'utf8')).toBe(original);
   }, 30_000);
 
-  it('leaves the user branch untouched', async () => {
+  it('BY DEFAULT leaves the change in your working tree, on your branch', async () => {
+    /**
+     * The default anybody actually wants: change it, read `git diff`, run
+     * the app, commit and push yourself. A dedicated branch was in the way
+     * of every step of that.
+     *
+     * What still protects you is the clean-tree requirement and the
+     * recorded baseline, and those apply either way.
+     */
     const fix = proposeFix(correlatedFor(repo), { projectRoot: repo });
-    const userHead = git(repo, ['rev-parse', 'HEAD']);
     const userBranch = git(repo, ['branch', '--show-current']);
+    const userHead = git(repo, ['rev-parse', 'HEAD']);
 
     const result = await applyFixes([fix!], {
       projectRoot: repo,
@@ -186,12 +194,70 @@ describe('applying a fix', () => {
       approve: () => true,
     });
 
+    // No new branch, and we are still standing where we started.
+    expect(git(repo, ['branch', '--list'])).not.toContain('memory-agent/');
+    expect(git(repo, ['branch', '--show-current'])).toBe(userBranch);
+
+    // Nothing committed - the change is in the tree, waiting.
+    expect(result.commit).toBeUndefined();
+    expect(git(repo, ['rev-parse', 'HEAD'])).toBe(userHead);
+
+    const state = readGitState(repo);
+    expect(state.dirty).toBe(true);
+    expect(state.uncommittedFiles).toContain(FILE);
+    expect(fs.readFileSync(path.join(repo, FILE), 'utf8')).toContain('ngOnDestroy');
+  }, 30_000);
+
+  it('tells you how to undo an uncommitted change, not how to delete a branch', async () => {
+    // Printing "git checkout <your branch>; git branch -D ..." after
+    // working in place would tell somebody to delete the branch they are
+    // standing on.
+    const fix = proposeFix(correlatedFor(repo), { projectRoot: repo });
+    const result = await applyFixes([fix!], {
+      projectRoot: repo,
+      investigationId: 'T3b',
+      approve: () => true,
+    });
+
+    const text = result.rollback.join('\n');
+    expect(text).toContain('git checkout -- .');
+    expect(text).not.toContain('git branch -D');
+  }, 30_000);
+
+  it('commits in place only when asked', async () => {
+    const fix = proposeFix(correlatedFor(repo), { projectRoot: repo });
+    const userBranch = git(repo, ['branch', '--show-current']);
+
+    const result = await applyFixes([fix!], {
+      projectRoot: repo,
+      investigationId: 'T3c',
+      approve: () => true,
+      commit: true,
+    });
+
+    expect(result.commit).toBeDefined();
+    expect(git(repo, ['branch', '--show-current'])).toBe(userBranch);
+    expect(readGitState(repo).dirty).toBe(false);
+  }, 30_000);
+
+  it('uses a separate branch when explicitly asked, leaving yours untouched', async () => {
+    const fix = proposeFix(correlatedFor(repo), { projectRoot: repo });
+    const userHead = git(repo, ['rev-parse', 'HEAD']);
+    const userBranch = git(repo, ['branch', '--show-current']);
+
+    const result = await applyFixes([fix!], {
+      projectRoot: repo,
+      investigationId: 'T3d',
+      approve: () => true,
+      useNewBranch: true,
+    });
+
     expect(result.branch.name).toContain('memory-agent/');
     expect(git(repo, ['branch', '--show-current'])).toBe(result.branch.name);
     expect(git(repo, ['rev-parse', userBranch])).toBe(userHead);
   }, 30_000);
 
-  it('REGRESSION: commits, so the undo instructions actually undo', async () => {
+  it('REGRESSION: a separate branch always commits, so its undo works', async () => {
     /**
      * The change used to be left uncommitted. Git carries uncommitted work
      * across a checkout, so the first printed instruction - check out your
@@ -209,6 +275,10 @@ describe('applying a fix', () => {
       projectRoot: repo,
       investigationId: 'T4',
       approve: () => true,
+      useNewBranch: true,
+      // Even asked not to, a new branch commits: an uncommitted change
+      // there follows the checkout onto the branch it was protecting.
+      commit: false,
     });
 
     // Nothing dangling on the agent branch.
@@ -235,6 +305,7 @@ describe('applying a fix', () => {
       projectRoot: repo,
       investigationId: 'T5',
       approve: () => true,
+      useNewBranch: true,
     });
 
     const message = git(repo, ['log', '-1', '--format=%B']);

@@ -487,45 +487,38 @@ describe('page', () => {
 
   /* ---- where the change lands ---- */
 
-  it("offers to work on your own branch and leave it uncommitted", () => {
+  it("offers a separate branch and a commit, both off by default", () => {
     const apply = ACTIONS.find((a) => a.id === "fixApply");
     const names = (apply?.params ?? []).map((x) => x.name);
-    expect(names).toContain("here");
+    expect(names).toContain("newBranch");
     expect(names).toContain("commit");
   });
 
-  it("only allows --no-commit together with --here", () => {
+  it("defaults to your branch, uncommitted, with no flags at all", () => {
     /**
-     * On a dedicated branch an uncommitted change is the bug this code
-     * used to have: git carries it across the checkout in the rollback
-     * instructions and it lands on the branch it was meant to protect.
+     * The default has to be the quiet one. Anything that commits on
+     * somebody's behalf should have been asked for out loud.
      */
     const apply = findAction("fixApply");
     if (apply === undefined) throw new Error("fixApply missing");
-
     const base = { project: "C:/p", scenario: "scenarios/x.json" };
 
-    const dedicated = buildArgs(apply, base);
-    if (!("args" in dedicated)) throw new Error(dedicated.error);
-    expect(dedicated.args).not.toContain("--here");
-    expect(dedicated.args).not.toContain("--no-commit");
+    const plain = buildArgs(apply, base);
+    if (!("args" in plain)) throw new Error(plain.error);
+    expect(plain.args).not.toContain("--branch");
+    expect(plain.args).not.toContain("--commit");
 
-    // Asking for "my branch" without asking for a commit gives both flags.
-    const inPlace = buildArgs(apply, { ...base, here: "true", commit: "false" });
-    if (!("args" in inPlace)) throw new Error(inPlace.error);
-    expect(inPlace.args).toContain("--here");
-    expect(inPlace.args).toContain("--no-commit");
-
-    // Asking for both gives --here alone.
-    const committed = buildArgs(apply, { ...base, here: "true", commit: "true" });
+    // Asking for a commit adds exactly that.
+    const committed = buildArgs(apply, { ...base, commit: "true" });
     if (!("args" in committed)) throw new Error(committed.error);
-    expect(committed.args).toContain("--here");
-    expect(committed.args).not.toContain("--no-commit");
+    expect(committed.args).toContain("--commit");
+    expect(committed.args).not.toContain("--branch");
 
-    // And --no-commit can never appear on its own.
-    const commitOnly = buildArgs(apply, { ...base, commit: "false" });
-    if (!("args" in commitOnly)) throw new Error(commitOnly.error);
-    expect(commitOnly.args).not.toContain("--no-commit");
+    // Asking for a separate branch adds that, and never both.
+    const branched = buildArgs(apply, { ...base, newBranch: "true", commit: "true" });
+    if (!("args" in branched)) throw new Error(branched.error);
+    expect(branched.args).toContain("--branch");
+    expect(branched.args).not.toContain("--commit");
   });
   /* ---- deleting ---- */
 

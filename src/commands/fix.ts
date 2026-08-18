@@ -40,9 +40,15 @@ export interface FixArgs {
    * The dedicated branch is the safer default; this is the ordinary review
    * flow - change it, read the diff, run it, commit yourself.
    */
-  here: boolean;
-  /** Leave the change uncommitted. Only meaningful with --here. */
-  noCommit: boolean;
+  /**
+   * Put the change on a new memory-agent branch and commit it.
+   *
+   * Off by default: the change belongs in your working tree, on your
+   * branch, for you to review and commit yourself.
+   */
+  newBranch: boolean;
+  /** Commit the change in place. Off by default. */
+  commit: boolean;
   /** Heap in MB for the target’s own build, when its default is too small. */
   buildMemoryMb?: number;
   /** Answer yes to every prompt. Requires --apply and is logged loudly. */
@@ -58,8 +64,8 @@ export function parseFixArgs(args: string[]): FixArgs | string {
   let maxFixes = 3;
   let skipHeap = false;
   let skipVerify = false;
-  let here = false;
-  let noCommit = false;
+  let newBranch = false;
+  let commit = false;
   let buildMemoryMb: number | undefined;
   let yes = false;
 
@@ -93,10 +99,14 @@ export function parseFixArgs(args: string[]): FixArgs | string {
       skipHeap = true;
     } else if (arg === '--skip-verify') {
       skipVerify = true;
-    } else if (arg === '--here') {
-      here = true;
-    } else if (arg === '--no-commit') {
-      noCommit = true;
+    } else if (arg === '--branch') {
+      newBranch = true;
+    } else if (arg === '--commit') {
+      commit = true;
+    } else if (arg === '--here' || arg === '--no-commit') {
+      // Both are now the default. Accepted so anything already typed into
+      // a shell or a script keeps working.
+      newBranch = false;
     } else if (arg === '--build-memory') {
       const value = Number(args[++i]);
       if (!Number.isFinite(value) || value < 512 || value > 65536) {
@@ -120,14 +130,8 @@ export function parseFixArgs(args: string[]): FixArgs | string {
     );
   }
   if (yes && !apply) return '--yes only makes sense together with --apply';
-  if (here && !apply) return '--here only makes sense together with --apply';
-  if (noCommit && !here) {
-    return (
-      '--no-commit only makes sense together with --here. On a dedicated branch an ' +
-      'uncommitted change follows you across the checkout in the rollback instructions ' +
-      'and lands on your own branch.'
-    );
-  }
+  if (newBranch && !apply) return '--branch only makes sense together with --apply';
+  if (commit && !apply) return '--commit only makes sense together with --apply';
 
   return {
     projectPath,
@@ -136,8 +140,8 @@ export function parseFixArgs(args: string[]): FixArgs | string {
     maxFixes,
     skipHeap,
     skipVerify,
-    here,
-    noCommit,
+    newBranch,
+    commit,
     ...(buildMemoryMb !== undefined ? { buildMemoryMb } : {}),
     yes,
     ...(baseUrl !== undefined ? { baseUrl } : {}),
@@ -177,11 +181,24 @@ export async function runFix(args: string[]): Promise<number> {
 
   console.log('');
   console.log(`Fix workflow for ${colour.cyan(projectRoot)}`);
-  console.log(
-    parsed.apply
-      ? colour.yellow('  MODE: apply (each change will be shown and confirmed)')
-      : colour.green('  MODE: dry run - nothing will be written'),
-  );
+  if (!parsed.apply) {
+    console.log(colour.green('  MODE: dry run - nothing will be written'));
+  } else {
+    console.log(colour.yellow('  MODE: apply (each change is shown and confirmed first)'));
+    /**
+     * Where the change lands is the thing people most need to know before
+     * a five-minute run, and the least guessable.
+     */
+    if (parsed.newBranch) {
+      console.log(colour.dim('        on a new memory-agent branch, committed'));
+    } else if (parsed.commit) {
+      console.log(colour.dim('        on YOUR branch, committed'));
+    } else {
+      console.log(
+        colour.dim('        on YOUR branch, left uncommitted for you to review and push'),
+      );
+    }
+  }
 
   /* ---- gather evidence ---- */
   console.log(colour.dim('\n  [1/4] static analysis'));
@@ -267,8 +284,8 @@ export async function runFix(args: string[]): Promise<number> {
     projectRoot,
     investigationId: `fix-${Date.now().toString(36)}`,
     approve: (fix) => (parsed.yes ? true : askApproval(fix)),
-    useCurrentBranch: parsed.here,
-    commit: !parsed.noCommit,
+    useNewBranch: parsed.newBranch,
+    commit: parsed.commit,
     onProgress: (m) => console.log(colour.dim('  ' + m)),
   });
 
@@ -279,10 +296,17 @@ export async function runFix(args: string[]): Promise<number> {
         (a.skippedReason !== undefined ? colour.dim(` - ${a.skippedReason}`) : ''),
     );
   }
-  field('Branch', result.branch.name + (parsed.here ? ' (your own)' : ''));
+  field('Branch', result.branch.name + (parsed.newBranch ? '' : ' (your own)'));
   field('Baseline', result.branch.baselineCommit.slice(0, 10));
   if (result.commit === undefined && result.changedFiles.length > 0) {
-    field('Committed', 'no - left in your working tree for you to review');
+    field('Committed', 'no - waiting in your working tree');
+    console.log('');
+    info(
+      colour.dim(
+        'Read it with `git diff`, run your app, then commit and push it yourself.\n' +
+          '  Nothing has been committed on your behalf.',
+      ),
+    );
   }
   if (result.commit !== undefined) {
     // Committed, not left loose in the working tree - which is what makes

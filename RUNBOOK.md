@@ -404,7 +404,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~61s, 623 tests)
+npm test                       # everything (~61s, 626 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -592,26 +592,37 @@ can see.
 
 ### Where the change lands
 
-Two choices, on the CLI and in the UI:
+**By default: your branch, your working tree, not committed.** You read it with
+`git diff`, run the app, and commit and push it yourself. Nothing is committed
+on your behalf and no branch is created.
 
 ```powershell
-# default: its own branch, committed. Your branch is never touched.
+# the default
 npm run dev -- fix "e:\path\to\app" --scenario "scenarios/x.json" --apply
 
-# your branch, left in the working tree for you to review and commit
-npm run dev -- fix "e:\path\to\app" --scenario "scenarios/x.json" --apply --here --no-commit
-```
-
-`--no-commit` requires `--here`. On a dedicated branch an uncommitted change is
-actively dangerous: git carries it across the checkout in the rollback
-instructions, so it lands on the branch it was meant to protect.
-
-With `--here --no-commit` the undo is just:
-
-```
+# undo, if you do not like it
 git checkout -- .
 ```
 
+Two ways to opt out of that:
+
+| Flag | What changes |
+|---|---|
+| `--commit` | Commits on your branch instead of leaving it in the tree |
+| `--branch` | Puts it on a new `memory-agent/<id>` branch, always committed, yours untouched |
+
+`--branch` always commits, and ignores `--commit`. An uncommitted change on a
+branch you then check out of follows you: git carries it across, so it lands on
+the branch the separate one was meant to protect, and deleting that branch then
+discards nothing. That was a real bug here, so the combination is not offered.
+
+`--here` and `--no-commit` still work — they are the default now, so they do
+nothing, but anything already in your shell history keeps running.
+
+**What protects you either way:** it refuses to start if you have uncommitted
+work (so `git checkout -- .` is always a complete undo), it records the baseline
+commit, it asks about every change one at a time, and it runs your build, lint
+and tests afterwards.
 ### The approval window
 
 In the UI, every change stops and shows itself in a dialog: the title, the
@@ -696,7 +707,7 @@ src/
   heap/        snapshot capture, parsing, retaining paths
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search
-tests/         623 tests, mirrors src/
+tests/         626 tests, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)
