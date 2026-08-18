@@ -6,6 +6,8 @@
  * unless every one of these holds.
  */
 
+import * as vm from 'node:vm';
+
 import { ACTIONS, buildArgs, findAction } from '../src/ui/actions';
 import { renderPage } from '../src/ui/page';
 import { startUiServer, type UiServer } from '../src/ui/server';
@@ -310,6 +312,30 @@ describe('page', () => {
     expect(page).toContain('ambiguous route');
   });
 
+  it("THE CLIENT SCRIPT PARSES", () => {
+    /**
+     * page.ts is a TypeScript template literal that emits JavaScript, so a
+     * newline meant for the browser has to survive as a two-character
+     * escape in the source. Get that wrong and the emitted page contains a
+     * real newline inside a string literal - a syntax error that kills the
+     * whole script, which no assertion about page CONTENT would ever catch.
+     */
+    const open = page.indexOf('<script>') + '<script>'.length;
+    const script = page.slice(open, page.lastIndexOf('</script>'));
+    expect(() => new vm.Script(script)).not.toThrow();
+  });
+
+  /* ---- routes this account can open ---- */
+
+  it("says a browser will check the routes before the run", () => {
+    expect(page).toContain('checking routes...');
+    expect(page).toContain('route guard can refuse a page');
+  });
+
+  it("does not present the control route as final", () => {
+    // The server verifies it and may substitute a different one.
+    expect(page).toContain('checked before use');
+  });
   /* ---- saved sessions ---- */
 
   it('offers the sessions that exist instead of a hardcoded filename', () => {

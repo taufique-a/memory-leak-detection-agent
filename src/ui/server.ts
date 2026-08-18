@@ -33,6 +33,7 @@ import { getEntityIndex, searchEntities } from './entities';
 import { generateScenario, writeGeneratedScenario } from './generateScenario';
 import { renderPage } from './page';
 import { explainSessionMismatch, readSavedSession } from '../scenario/session';
+import { verifyScenarioRoutes } from './routeProbe';
 
 export interface UiServerOptions {
   /** 0 asks the OS for a free port. */
@@ -204,15 +205,101 @@ async function generateScenarioEndpoint(
       ? payload.iterations
       : 12;
 
+  /**
+   * ASK THE APPLICATION which of these routes this account can open.
+   *
+   * The control route is chosen by static rules - shallow path, short name -
+   * because that is all the code can see. It picked /rfids for an account
+   * with no permission for /rfids, twice, and both runs died at the first
+   * navigation minutes in.
+   *
+   * No amount of static analysis can predict a route guard. One browser
+   * session and a few seconds per route can. The target must pass, because
+   * there is nothing to measure otherwise; the control is only somewhere to
+   * navigate away to, so a refusal just moves us down the list.
+   */
+  const extraNotes: string[] = [];
+  let effectiveControl = control;
+
+  const controlOrder = [
+    control,
+    ...index.controlCandidates.filter((c) => c.name !== control.name && c.name !== target.name),
+  ];
+
+  try {
+    const check = await verifyScenarioRoutes(
+      target.routes[0] ?? '/',
+      controlOrder.map((c) => c.routes[0] ?? '/'),
+      {
+        baseUrl: payload.baseUrl,
+        ...(payload.authFile !== undefined && payload.authFile !== ''
+          ? { storageStateFile: path.resolve(ctx.options.agentRoot, payload.authFile) }
+          : {}),
+        max: 6,
+      },
+    );
+
+    if (!check.targetOk) {
+      const where = check.targetResult?.finalUrl ?? '';
+      sendJson(res, {
+        error:
+          `This account cannot open ${target.routes[0]}` +
+          (where !== '' ? ` - it redirected to ${where}` : '') +
+          '.\n\n' +
+          '  Nothing is wrong with your session; other pages load fine. A route guard or a\n' +
+          '  missing permission is refusing this one, so there is no page to measure.\n\n' +
+          '  Open it yourself in the browser first. If you cannot, pick a different component.',
+      });
+      return;
+    }
+
+    if (check.control === undefined) {
+      sendJson(res, {
+        error:
+          'None of the candidate routes to navigate away to could be opened by this account.\n\n' +
+          '  A measurement loop has to leave the page and come back, or nothing unmounts and\n' +
+          '  nothing accumulates.\n\n  Tried: ' +
+          check.tried
+            .slice(1)
+            .map((t) => `${t.route} (${t.verdict})`)
+            .join(', '),
+      });
+      return;
+    }
+
+    const chosen = index.controlCandidates.find((c) => (c.routes[0] ?? '/') === check.control);
+    if (chosen !== undefined && chosen.name !== control.name) {
+      extraNotes.push(
+        `${control.name} (${control.routes[0]}) was refused by the application for this ` +
+          `account, so ${chosen.name} (${chosen.routes[0]}) is the control instead. Both ` +
+          'pages were opened with your saved session before this scenario was written.',
+      );
+      effectiveControl = chosen;
+    } else {
+      extraNotes.push(
+        'Both routes were opened successfully with your saved session before this scenario ' +
+          'was written.',
+      );
+    }
+  } catch (err) {
+    // A probe failure must not block generation - it is a check, not the
+    // point. Say it was skipped rather than pretending it passed.
+    extraNotes.push(
+      `Could not verify the routes in a browser (${(err as Error).message.split('\n')[0]}). ` +
+        'The run may still fail if this account cannot open one of them.',
+    );
+  }
+
   const generated = generateScenario({
     target,
-    control,
+    control: effectiveControl,
     baseUrl: payload.baseUrl,
     ...(payload.authFile !== undefined && payload.authFile !== ''
       ? { authFile: payload.authFile }
       : {}),
     iterations,
   });
+  generated.notes.unshift(...extraNotes);
 
   const written = writeGeneratedScenario(ctx.options.agentRoot, generated);
   if ('error' in written) {
@@ -225,7 +312,7 @@ async function generateScenarioEndpoint(
     name: generated.scenario.name,
     notes: generated.notes,
     target: target.name,
-    control: control.name,
+    control: effectiveControl.name,
   });
 }
 

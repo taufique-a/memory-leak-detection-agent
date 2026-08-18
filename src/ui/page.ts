@@ -801,7 +801,7 @@ function pickEntity(entity) {
       ? '<div class="danger" style="margin-top:.3rem">' + esc(entity.blockedReason || '') + '</div>'
       : '') +
     '<div class="params" style="margin-top:.5rem">' +
-      '<label>Navigate away to<select id="pickControl">' +
+      '<label>Navigate away to (checked before use)<select id="pickControl">' +
         controls.map((c) => '<option value="' + esc(c.name) + '">' + esc(c.name) +
           ' — ' + esc(c.route) + '</option>').join('') +
       '</select></label>' +
@@ -811,7 +811,8 @@ function pickEntity(entity) {
     sessionWarning() +
     '<button id="pickGo">find and fix ' + esc(entity.name) + '</button>' +
     '<button class="ghost" id="pickMeasure">just measure it</button>' +
-    '<span class="expect">3 to 5 minutes — static, runtime, heap, correlation, proposed fixes, report</span>';
+    '<span class="expect">about 30 seconds to check the routes, then 3 to 5 minutes — ' +
+      'static, runtime, heap, correlation, proposed fixes, report</span>';
 
   $('pickGo').addEventListener('click', () => createAndRun('auto'));
   $('pickMeasure').addEventListener('click', () => createAndRun('scenarioRun'));
@@ -879,7 +880,13 @@ async function createAndRun(actionId) {
   const project = projectPath();
   $('pickGo').disabled = true;
   $('pickMeasure').disabled = true;
-  $('pickGo').textContent = 'generating scenario...';
+  $('pickGo').textContent = 'checking routes...';
+  // The server opens a browser and tries both routes with the saved
+  // session. Slow enough that it has to be said out loud.
+  $('out').textContent =
+    'Checking which of these routes your account can actually open.\\n' +
+    'A route guard can refuse a page however good your session is, and finding\\n' +
+    'that out now costs seconds instead of minutes.\\n\\n';
 
   const payload = {
     project: project,
@@ -907,7 +914,7 @@ async function createAndRun(actionId) {
 
   // Show what was generated, and why it might need a human eye, BEFORE the
   // run starts - a guessed selector is worth reading about up front.
-  $('out').textContent =
+  $('out').textContent +=
     'Generated ' + result.file + '\\n' +
     '  target : ' + result.target + '\\n' +
     '  control: ' + result.control + '\\n\\n' +

@@ -106,6 +106,14 @@ The search is honest about what it cannot do:
 | **ambiguous route** | More than one class in the project has this name. Routes are matched **by class name**, so the route shown may belong to a different copy — IOSense has five classes called `OverviewComponent`. Check the file before trusting the generated scenario. |
 | **no ngOnDestroy** | Declares no teardown hook. Not proof of anything, but the more interesting hit. |
 
+Before writing the scenario it **opens a browser and tries both routes with
+your saved session** — about 20 to 30 seconds. Static analysis cannot predict a
+route guard, and finding out that your account has no permission for a page is
+worth seconds now instead of minutes into the pipeline. If the route you chose
+to navigate away to is refused, the next candidate is used automatically and
+the notes say so. If the *target* is refused there is nothing to measure, so it
+stops and tells you.
+
 Two things the generator refuses to do: it will **never** pick an
 authentication route (`/login`, `/logout`, …) as the place to navigate away to,
 because that ends the session mid-run; and it will **never overwrite a
@@ -334,7 +342,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~36s, 496 tests)
+npm test                       # everything (~56s, 528 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -384,9 +392,12 @@ of them is an expired session. The tool now tells you which:
 2. **`… but http://localhost:7500 itself loads while signed in`** — the
    **route**, not the session. That one page refused you: usually your account
    has no permission for it, or a route guard rejected it. Signing in again
-   will not help — change the route. This bites generated scenarios, because
-   the control route is picked automatically and cannot know what your account
-   may see. On IOSense, `/rfids` does this.
+   will not help — change the route. On IOSense, `/rfids` does this.
+
+   Generated scenarios now avoid it: the routes are opened in a real browser
+   before the file is written, and a refused control route is swapped for one
+   that works. You should only see this on a hand-written scenario, or if the
+   permissions changed after the file was generated.
 
 3. **`This is normal - sessions expire`** — genuinely expired. Re-run
    **Step 2**.
@@ -479,7 +490,7 @@ src/
   heap/        snapshot capture, parsing, retaining paths
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search
-tests/         496 tests, mirrors src/
+tests/         528 tests, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)
