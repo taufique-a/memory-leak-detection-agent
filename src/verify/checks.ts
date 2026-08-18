@@ -103,6 +103,14 @@ export interface VerifyOptions {
   /** Override which checks run. */
   checks?: CheckDefinition[];
   /**
+   * Heap size in MB for the target's own scripts, via NODE_OPTIONS.
+   *
+   * Not set by default: imposing 8 GB on a machine that does not have it
+   * trades one confusing failure for another.
+   */
+  buildMemoryMb?: number;
+
+  /**
    * PATH to use. Defaults to the SYSTEM path with the agent's portable Node
    * removed, so the target builds with the Node it expects.
    */
@@ -131,6 +139,19 @@ export async function runVerification(options: VerifyOptions): Promise<Verificat
 
   const checks = options.checks ?? defaultChecks(scripts);
   const env = buildTargetEnv(options.pathOverride);
+
+  /**
+   * A build big enough to need more heap than Node's default.
+   *
+   * IOSense aborts `ng build` after four minutes with SIGABRT on Node 14's
+   * default heap, and completes with 8 GB. That is a property of the
+   * application, not of anything this tool changed - but without a way to
+   * say so, the tool reports "build failed, roll back your change" about
+   * code that is perfectly fine.
+   */
+  if (options.buildMemoryMb !== undefined) {
+    env['NODE_OPTIONS'] = `--max-old-space-size=${options.buildMemoryMb}`;
+  }
   const results: CheckResult[] = [];
 
   for (const check of checks) {
@@ -160,6 +181,12 @@ export async function runVerification(options: VerifyOptions): Promise<Verificat
      */
     if (!result.passed && result.skippedReason === undefined) {
       report(`${check.name} failed - stopping here`);
+      if (looksLikeOutOfMemory(result.output)) {
+        report(
+          `  ${check.name} ran out of memory rather than finding a problem with the code. ` +
+            'Re-run with --build-memory 8192 to give it a bigger heap.',
+        );
+      }
       break;
     }
   }
@@ -200,7 +227,34 @@ function buildTargetEnv(pathOverride?: string): NodeJS.ProcessEnv {
     env['Path'] = cleaned;
   }
 
-  delete env['NODE_OPTIONS'];
+  /**
+   * Strip the ENTIRE npm environment, not just PATH.
+   *
+   * Cleaning PATH is not enough and the failure it produces is baffling.
+   * When npm runs a script it exports 27 variables describing itself, and
+   * every one of them still pointed at the agent's portable Node 22:
+   *
+   *   NPM_CLI_JS   = ...node-v22...\node_modules\npm\bin\npm-cli.js
+   *   npm_execpath = ...node-v22...\node_modules\npm\bin\npm-cli.js
+   *   NODE         = ...node-v22...\node.exe
+   *
+   * npm.cmd on Windows honours NPM_CLI_JS. So the target's Node 14 dutifully
+   * loaded Node 22's npm and died on syntax it does not have:
+   *
+   *   er.message &&= replaceInfo(er.message)
+   *   SyntaxError: Unexpected token '&&='
+   *
+   * Which the tool then reported as "build failed - the change must not be
+   * kept in this state". The change was fine. This is worse than an
+   * unhelpful error: it tells somebody to roll back working code.
+   */
+  for (const key of Object.keys(env)) {
+    if (/^npm_/i.test(key)) delete env[key];
+  }
+  for (const key of ['NODE', 'NODE_EXE', 'NODE_OPTIONS', 'NODE_PATH', 'NPM_CLI_JS', 'NPM_PREFIX_JS', 'NPM_PREFIX_NPM_CLI_JS', 'INIT_CWD']) {
+    delete env[key];
+  }
+
   return env;
 }
 
@@ -266,5 +320,23 @@ function buildSummary(ran: CheckResult[], skipped: number, allPassed: boolean): 
   return (
     `${failed.length} check(s) FAILED: ${failed.join(', ')}. The change must not be kept ` +
     'in this state - fix the failure or roll back.'
+  );
+}
+
+/**
+ * Did this fail for lack of memory rather than lack of correctness?
+ *
+ * Worth separating loudly. An OOM abort during a build says nothing about
+ * the change that was just applied, and the default message - "the change
+ * must not be kept in this state" - is then advice to throw away working
+ * code.
+ */
+export function looksLikeOutOfMemory(output: string): boolean {
+  return (
+    /JavaScript heap out of memory/i.test(output) ||
+    /Reached heap limit/i.test(output) ||
+    /FATAL ERROR: .*(allocation failed|heap)/i.test(output) ||
+    // SIGABRT from V8, which is how Node 14 reports it on Windows.
+    (/errno 134|Exit status 134/.test(output) && /SetupIsolateDelegate|v8::internal/.test(output))
   );
 }

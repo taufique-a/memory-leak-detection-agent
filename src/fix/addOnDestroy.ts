@@ -76,6 +76,18 @@ export function addOnDestroyWithUnsubscribe(
   fileName: string,
   className: string,
 ): AddOnDestroyResult | AddOnDestroyFailure {
+  /**
+   * Match the file's own line endings.
+   *
+   * The edited IOSense component has 259 CRLF lines and 13 bare LF ones.
+   * Inserting LF into a CRLF file leaves it mixed, which shows up as noise
+   * in every future diff and churns under core.autocrlf. Whatever the file
+   * already uses is what it keeps.
+   */
+  const eol = (source.match(/\r\n/g) ?? []).length > (source.match(/(?<!\r)\n/g) ?? []).length
+    ? '\r\n'
+    : '\n';
+
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
 
   const target = findClass(sourceFile, className);
@@ -178,7 +190,11 @@ export function addOnDestroyWithUnsubscribe(
       `${methodIndent}}`,
   });
 
-  const newContent = applyEdits(source, edits);
+  // Every edit above was written with \n; convert only the inserted text.
+  const newContent = applyEdits(
+    source,
+    eol === '\n' ? edits : edits.map((e) => ({ ...e, text: e.text.split('\n').join(eol) })),
+  );
 
   /**
    * Re-parse before handing this over.

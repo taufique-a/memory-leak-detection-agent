@@ -404,7 +404,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~60s, 621 tests)
+npm test                       # everything (~61s, 623 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -618,6 +618,38 @@ In the UI, every change stops and shows itself in a dialog: the title, the
 coloured diff, and the risks, with **yes, apply it** and **no, skip it**.
 Escape and clicking outside both mean **no** — the safe answer is the easy one.
 
+### When the build fails afterwards
+
+The fixer runs your project's own build, lint and tests once it has written
+something. Two failures there are **not** about your code:
+
+**`SyntaxError: Unexpected token '&&='` from inside npm.** Fixed. Cleaning PATH
+was not enough — npm exports **27 variables** describing itself, and every one
+still pointed at the agent's portable Node 22. `npm.cmd` on Windows honours
+`NPM_CLI_JS`, so your Node 14 loaded Node 22's npm and died on syntax it does
+not have. The whole `npm_*` environment is now stripped.
+
+**`errno 134` with a `v8::internal` stack.** An out-of-memory abort, not a
+compile error. IOSense's `ng build` aborts after about four minutes on Node
+14's default heap and runs well past ten minutes with 8 GB — a property of the
+application, not of anything that was just changed. The tool now recognises it
+and says so, and you can raise the ceiling:
+
+```powershell
+npm run dev -- fix "e:\path" --scenario "scenarios/x.json" --apply --build-memory 8192
+```
+
+### Reading the diff
+
+Changes are shown as proper hunks with three lines of context. An earlier
+version printed everything between the first and last changed line as one
+hunk — on a 260-line component whose first change is an import and whose last
+is a new method, that was the entire file: **520 lines of diff for six edits**.
+The same change now reads as **78 lines in 7 hunks**.
+
+Files keep their own line endings. The IOSense component this was first run
+against is CRLF; inserting LF would have left it mixed and churning in every
+future diff.
 ### What it guarantees when it does write
 
 - refuses if you have any uncommitted work, naming the files in the way
@@ -664,7 +696,7 @@ src/
   heap/        snapshot capture, parsing, retaining paths
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search
-tests/         621 tests, mirrors src/
+tests/         623 tests, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)

@@ -289,3 +289,29 @@ export class DemoComponent {
     expect(result.wrapped).toBe(2);
   });
 });
+
+describe('line endings and diffs, which reviewers actually look at', () => {
+  const CRLF = SIMPLE.split('\n').join('\r\n');
+
+  it('REGRESSION: keeps a CRLF file pure CRLF', () => {
+    /**
+     * The IOSense component this was first run against has 259 CRLF lines.
+     * Inserting LF into it left the file mixed, which shows as noise in
+     * every future diff and churns under core.autocrlf.
+     */
+    const result = addOnDestroyWithUnsubscribe(CRLF, 'demo.component.ts', 'DemoComponent');
+    if (isFailure(result)) throw new Error(result.reason);
+
+    expect(result.newContent.match(/(?<!\r)\n/g)).toBeNull();
+    expect((result.newContent.match(/\r\n/g) ?? []).length).toBeGreaterThan(
+      (CRLF.match(/\r\n/g) ?? []).length,
+    );
+    expect(parses(result.newContent)).toBe(true);
+  });
+
+  it('leaves an LF file as LF', () => {
+    const result = addOnDestroyWithUnsubscribe(SIMPLE, 'demo.component.ts', 'DemoComponent');
+    if (isFailure(result)) throw new Error(result.reason);
+    expect(result.newContent).not.toContain('\r');
+  });
+});

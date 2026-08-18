@@ -43,6 +43,8 @@ export interface FixArgs {
   here: boolean;
   /** Leave the change uncommitted. Only meaningful with --here. */
   noCommit: boolean;
+  /** Heap in MB for the target’s own build, when its default is too small. */
+  buildMemoryMb?: number;
   /** Answer yes to every prompt. Requires --apply and is logged loudly. */
   yes: boolean;
   /** Overrides the scenario's own baseUrl for this run. */
@@ -58,6 +60,7 @@ export function parseFixArgs(args: string[]): FixArgs | string {
   let skipVerify = false;
   let here = false;
   let noCommit = false;
+  let buildMemoryMb: number | undefined;
   let yes = false;
 
   const extracted = extractBaseUrlArg(args);
@@ -94,6 +97,12 @@ export function parseFixArgs(args: string[]): FixArgs | string {
       here = true;
     } else if (arg === '--no-commit') {
       noCommit = true;
+    } else if (arg === '--build-memory') {
+      const value = Number(args[++i]);
+      if (!Number.isFinite(value) || value < 512 || value > 65536) {
+        return '--build-memory needs a number of megabytes between 512 and 65536';
+      }
+      buildMemoryMb = value;
     } else if (arg.startsWith('-')) {
       return `Unknown option for fix: ${arg}`;
     } else if (projectPath === undefined) {
@@ -129,6 +138,7 @@ export function parseFixArgs(args: string[]): FixArgs | string {
     skipVerify,
     here,
     noCommit,
+    ...(buildMemoryMb !== undefined ? { buildMemoryMb } : {}),
     yes,
     ...(baseUrl !== undefined ? { baseUrl } : {}),
   };
@@ -297,6 +307,7 @@ export async function runFix(args: string[]): Promise<number> {
   info(colour.dim("Running the project's own build, lint and test scripts, on the system Node."));
   const verification = await runVerification({
     projectRoot,
+    ...(parsed.buildMemoryMb !== undefined ? { buildMemoryMb: parsed.buildMemoryMb } : {}),
     onProgress: (m) => console.log(colour.dim('  ' + m)),
   });
 

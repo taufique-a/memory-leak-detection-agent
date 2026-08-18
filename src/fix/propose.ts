@@ -391,36 +391,144 @@ export function buildUnifiedDiff(
   after: string,
   context = 3,
 ): string {
-  const a = before.split('\n');
-  const b = after.split('\n');
+  /**
+   * A real diff, in hunks.
+   *
+   * The old version found the first and last differing line and printed
+   * everything between them as ONE hunk. On a 260-line component whose
+   * first change is the import and whose last is a new method at the
+   * bottom, that is the entire file: 500 lines of diff for six edits.
+   *
+   * The approval window exists so somebody reads the change before it is
+   * written. A diff nobody can read defeats the point of asking.
+   */
+  const a = before.split(/\r?\n/);
+  const b = after.split(/\r?\n/);
+  const ops = diffLines(a, b);
 
-  // Find the first and last differing line.
+  /* Group the changes into hunks, merging any closer than 2x context. */
+  const changed = ops
+    .map((op, i) => ({ op, i }))
+    .filter((x) => x.op.kind !== 'same')
+    .map((x) => x.i);
+  if (changed.length === 0) return '';
+
+  const groups: Array<{ from: number; to: number }> = [];
+  for (const index of changed) {
+    const last = groups[groups.length - 1];
+    if (last !== undefined && index - last.to <= context * 2) last.to = index;
+    else groups.push({ from: index, to: index });
+  }
+
+  const lines: string[] = [`--- a/${filePath}`, `+++ b/${filePath}`];
+
+  for (const group of groups) {
+    const from = Math.max(0, group.from - context);
+    const to = Math.min(ops.length - 1, group.to + context);
+
+    let aStart = 0;
+    let bStart = 0;
+    for (let i = 0; i < from; i++) {
+      const op = ops[i];
+      if (op === undefined) continue;
+      if (op.kind !== 'add') aStart++;
+      if (op.kind !== 'del') bStart++;
+    }
+
+    let aCount = 0;
+    let bCount = 0;
+    const body: string[] = [];
+    for (let i = from; i <= to; i++) {
+      const op = ops[i];
+      if (op === undefined) continue;
+      if (op.kind === 'same') {
+        aCount++;
+        bCount++;
+        body.push(' ' + op.text);
+      } else if (op.kind === 'del') {
+        aCount++;
+        body.push('-' + op.text);
+      } else {
+        bCount++;
+        body.push('+' + op.text);
+      }
+    }
+
+    lines.push(`@@ -${aStart + 1},${aCount} +${bStart + 1},${bCount} @@`);
+    lines.push(...body);
+  }
+
+  return lines.join('\n');
+}
+
+interface DiffOp {
+  kind: 'same' | 'add' | 'del';
+  text: string;
+}
+
+/**
+ * Line diff by longest common subsequence.
+ *
+ * Quadratic in the number of lines, which is fine: these are single source
+ * files, and the alternative - a naive first/last-difference span - is what
+ * produced 500-line diffs for six-line changes.
+ *
+ * Files longer than this fall back to the cheap span, because an O(n^2)
+ * table over ten thousand lines is not worth the wait for a diff nobody
+ * asked to be perfect.
+ */
+function diffLines(a: string[], b: string[]): DiffOp[] {
+  const LIMIT = 4000;
+  if (a.length > LIMIT || b.length > LIMIT) return spanDiff(a, b);
+
+  const table: number[][] = Array.from({ length: a.length + 1 }, () =>
+    new Array<number>(b.length + 1).fill(0),
+  );
+  for (let i = a.length - 1; i >= 0; i--) {
+    const row = table[i];
+    const next = table[i + 1];
+    if (row === undefined || next === undefined) continue;
+    for (let j = b.length - 1; j >= 0; j--) {
+      row[j] = a[i] === b[j] ? (next[j + 1] ?? 0) + 1 : Math.max(next[j] ?? 0, row[j + 1] ?? 0);
+    }
+  }
+
+  const ops: DiffOp[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      ops.push({ kind: 'same', text: a[i] ?? '' });
+      i++;
+      j++;
+    } else if ((table[i + 1]?.[j] ?? 0) >= (table[i]?.[j + 1] ?? 0)) {
+      ops.push({ kind: 'del', text: a[i] ?? '' });
+      i++;
+    } else {
+      ops.push({ kind: 'add', text: b[j] ?? '' });
+      j++;
+    }
+  }
+  while (i < a.length) ops.push({ kind: 'del', text: a[i++] ?? '' });
+  while (j < b.length) ops.push({ kind: 'add', text: b[j++] ?? '' });
+  return ops;
+}
+
+/** The cheap fallback for very large files. */
+function spanDiff(a: string[], b: string[]): DiffOp[] {
   let start = 0;
   while (start < a.length && start < b.length && a[start] === b[start]) start++;
-
   let endA = a.length - 1;
   let endB = b.length - 1;
-  while (endA > start && endB > start && a[endA] === b[endB]) {
+  while (endA >= start && endB >= start && a[endA] === b[endB]) {
     endA--;
     endB--;
   }
 
-  if (start > endA && start > endB) return '';
-
-  const from = Math.max(0, start - context);
-  const toA = Math.min(a.length - 1, endA + context);
-  const toB = Math.min(b.length - 1, endB + context);
-
-  const lines: string[] = [
-    `--- a/${filePath}`,
-    `+++ b/${filePath}`,
-    `@@ -${from + 1},${toA - from + 1} +${from + 1},${toB - from + 1} @@`,
-  ];
-
-  for (let i = from; i < start; i++) lines.push(` ${a[i] ?? ''}`);
-  for (let i = start; i <= endA; i++) lines.push(`-${a[i] ?? ''}`);
-  for (let i = start; i <= endB; i++) lines.push(`+${b[i] ?? ''}`);
-  for (let i = endA + 1; i <= toA; i++) lines.push(` ${a[i] ?? ''}`);
-
-  return lines.join('\n');
+  const ops: DiffOp[] = [];
+  for (let i = 0; i < start; i++) ops.push({ kind: 'same', text: a[i] ?? '' });
+  for (let i = start; i <= endA; i++) ops.push({ kind: 'del', text: a[i] ?? '' });
+  for (let i = start; i <= endB; i++) ops.push({ kind: 'add', text: b[i] ?? '' });
+  for (let i = endA + 1; i < a.length; i++) ops.push({ kind: 'same', text: a[i] ?? '' });
+  return ops;
 }
