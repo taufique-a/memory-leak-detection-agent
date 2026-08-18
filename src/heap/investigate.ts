@@ -167,9 +167,20 @@ export async function investigateHeap(
     }
 
     /* ---- analyse ---- */
+    /**
+     * Loading is the slow part on a real snapshot, so say what is happening.
+     *
+     * A quiet three-minute pause on a 900 MB file reads as a hang. The
+     * progress lines carry the node and edge counts, which are also the
+     * best early warning that the next stages will be heavy.
+     */
     report('loading snapshots');
-    const snapBefore = loadHeapSnapshot(before.file);
-    const snapAfter = loadHeapSnapshot(after.file);
+    const snapBefore = loadHeapSnapshot(before.file, {
+      onProgress: (m) => report(`  before: ${m}`),
+    });
+    const snapAfter = loadHeapSnapshot(after.file, {
+      onProgress: (m) => report(`  after:  ${m}`),
+    });
 
     report('comparing');
     const comparison = compareSnapshots(
@@ -180,11 +191,41 @@ export async function investigateHeap(
 
     const detached = findDetachedNodes(snapAfter);
 
-    report('tracing retaining paths');
-    const reverse = buildReverseEdges(snapAfter);
-
+    /**
+     * Only build the reverse index if something is going to use it.
+     *
+     * It costs an extra Uint32Array the size of every edge - on a 30M-edge
+     * snapshot, hundreds of megabytes. Building it when the user passed
+     * --trace-top 0, or when nothing grew, spends all of that to answer a
+     * question nobody asked.
+     */
+    const toTrace = traceTop > 0 ? comparison.grew.slice(0, traceTop) : [];
     const findings: RetainedObjectFinding[] = [];
-    for (const delta of comparison.grew.slice(0, traceTop)) {
+
+    if (toTrace.length === 0) {
+      report(
+        traceTop > 0
+          ? 'nothing grew, so there are no retaining paths to trace'
+          : 'skipping retaining paths (--trace-top 0)',
+      );
+    }
+
+    /**
+     * The reverse index is ALSO what strips tooling artifacts out of the
+     * detached-DOM count.
+     *
+     * Skipping it whenever --trace-top is 0 would be cheaper and wrong: the
+     * DevTools console itself retains detached nodes, and without following
+     * the chain back there is no way to tell those from the application's.
+     * An earlier version of this tool reported 61 detached nodes on a page
+     * that had 1.
+     */
+    const needReverse = toTrace.length > 0 || detached.length > 0;
+    const reverse = needReverse ? buildReverseEdges(snapAfter) : undefined;
+    if (toTrace.length > 0) report('tracing retaining paths');
+
+    for (const delta of toTrace) {
+      if (reverse === undefined) break;
       const candidates = findNodesByName(snapAfter, delta.name, 1);
       const target = candidates[0];
       if (target === undefined) continue;
@@ -220,6 +261,10 @@ export async function investigateHeap(
     for (const group of detached) {
       const sample = group.sampleNodeIndices[0];
       if (sample === undefined) {
+        detachedExcludingArtifacts.push(group);
+        continue;
+      }
+      if (reverse === undefined) {
         detachedExcludingArtifacts.push(group);
         continue;
       }

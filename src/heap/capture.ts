@@ -78,6 +78,22 @@ export async function captureHeapSnapshot(
   fs.mkdirSync(options.outputDir, { recursive: true });
   const file = path.join(options.outputDir, `${options.name}.heapsnapshot`);
 
+  /**
+   * Write to a .part file and rename only once it is complete.
+   *
+   * A snapshot takes tens of seconds to stream to disk. Writing straight to
+   * the final name means that for all of that time there is a file with the
+   * right name and the wrong contents - and anything that reads it gets a
+   * parse error at some arbitrary byte, which looks like a corrupt snapshot
+   * rather than an unfinished one. That happened while diagnosing this very
+   * code path.
+   *
+   * A rename is atomic on the same filesystem, so the real name only ever
+   * refers to a finished file. A run that is killed leaves a .part behind,
+   * which is honest about what it is.
+   */
+  const partial = `${file}.part`;
+
   let afterForcedGc = false;
   if (forceGc) {
     report('forcing garbage collection before snapshot');
@@ -86,7 +102,7 @@ export async function captureHeapSnapshot(
 
   await cdp.send('HeapProfiler.enable');
 
-  const stream = fs.createWriteStream(file, { encoding: 'utf8' });
+  const stream = fs.createWriteStream(partial, { encoding: 'utf8' });
   let chunks = 0;
   let pendingDrain: Promise<void> | undefined;
 
@@ -124,14 +140,35 @@ export async function captureHeapSnapshot(
     });
   }
 
-  const bytes = fs.statSync(file).size;
+  const bytes = fs.statSync(partial).size;
 
   if (bytes === 0) {
+    fs.rmSync(partial, { force: true });
     throw new Error(
       `Heap snapshot at ${file} is empty after ${chunks} chunk(s). The page may have ` +
         'navigated during capture, or HeapProfiler is unavailable.',
     );
   }
+
+  /**
+   * Sanity-check the tail before publishing the name.
+   *
+   * V8 always closes the object. If the last byte is not a brace the stream
+   * was cut short, and promoting it to the real name would hand the next
+   * step a file that looks finished and is not.
+   */
+  if (!endsWithClosingBrace(partial, bytes)) {
+    throw new Error(
+      `Heap snapshot was cut short after ${chunks} chunk(s) and ${(bytes / 1048576).toFixed(0)} MB - ` +
+        `it does not end correctly, so it has been left as ${path.basename(partial)} rather than ` +
+        'published as a usable snapshot.\n\n' +
+        '  The page most likely navigated or crashed mid-capture.',
+    );
+  }
+
+  // Atomic on the same filesystem: the real name never refers to a partial file.
+  fs.rmSync(file, { force: true });
+  fs.renameSync(partial, file);
 
   return {
     file,
@@ -140,4 +177,19 @@ export async function captureHeapSnapshot(
     afterForcedGc,
     chunks,
   };
+}
+
+/** Did the stream finish? V8 always closes the top-level object. */
+function endsWithClosingBrace(file: string, bytes: number): boolean {
+  if (bytes === 0) return false;
+  const fd = fs.openSync(file, 'r');
+  try {
+    const tail = Buffer.allocUnsafe(1);
+    fs.readSync(fd, tail, 0, 1, bytes - 1);
+    return tail[0] === 0x7d;
+  } catch {
+    return false;
+  } finally {
+    fs.closeSync(fd);
+  }
 }

@@ -354,7 +354,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~57s, 533 tests)
+npm test                       # everything (~54s, 551 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -446,6 +446,30 @@ Wait on the component's own element name: `<overview>`, `<devices>`,
 `<load-entities-generic>`. Find others by opening the page and inspecting the
 element inside `<router-outlet>`.
 
+### `Cannot create a string longer than 0x1fffffe8 characters`
+
+Fixed — but worth knowing what it was. 512 MB is V8's hard limit for a single
+string, and the snapshot reader used to load the whole file into one. A
+12-iteration run on one IOSense page produced a **915 MB** snapshot, which no
+amount of memory could have loaded.
+
+The reader now walks the file 8 MB at a time into typed arrays. A 655 MB
+snapshot loads in about 3 seconds using 7 MB of JS heap. If you see this
+message again, you are on an old build.
+
+Big snapshots are still worth avoiding: they mean slow stages later. Drop
+`iterations` in the scenario, or pass `--trace-top 0` to skip retaining-path
+tracing.
+
+### `... does not end with a closing brace, so it was never finished writing`
+
+The file is a partial capture. Either one is still running, or one was killed
+part way through. Wait, or delete the file and run again.
+
+Captures now write to `<name>.heapsnapshot.part` and rename only when
+complete, so the real filename never refers to a half-written file. A leftover
+`.part` is safe to delete.
+
 ### `is not valid JSON: Unexpected token`
 A UTF-8 BOM. The tool strips it now, but if you hit it elsewhere, save the file
 as "UTF-8 without BOM". PowerShell's `Out-File -Encoding utf8` adds one.
@@ -502,7 +526,7 @@ src/
   heap/        snapshot capture, parsing, retaining paths
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search
-tests/         533 tests, mirrors src/
+tests/         551 tests, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)

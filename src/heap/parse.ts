@@ -20,36 +20,26 @@
  * `to_node` is a BYTE OFFSET into `nodes`, not a node index. Dividing by the
  * field count is the single easiest thing to get wrong here.
  *
- * MEMORY
- * ------
- * JSON.parse gives ordinary JS number arrays: 8 bytes per element plus
- * overhead, so a 1.3M-edge snapshot costs far more than it needs to. We copy
- * into typed arrays and drop the originals, which roughly halves peak usage
- * and makes every subsequent scan faster.
+ * MEMORY, AND WHY THE FILE IS STREAMED
+ * ------------------------------------
+ * This used to be JSON.parse(readFileSync(file, 'utf8')). That works on the
+ * 8-30 MB snapshots the fixtures produce and fails outright on a real one:
+ * V8 cannot create a string longer than 512 MB, and a 12-iteration run on a
+ * single IOSense page produced a 915 MB snapshot. No amount of memory helps,
+ * because the limit is on the string, not the heap.
+ *
+ * streamRead.ts therefore walks the file a few megabytes at a time and fills
+ * typed arrays directly. That removes the string entirely AND is cheaper: a
+ * JS number array costs 8 bytes an element plus overhead, a Uint32Array
+ * costs 4 with none, and the intermediate copy no longer exists at all.
  */
 
-import * as fs from 'node:fs';
+import { readSnapshotFile } from './streamRead';
 
 /** V8's detachedness values. */
 export const DETACHED = 2;
 export const ATTACHED = 1;
 export const DETACHEDNESS_UNKNOWN = 0;
-
-interface RawSnapshot {
-  snapshot: {
-    meta: {
-      node_fields: string[];
-      node_types: Array<string[] | string>;
-      edge_fields: string[];
-      edge_types: Array<string[] | string>;
-    };
-    node_count: number;
-    edge_count: number;
-  };
-  nodes: number[];
-  edges: number[];
-  strings: string[];
-}
 
 export interface HeapSnapshot {
   nodeCount: number;
@@ -87,6 +77,8 @@ export interface HeapSnapshot {
 export interface ParseOptions {
   /** Called with progress messages during load. */
   onProgress?: (message: string) => void;
+  /** Read buffer size. Tests shrink it to force chunk boundaries. */
+  chunkSize?: number;
 }
 
 /** Load and index a .heapsnapshot file. */
@@ -94,9 +86,12 @@ export function loadHeapSnapshot(file: string, options: ParseOptions = {}): Heap
   const report = options.onProgress ?? ((): void => {});
 
   report('reading snapshot file');
-  const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as RawSnapshot;
+  const raw = readSnapshotFile(file, {
+    onProgress: report,
+    ...(options.chunkSize !== undefined ? { chunkSize: options.chunkSize } : {}),
+  });
 
-  const meta = raw.snapshot.meta;
+  const meta = raw.meta;
   const nodeFieldCount = meta.node_fields.length;
   const edgeFieldCount = meta.edge_fields.length;
 
@@ -118,13 +113,13 @@ export function loadHeapSnapshot(file: string, options: ParseOptions = {}): Heap
   const nodeTypeNames = Array.isArray(meta.node_types[0]) ? meta.node_types[0] : [];
   const edgeTypeNames = Array.isArray(meta.edge_types[0]) ? meta.edge_types[0] : [];
 
-  report('copying into typed arrays');
-  const nodes = Uint32Array.from(raw.nodes);
-  const edges = Uint32Array.from(raw.edges);
+  // Already typed arrays - streamRead filled them as it read.
+  const nodes = raw.nodes;
+  const edges = raw.edges;
   const strings = raw.strings;
 
-  const nodeCount = raw.snapshot.node_count;
-  const edgeCount = raw.snapshot.edge_count;
+  const nodeCount = raw.nodeCount;
+  const edgeCount = raw.edgeCount;
 
   /**
    * Prefix sum of edge counts.
@@ -143,11 +138,24 @@ export function loadHeapSnapshot(file: string, options: ParseOptions = {}): Heap
   }
   firstEdgeIndex[nodeCount] = running;
 
-  report('indexing node ids');
-  const idToIndex = new Map<number, number>();
-  for (let i = 0; i < nodeCount; i++) {
-    idToIndex.set(nodes[i * nodeFieldCount + F.id] ?? 0, i);
-  }
+  /**
+   * The id lookup is built on FIRST USE, not at load.
+   *
+   * It is a Map with one entry per node, which on a small snapshot is
+   * nothing and on a 12M-node one is several gigabytes - enough to fail a
+   * load that would otherwise have succeeded. Most callers never ask.
+   */
+  let idToIndex: Map<number, number> | undefined;
+  const idIndex = (): Map<number, number> => {
+    if (idToIndex === undefined) {
+      report('indexing node ids');
+      idToIndex = new Map<number, number>();
+      for (let i = 0; i < nodeCount; i++) {
+        idToIndex.set(nodes[i * nodeFieldCount + F.id] ?? 0, i);
+      }
+    }
+    return idToIndex;
+  };
 
   const field = (index: number, offset: number): number =>
     nodes[index * nodeFieldCount + offset] ?? 0;
@@ -178,7 +186,7 @@ export function loadHeapSnapshot(file: string, options: ParseOptions = {}): Heap
     edgeTarget: (e) =>
       Math.floor((edges[e * edgeFieldCount + E.toNode] ?? 0) / nodeFieldCount),
 
-    nodeIndexById: (id) => idToIndex.get(id),
+    nodeIndexById: (id) => idIndex().get(id),
   };
 }
 
