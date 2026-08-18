@@ -16,6 +16,7 @@ import * as path from 'node:path';
 
 import type { ProposedFix } from './propose';
 import {
+  commitOnBranch,
   createSafeBranch,
   rollbackInstructions,
   rollbackToBaseline,
@@ -50,6 +51,8 @@ export interface ApplyResult {
   changedFiles: string[];
   /** Ready-to-paste commands for undoing everything. */
   rollback: string[];
+  /** The commit holding the changes, when anything was written. */
+  commit?: string;
 }
 
 export class ApplyError extends Error {
@@ -138,11 +141,45 @@ export async function applyFixes(
     }
   }
 
+  /**
+   * COMMIT what was written, on the agent branch.
+   *
+   * Leaving it uncommitted looks harmless and is not. Git carries
+   * uncommitted work across a checkout, so the very first rollback
+   * instruction this module prints - check out your own branch - moved the
+   * edit onto that branch, and the branch deletion that followed then threw
+   * away an empty branch while the change sat on the user's. The undo did
+   * the exact opposite of undoing.
+   *
+   * Committing makes every promise here true: the checkout is clean,
+   * deleting the branch discards the work, and resetting to the baseline is
+   * meaningful. It also leaves something reviewable behind rather than a
+   * pile of unstaged edits.
+   */
+  let commit: string | undefined;
+  if (changedFiles.length > 0) {
+    const titles = applied.filter((a) => a.applied).map((a) => a.title);
+    const header =
+      `memory-agent: ${titles.length} fix${titles.length === 1 ? '' : 'es'}`;
+    const message = [
+      header,
+      '',
+      ...titles.map((t) => `- ${t}`),
+      '',
+      `Applied by memory-agent ${options.investigationId}.`,
+      `Baseline: ${branch.baselineCommit}.`,
+    ].join('\n');
+
+    commit = commitOnBranch(options.projectRoot, branch, message);
+    report(`committed as ${commit.slice(0, 10)}`);
+  }
+
   return {
     branch,
     applied,
     changedFiles,
     rollback: rollbackInstructions(branch),
+    ...(commit !== undefined ? { commit } : {}),
   };
 }
 

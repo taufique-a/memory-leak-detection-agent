@@ -244,6 +244,11 @@ export async function runFix(args: string[]): Promise<number> {
   }
   field('Branch', result.branch.name);
   field('Baseline', result.branch.baselineCommit.slice(0, 10));
+  if (result.commit !== undefined) {
+    // Committed, not left loose in the working tree - which is what makes
+    // the rollback commands below safe to follow.
+    field('Commit', result.commit.slice(0, 10));
+  }
 
   if (result.changedFiles.length === 0) {
     heading('NOTHING CHANGED');

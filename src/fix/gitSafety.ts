@@ -65,17 +65,52 @@ function gitQuiet(cwd: string, args: string[]): string | undefined {
 }
 
 /** Read the repository's current state. Never throws. */
+/**
+ * Run git and return stdout EXACTLY as produced.
+ *
+ * The trimming helper is right for commit hashes and branch names and
+ * wrong for anything column-oriented - see readGitState.
+ */
+function gitRaw(repoDir: string, args: string[]): string {
+  try {
+    return execFileSync('git', args, {
+      cwd: repoDir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return '';
+  }
+}
+
 export function readGitState(repoDir: string): GitState {
   const inside = gitQuiet(repoDir, ['rev-parse', '--is-inside-work-tree']);
   if (inside !== 'true') return { isRepository: false, uncommittedFiles: [], dirty: false, untrackedFiles: [] };
 
-  const porcelain = gitQuiet(repoDir, ['status', '--porcelain']) ?? '';
-  const lines = porcelain === '' ? [] : porcelain.split('\n');
+  /**
+   * Parse `git status --porcelain` WITHOUT trimming it first.
+   *
+   * Every record is exactly "XY path": two status columns, a space, then
+   * the path. For a modified-but-unstaged file X is a space, so the line
+   * begins " M src/app/x.ts" - and trimming the output, which the shared
+   * helper does, removes that leading space and shifts every path left by
+   * one. The refusal message then names "rc/app/x.ts", a file that does
+   * not exist, in the one message whose entire job is telling you which of
+   * YOUR files is in the way.
+   */
+  const porcelain = gitRaw(repoDir, ['status', '--porcelain']);
+  const lines = porcelain.split('\n').filter((l) => l.length > 3);
 
-  const uncommittedFiles = lines.map((l) => l.slice(3).trim()).filter((l) => l !== '');
-  const untrackedFiles = lines
-    .filter((l) => l.startsWith('??'))
-    .map((l) => l.slice(3).trim());
+  const pathOf = (line: string): string => {
+    const rest = line.slice(3);
+    // A rename is reported as "R  old -> new"; the new name is the one that
+    // exists on disk.
+    const arrow = rest.indexOf(' -> ');
+    return (arrow === -1 ? rest : rest.slice(arrow + 4)).replace(/^"|"$/g, '');
+  };
+
+  const uncommittedFiles = lines.map(pathOf).filter((l) => l !== '');
+  const untrackedFiles = lines.filter((l) => l.startsWith('??')).map(pathOf);
 
   const branch = gitQuiet(repoDir, ['rev-parse', '--abbrev-ref', 'HEAD']);
   const headCommit = gitQuiet(repoDir, ['rev-parse', 'HEAD']);
