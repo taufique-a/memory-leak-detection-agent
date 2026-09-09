@@ -153,10 +153,23 @@ export async function checkServedProject(
     };
   }
 
-  const servedFrom = await findServingFolder(base);
-
-  /* ---- the verdict ---- */
+  /**
+   * `findServingFolder` is not free: it spawns `netstat`, and often
+   * `powershell.exe` on top of that, purely to give a name to whatever
+   * turns out to be occupying the port.
+   *
+   * That name is only ever useful in the MISMATCH case - it's what tells
+   * somebody "your address is pointing at a different project". Calling
+   * it unconditionally on every check (this endpoint is polled - the UI's
+   * "already serving" panel calls it repeatedly) turns a cheap byte
+   * comparison into two extra process spawns every single time, for a
+   * value that is discarded whenever the verdict is 'match' or 'unknown'.
+   * Under load - many polls, several node/powershell processes already
+   * running - that repeated cost is what starved an otherwise-fast check
+   * into taking tens of seconds instead of one.
+   */
   if (differ > 0 || missing > 0) {
+    const servedFrom = await findServingFolder(base);
     return {
       verdict: 'mismatch',
       summary:
@@ -179,7 +192,6 @@ export async function checkServedProject(
       same,
       differ,
       missing,
-      ...(servedFrom !== undefined ? { servedFrom } : {}),
     };
   }
 
@@ -195,7 +207,6 @@ export async function checkServedProject(
     same,
     differ,
     missing,
-    ...(servedFrom !== undefined ? { servedFrom } : {}),
   };
 }
 

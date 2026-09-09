@@ -136,12 +136,30 @@ export async function startDevServer(options: ServeOptions): Promise<ServeResult
     report(`giving it ${options.memoryMb} MB of heap`);
   }
 
+  /**
+   * detached: true, or this promise is false.
+   *
+   * "The server is left RUNNING when this returns" is the whole point of
+   * this function - the stopHint text below even tells the user how to
+   * kill it later. On Windows, a NON-detached child is tied to its
+   * parent's job object: the moment this short-lived `serve` CLI process
+   * exits normally (which it does right after printing "SERVING"),
+   * Windows kills the entire job, including the dev server several
+   * process-hops down (cmd.exe -> npm.cmd -> node). The port was gone
+   * within a second of the command finishing, which is a fully silent
+   * failure - the exit code was still 0 and nothing looked wrong until
+   * the very next check found no server there at all.
+   *
+   * detached: true puts the child in its own process group, outside that
+   * job, so it survives. child.unref() (once we know we are keeping it,
+   * below) is the other half: without it, this process's own event loop
+   * still treats the child's pipes as a reason to stay alive.
+   */
   const child: ChildProcess = spawn('npm', ['run', script, '--', '--port', String(port)], {
     cwd: root,
     env,
     shell: true,
-    // Not detached: if the agent goes away, this should go with it rather
-    // than leaving an orphan holding a port nobody can find.
+    detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -155,6 +173,30 @@ export async function startDevServer(options: ServeOptions): Promise<ServeResult
   };
   child.stdout?.on('data', collect);
   child.stderr?.on('data', collect);
+
+  /**
+   * Release the WHOLE handle, not just the process.
+   *
+   * `child.unref()` only unrefs the ChildProcess object. With
+   * `stdio: 'pipe'`, `child.stdout` and `child.stderr` are their own
+   * `net.Socket` handles, and a socket with a listener still attached
+   * keeps the event loop alive on its own - regardless of the process
+   * being unref'd. Missing this meant the CLI's own `main()` finished and
+   * printed "SERVING" in about a second, and the Node process then sat
+   * there for another ~29 seconds anyway, doing nothing, only ending when
+   * an external kill (an idle timeout, Ctrl+C, the UI closing) finally
+   * removed it - which read as a hang, not as "already finished".
+   */
+  const unrefStream = (stream: NodeJS.ReadableStream | null): void => {
+    // @types/node types these as plain Readable, but for `stdio: 'pipe'`
+    // they are actually net.Socket instances at runtime and do have unref().
+    (stream as unknown as { unref?: () => void } | null)?.unref?.();
+  };
+  const releaseChild = (): void => {
+    child.unref();
+    unrefStream(child.stdout);
+    unrefStream(child.stderr);
+  };
 
   let exited = false;
   let exitCode: number | null = null;
@@ -185,6 +227,8 @@ export async function startDevServer(options: ServeOptions): Promise<ServeResult
     if (await isUp(url)) {
       const waitedMs = Date.now() - started;
       report(`answering after ${Math.round(waitedMs / 1000)}s`);
+      // We are keeping this one - let our own process exit without it.
+      releaseChild();
       return {
         started: true,
         url,
@@ -210,8 +254,12 @@ export async function startDevServer(options: ServeOptions): Promise<ServeResult
    *
    * The server is left running on purpose: a first Angular build can take
    * longer than any default anybody would pick, and killing it here would
-   * throw away several minutes of work that is about to finish.
+   * throw away several minutes of work that is about to finish. Same
+   * releaseChild() as the success path, for the same reason - and this is
+   * the ONLY other path that leaves it alive; the "exited on its own"
+   * branch above has nothing left to unref.
    */
+  releaseChild();
   return {
     started: false,
     url,

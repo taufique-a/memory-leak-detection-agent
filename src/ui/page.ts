@@ -607,6 +607,8 @@ const DEFAULT_PROJECT = ${JSON.stringify(options.defaultProject)};
 let state = { scenarios: [], sessions: [], reports: [], reachable: {} };
 let currentRun = null;
 let source = null;
+/** Which action is running, so finish() can react to what just happened. */
+let currentActionId = '';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
@@ -759,9 +761,15 @@ async function checkApp() {
  * on screen is just noise to read past.
  */
 function isHidden(action) {
-  // Once the right project is confirmed running, offering to start it is
-  // an answer to a question nobody has.
-  if (action.id === 'serve' && servedVerdict === 'match') return true;
+  if (action.id === 'serve') {
+    // Once the right project is confirmed running, offering to start it
+    // is an answer to a question nobody has.
+    if (servedVerdict === 'match') return true;
+    // And once ANY earlier action in this session has already started it
+    // - even at a different address than the one currently typed -
+    // starting a second one is never useful, only wasteful.
+    if (alreadyServing) return true;
+  }
   return false;
 }
 
@@ -928,6 +936,7 @@ async function run(actionId) {
  */
 function attachRun(result, action) {
   currentRun = result.id;
+  currentActionId = action.id;
   $('running').innerHTML = '<span class="spinner"></span>' + esc(action.title);
   $('consolePanel').classList.add('running');
   $('bar').classList.remove('idle');
@@ -978,6 +987,17 @@ function finish(exitCode) {
       'it to say "I found something". Read the output above.';
   refreshState();
   refreshFiles();
+
+  /**
+   * A finished serve run may have started something, or discovered the
+   * project was already correct. Either way the record of what is
+   * running just changed, so the restriction has to be re-checked rather
+   * than left showing what was true a few minutes ago.
+   */
+  if (currentActionId === 'serve') {
+    void checkAlreadyServing();
+    void checkServed();
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1730,13 +1750,16 @@ async function checkServed() {
       '<br><br>Measuring this would analyse one copy of your code and time a different ' +
       'one. Every finding would name files the running app never used.' +
       '</div>' +
-      '<div class="sub" style="margin-top:.4rem">Point the address at a free port and start ' +
-      'your own project below, or stop whatever is on that one first.</div>' +
-      serveForm(data);
+      (alreadyServing
+        ? '<div class="sub" style="margin-top:.4rem">Your project is already running - see ' +
+          'below.</div>' + alreadyServingNotice()
+        : '<div class="sub" style="margin-top:.4rem">Point the address at a free port and ' +
+          'start your own project below, or stop whatever is on that one first.</div>' +
+          serveForm(data));
   } else if (data.verdict === 'no-server') {
     $('servedCheck').innerHTML =
       '<div class="sub" style="margin-top:.5rem">Nothing is running at that address yet.</div>' +
-      serveForm(data);
+      (alreadyServing ? alreadyServingNotice() : serveForm(data));
   } else {
     $('servedCheck').innerHTML =
       '<div class="sub" style="margin-top:.5rem">' +
@@ -1744,6 +1767,7 @@ async function checkServed() {
   }
 
   wireServeForm();
+  wireAlreadyServingNotice();
   renderReady();
   render();
 }
@@ -1827,6 +1851,58 @@ function portFromUrl(value) {
 let sourcePath = localStorage.getItem('memoryAgentSource') || DEFAULT_PROJECT || '';
 let sourceValid = false;
 let sourceCompiled = false;
+
+/**
+ * Is this project already running, from an earlier action in this
+ * session? { port, ageMinutes }, or null.
+ *
+ * Starting a second dev server for a project that already has one is
+ * never useful - either it collides with the port already in use, or it
+ * wastes several minutes and a build's worth of memory bringing up a
+ * duplicate of something that already works. Once this is set, every
+ * offer to start a new server is withdrawn until it clears.
+ */
+let alreadyServing = null;
+
+async function checkAlreadyServing() {
+  if (!sourcePath) {
+    alreadyServing = null;
+    return;
+  }
+  let data;
+  try {
+    data = await api('/api/already-serving?project=' + encodeURIComponent(sourcePath));
+  } catch {
+    return;
+  }
+  alreadyServing = data.serving ? { port: data.port, ageMinutes: data.ageMinutes } : null;
+}
+
+/** The notice shown wherever a "start it" offer would otherwise go. */
+function alreadyServingNotice() {
+  const url = 'http://localhost:' + alreadyServing.port;
+  return (
+    '<div class="banner" style="margin:.7rem 0 0">' +
+    '<strong>Already running</strong>' +
+    '<div class="sub" style="margin-top:.2rem">' +
+    'This project is already being served on <code>' + esc(url) + '</code> (started ' +
+    esc(String(alreadyServing.ageMinutes)) + ' min ago). Starting another would either ' +
+    'collide with that port or run a second copy for no reason, so this is turned off ' +
+    'until that one stops.' +
+    '</div>' +
+    '<button class="ghost" id="useServingPort" style="margin-top:.5rem">use this address</button>' +
+    '</div>'
+  );
+}
+
+function wireAlreadyServingNotice() {
+  const use = $('useServingPort');
+  if (!use) return;
+  use.addEventListener('click', () => {
+    $('appUrl').value = 'http://localhost:' + alreadyServing.port;
+    checkApp();
+  });
+}
 
 function setSource(value) {
   sourcePath = value;
@@ -1961,6 +2037,13 @@ async function checkSource() {
   }
 
   $('sourceChecks').innerHTML = html;
+
+  await checkAlreadyServing();
+  if (alreadyServing) {
+    $('sourceChecks').innerHTML += alreadyServingNotice();
+    wireAlreadyServingNotice();
+  }
+
   renderReady();
   render();
   // Both halves are now known, so the pair can be reconciled.

@@ -77,7 +77,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
 
   // One shared context object so `lastRunStartedAt` survives between
   // requests - the files panel needs it to show only the latest run.
-  const ctx: Context = { token, runs, options };
+  const ctx: Context = { token, runs, options, servingProjects: new Map() };
 
   const server = http.createServer((req, res) => {
     void handle(req, res, ctx);
@@ -111,6 +111,21 @@ interface Context {
   options: UiServerOptions;
   /** When the most recent run started, so we can show only its output. */
   lastRunStartedAt?: number;
+  /**
+   * Projects this session has already served, and where.
+   *
+   * Keyed by the resolved project path. Starting a SECOND dev server for a
+   * project that already has one running is never useful - it either
+   * collides on the port already in use, or wastes a build's worth of
+   * memory bringing up a duplicate. Recording the port here is what lets
+   * the UI say "already running on 4200" and refuse to offer a new one,
+   * instead of asking the same question twice.
+   *
+   * Lives only as long as this server process. Restarting the UI forgets
+   * it, which is correct: this is a shortcut for what served.ts can
+   * verify directly, never the only source of truth.
+   */
+  servingProjects: Map<string, { port: number; startedAt: number }>;
 }
 
 /** Generate a scenario for a chosen component. */
@@ -595,6 +610,59 @@ async function handle(
    * measuring the app served from folder B succeeded at every stage and
    * produced a report about nothing.
    */
+  /**
+   * Is the project already served somewhere, from an earlier action in
+   * this session?
+   *
+   * The record is a shortcut, not trusted blindly: the port it names is
+   * re-verified here with the real byte-for-byte check before anything is
+   * restricted on the strength of it. A server that died since does not
+   * get to keep blocking a new one.
+   */
+  if (url.pathname === '/api/already-serving' && req.method === 'GET') {
+    const project = url.searchParams.get('project') ?? '';
+    if (project === '' || project.length > 400) {
+      sendJson(res, { serving: false });
+      return;
+    }
+
+    const key = path.resolve(project);
+    const record = ctx.servingProjects.get(key);
+    if (record === undefined) {
+      sendJson(res, { serving: false });
+      return;
+    }
+
+    const check = await checkServedProject(`http://localhost:${record.port}`, project, {
+      samples: 3,
+    });
+    /**
+     * Only drop the record on POSITIVE evidence that it is wrong.
+     *
+     * "no-server" means it died; "mismatch" means something else is
+     * there now - both are reasons to stop trusting it. "unknown" is
+     * neither: it just means this project has too few assets under
+     * src/assets to sample (the check refuses to call a match on fewer
+     * than two). We started this server ourselves and know which folder
+     * it is, so an inconclusive re-check must not overrule that - it is
+     * not evidence of anything, and treating it as a reason to delete a
+     * good record is what silently happened here the first time this
+     * was tested.
+     */
+    if (check.verdict === 'mismatch' || check.verdict === 'no-server') {
+      ctx.servingProjects.delete(key);
+      sendJson(res, { serving: false });
+      return;
+    }
+
+    sendJson(res, {
+      serving: true,
+      port: record.port,
+      ageMinutes: Math.round((Date.now() - record.startedAt) / 60000),
+    });
+    return;
+  }
+
   if (url.pathname === '/api/served' && req.method === 'GET') {
     const target = url.searchParams.get('url') ?? '';
     const project = url.searchParams.get('project') ?? '';
@@ -1183,6 +1251,22 @@ async function startRun(
   child.on('exit', (code) => {
     run.finishedAt = Date.now();
     run.exitCode = code;
+
+    /**
+     * `serve` exits 0 in two cases: the project was already being served
+     * correctly, or this run just started it. Either way the port in its
+     * own arguments is now the answer to "where is this project running",
+     * so record it rather than parsing anything out of what it printed.
+     */
+    if (action.id === 'serve' && code === 0) {
+      const project = built.args[1];
+      const portIndex = built.args.indexOf('--port');
+      const port = portIndex !== -1 ? Number(built.args[portIndex + 1]) : NaN;
+      if (project !== undefined && Number.isFinite(port)) {
+        ctx.servingProjects.set(path.resolve(project), { port, startedAt: Date.now() });
+      }
+    }
+
     for (const listener of run.listeners) {
       listener.write(`data: ${JSON.stringify({ done: true, exitCode: code })}\n\n`);
       listener.end();

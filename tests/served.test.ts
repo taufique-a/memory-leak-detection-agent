@@ -146,6 +146,57 @@ describe('deciding whether the right code is running', () => {
     expect(result.verdict).toBe('unknown');
     expect(result.same).toBe(1);
   }, 30_000);
+
+  /**
+   * THE BUG THIS EXISTS FOR
+   * -----------------------
+   * `findServingFolder` used to run unconditionally, before the verdict
+   * was even known - spawning netstat and (usually) powershell.exe on
+   * every single call, including MATCH and UNKNOWN, where the folder name
+   * it produces is never used. This endpoint is polled repeatedly by the
+   * UI's "already serving" panel, so that was two wasted process spawns
+   * per poll. Under load - several such polls plus whatever node/
+   * powershell processes were already running - the extra spawns were
+   * enough to turn a cheap byte comparison into a check that took tens of
+   * seconds instead of one.
+   */
+  it('only spawns netstat/powershell to name the folder for a MISMATCH, never for MATCH or UNKNOWN', async () => {
+    /**
+     * `require`, not `await import`: a dynamic import of a builtin returns
+     * a sealed ES module namespace object, and jest.spyOn cannot redefine
+     * a property on that. `require` returns the same, ordinary, mutable
+     * exports object that `served.ts`'s own compiled `require("node:child_
+     * process")` call reads from - the Node module cache means it is
+     * exactly the same object, so spying on it here is seen there too.
+     */
+    const childProcess = require('node:child_process');
+    const spy = jest.spyOn(childProcess, 'execFile');
+
+    const assets = { 'a.css': pad('body{}'), 'b.json': pad('{"a":1}') };
+
+    const matchDir = writeProject('perf-match', assets);
+    servedAssets = { 'a.css': assets['a.css'], 'b.json': assets['b.json'] };
+    spy.mockClear();
+    const matchResult = await checkServedProject(baseUrl, matchDir);
+    expect(matchResult.verdict).toBe('match');
+    expect(spy).not.toHaveBeenCalled();
+
+    const unknownDir = writeProject('perf-unknown', { 'a.css': pad('body{}') });
+    servedAssets = { 'a.css': pad('body{}') };
+    spy.mockClear();
+    const unknownResult = await checkServedProject(baseUrl, unknownDir);
+    expect(unknownResult.verdict).toBe('unknown');
+    expect(spy).not.toHaveBeenCalled();
+
+    const mismatchDir = writeProject('perf-mismatch', assets);
+    servedAssets = { 'a.css': assets['a.css'], 'b.json': pad('DIFFERENT') };
+    spy.mockClear();
+    const mismatchResult = await checkServedProject(baseUrl, mismatchDir);
+    expect(mismatchResult.verdict).toBe('mismatch');
+    expect(spy).toHaveBeenCalled();
+
+    spy.mockRestore();
+  }, 30_000);
 });
 
 describe('starting the right project', () => {

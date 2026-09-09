@@ -156,6 +156,16 @@ clutter, not caution — hidden is not the same as blocked: a *blocked* step
 stays visible with its reason because you will want it once a condition is
 met, a *hidden* one is offered nothing to wait for.
 
+**Only one server per project, per session.** If an earlier action already
+started this project — even on a different address than the one currently
+typed — the "start it" panel is replaced with an **"Already running"**
+notice naming the port and how long ago it came up, with a button to point
+the address field at it instead. Starting a second one is never useful:
+either it collides with the port already in use, or it wastes several
+minutes and a build's worth of memory duplicating something that already
+works. The restriction clears itself the moment that server is confirmed
+gone — checked fresh every time, never assumed from what used to be true.
+
 The same thing from the command line:
 
 
@@ -530,7 +540,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~66s, 695 tests)
+npm test                       # everything (~66s, 698 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -673,6 +683,30 @@ Check in this order:
 ```powershell
 $env:NODE_OPTIONS = "--max-old-space-size=8192"
 ```
+
+### `serve` printed "SERVING" and then just sat there for ~30 seconds
+
+Fixed — but the cause was easy to misread as a hang, so it is worth knowing.
+`startDevServer` detaches the dev server and calls `child.unref()` so this
+short-lived command can exit while the server it started keeps running.
+`unref()` only releases the `ChildProcess` object, though. With
+`stdio: ['ignore', 'pipe', 'pipe']` and a `.on('data', ...)` listener
+attached to collect output, `child.stdout` and `child.stderr` are their own
+socket handles, and a socket with a listener still attached keeps the
+event loop alive on its own — regardless of the process being unref'd. The
+command had already finished and printed everything it was going to; it
+just would not exit until something external (an idle timeout, Ctrl+C, the
+UI closing) killed it, which read as a hang rather than "already done".
+
+This also explained why the UI's "already serving" restriction (below)
+never fired in practice: the exit handler that records a project as
+serving only runs once the command's own process actually exits, and a
+process killed from outside exits with a signal, not code 0 — so the
+record was never written even after the ~30s.
+
+`startDevServer` now unrefs the stdout/stderr streams as well as the
+process itself before returning. If you see a `serve` window sit idle
+after printing `SERVING`, you are on an old build.
 
 ---
 

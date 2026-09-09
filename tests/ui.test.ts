@@ -1370,6 +1370,218 @@ describe('server security', () => {
 });
 
 /* ================================================================== */
+/* ALREADY SERVING                                                     */
+/* ================================================================== */
+
+describe('restricting a second serve when one is already running', () => {
+  /**
+   * THE BUG THIS EXISTS FOR
+   * -----------------------
+   * A `serve` run's exit handler is what records a project as "already
+   * serving" - but that handler was not firing promptly. `startDevServer`
+   * left the detached dev server's stdout/stderr pipes ref'd even after
+   * calling `child.unref()`, because `unref()` on the ChildProcess object
+   * does not touch the separate socket handles those pipes are. With a
+   * `.on('data', ...)` listener still attached, each pipe kept the CLI
+   * subprocess's event loop alive on its own, so the process that was
+   * supposed to exit right after printing "SERVING" instead sat there for
+   * roughly 30 seconds until something external killed it - and since a
+   * killed process does not exit with code 0, the record was never written
+   * even then. `/api/already-serving` reported `serving: false` for the
+   * entire wait, even though the dev server itself was already up and
+   * answering the whole time.
+   *
+   * This project's own fixture below has exactly one file under
+   * src/assets, which makes `checkServedProject` return `'unknown'` (too
+   * few files to compare) rather than `'match'`. That doubles as a
+   * regression test for a second, related bug: the endpoint used to
+   * delete its record for any verdict other than `'match'`, `'unknown'`
+   * included - so even after the process-exit fix, this exact fixture
+   * would still have reported `serving: false` forever.
+   */
+  let server: UiServer;
+  const cleanupPorts: number[] = [];
+  const cleanupDirs: string[] = [];
+
+  beforeAll(async () => {
+    server = await startUiServer({ port: 0, agentRoot: process.cwd() });
+  }, 30_000);
+
+  afterAll(async () => {
+    await server.close();
+    const { execFile } = await import('node:child_process');
+    const fs = await import('node:fs');
+    for (const port of cleanupPorts) {
+      await new Promise<void>((resolve) => {
+        execFile('netstat', ['-ano'], (err, stdout) => {
+          if (err) { resolve(); return; }
+          const line = stdout
+            .split('\n')
+            .find((l) => l.includes(`:${port} `) && l.includes('LISTENING'));
+          const pid = line?.trim().split(/\s+/).pop();
+          if (pid === undefined) { resolve(); return; }
+          execFile('taskkill', ['/PID', pid, '/T', '/F'], () => resolve());
+        });
+      });
+    }
+    // taskkill returns before Windows has actually released the file handles.
+    await new Promise((r) => setTimeout(r, 1500));
+    for (const dir of cleanupDirs) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    }
+  }, 30_000);
+
+  async function freePort(): Promise<number> {
+    const http = await import('node:http');
+    return new Promise((resolve) => {
+      const probe = http.createServer();
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address();
+        const port = typeof address === 'object' && address !== null ? address.port : 0;
+        probe.close(() => resolve(port));
+      });
+    });
+  }
+
+  /** A project with a start script that answers instantly, so the test does not wait on a real build. */
+  async function writeFakeServeProject(name: string): Promise<string> {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const artifactsDir = path.join(process.cwd(), 'artifacts');
+    fs.mkdirSync(artifactsDir, { recursive: true });
+    const dir = fs.mkdtempSync(path.join(artifactsDir, `ui-${name}-`));
+    cleanupDirs.push(dir);
+    fs.mkdirSync(path.join(dir, 'src', 'assets'), { recursive: true });
+    // node_modules just needs to exist - `serve` refuses an uninstalled
+    // project before it ever gets to starting anything.
+    fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+    // Deliberately only ONE asset - see the block comment above.
+    const assetsDir = path.join(dir, 'src', 'assets');
+    fs.writeFileSync(path.join(assetsDir, 'a.css'), 'body{}' + ' '.repeat(400), 'utf8');
+    fs.writeFileSync(
+      path.join(dir, 'fake-serve.js'),
+      // Must actually serve the asset byte-for-byte - checkServedProject
+      // compares them, and a wrong body reads as MISMATCH, not UNKNOWN.
+      "const http = require('node:http');" +
+        "const fs = require('node:fs');" +
+        "const path = require('node:path');" +
+        "const port = Number(process.argv[process.argv.indexOf('--port') + 1]);" +
+        `const root = ${JSON.stringify(assetsDir)};` +
+        "http.createServer((req, res) => {" +
+        "  const name = decodeURIComponent((req.url || '').replace(/^\\/assets\\//, '').split('?')[0] || '');" +
+        "  const file = path.join(root, name);" +
+        "  if (name && fs.existsSync(file) && fs.statSync(file).isFile()) { res.writeHead(200); res.end(fs.readFileSync(file)); return; }" +
+        "  res.writeHead(200, { 'content-type': 'text/html' });" +
+        "  res.end('<html>app</html>');" +
+        '}).listen(port);',
+    );
+    fs.writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({
+        name,
+        scripts: { start: 'node fake-serve.js' },
+        // `serve` also refuses anything that is not an Angular project.
+        dependencies: { '@angular/core': '15.2.10' },
+      }),
+    );
+    return dir;
+  }
+
+  it(
+    'reports serving:true soon after a real serve run answers, and stays true for an ' +
+      'UNKNOWN verdict (regression: process-exit hang + delete-on-unknown)',
+    async () => {
+      const project = await writeFakeServeProject('ok');
+      const port = await freePort();
+      cleanupPorts.push(port);
+
+      const startRes = await fetch(`http://127.0.0.1:${server.port}/api/run?token=${server.token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'serve',
+          params: { project, port: String(port), wait: '20', poll: '1', delay: '1' },
+        }),
+      });
+      expect(startRes.ok).toBe(true);
+
+      let serving = false;
+      for (let i = 0; i < 15; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const check = (await (
+          await fetch(
+            `http://127.0.0.1:${server.port}/api/already-serving?token=${server.token}` +
+              `&project=${encodeURIComponent(project)}`,
+          )
+        ).json()) as { serving?: boolean; port?: number };
+        if (check.serving === true) {
+          serving = true;
+          expect(check.port).toBe(port);
+          break;
+        }
+      }
+      // If this hangs at false for the full window, the process-exit fix
+      // (or the delete-on-unknown fix) has regressed.
+      expect(serving).toBe(true);
+    },
+    25_000,
+  );
+
+  it('self-heals back to serving:false once the server is actually gone (MISMATCH/NO-SERVER)', async () => {
+    const project = await writeFakeServeProject('gone');
+    const port = await freePort();
+
+    const startRes = await fetch(`http://127.0.0.1:${server.port}/api/run?token=${server.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'serve',
+        params: { project, port: String(port), wait: '20', poll: '1', delay: '1' },
+      }),
+    });
+    expect(startRes.ok).toBe(true);
+
+    let serving = false;
+    for (let i = 0; i < 15 && !serving; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const check = (await (
+        await fetch(
+          `http://127.0.0.1:${server.port}/api/already-serving?token=${server.token}` +
+            `&project=${encodeURIComponent(project)}`,
+        )
+      ).json()) as { serving?: boolean };
+      serving = check.serving === true;
+    }
+    expect(serving).toBe(true);
+
+    const { execFile } = await import('node:child_process');
+    await new Promise<void>((resolve) => {
+      execFile('netstat', ['-ano'], (err, stdout) => {
+        if (err) { resolve(); return; }
+        const line = stdout
+          .split('\n')
+          .find((l) => l.includes(`:${port} `) && l.includes('LISTENING'));
+        const pid = line?.trim().split(/\s+/).pop();
+        if (pid === undefined) { resolve(); return; }
+        execFile('taskkill', ['/PID', pid, '/T', '/F'], () => resolve());
+      });
+    });
+
+    const after = (await (
+      await fetch(
+        `http://127.0.0.1:${server.port}/api/already-serving?token=${server.token}` +
+          `&project=${encodeURIComponent(project)}`,
+      )
+    ).json()) as { serving?: boolean };
+    expect(after.serving).toBe(false);
+  }, 25_000);
+});
+
+/* ================================================================== */
 /* ARGS                                                                */
 /* ================================================================== */
 
