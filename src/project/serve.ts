@@ -228,6 +228,17 @@ export async function startDevServer(options: ServeOptions): Promise<ServeResult
   };
 }
 
+/**
+ * Is it SERVING, not merely listening?
+ *
+ * The Angular dev server binds its port early and then holds connections
+ * open, unanswered, while webpack is still working. netstat reports the
+ * port as LISTENING a couple of minutes before anything can be fetched,
+ * so a port check would report success and every step after it would time
+ * out against a socket that never replies.
+ *
+ * Requiring a completed HTTP response is the difference.
+ */
 async function isUp(url: string): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2500);

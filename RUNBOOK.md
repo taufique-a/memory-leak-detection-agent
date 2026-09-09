@@ -156,9 +156,13 @@ npm run dev -- serve "e:\path\to\your\project" --port 7411 --wait 900 --memory 8
 | `--wait` | 180s | How long to wait for it to answer. A first Angular build takes minutes |
 | `--poll` | 3s | How often to check |
 | `--delay` | 2s | Pause before the first check |
-| `--memory` | *(none)* | Heap in MB. IOSense's `ng serve` aborts on Node 14's default |
+| `--memory` | *(none)* | Heap in MB. **IOSense needs about 22900** — 8192 got 3.4x further and still aborted |
 | `--script` | `start` | Which npm script serves it |
 | `--check` | — | Report only; start nothing |
+
+When a start dies out of memory the tool reads the heap another dev server on
+this machine is already running with and suggests that figure, rather than
+telling you to try more. On this box that reads 22900 MB.
 
 **It only ever serves the folder you named.** It never searches for other
 checkouts and never picks one for you — on a machine with eleven copies of the
@@ -510,7 +514,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~65s, 688 tests)
+npm test                       # everything (~65s, 689 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -814,7 +818,7 @@ src/
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search
   project/     source folder browsing, validation, serving, and served-app checks
-tests/         688 tests, mirrors src/
+tests/         689 tests, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)

@@ -318,6 +318,45 @@ export async function findServingFolder(baseUrl: string): Promise<string | undef
   return fs.existsSync(path.join(candidate, 'package.json')) ? candidate : undefined;
 }
 
+/**
+ * The heap another dev server on this machine is already running with.
+ *
+ * Guessing a number for somebody is unhelpful; reading the one that
+ * demonstrably works here is not. IOSense needs far more than the default
+ * to serve at all, and the machine's own instance says exactly how much -
+ * so when a start dies out of memory, the suggestion can be a real figure
+ * rather than "try more".
+ */
+export async function heapUsedByRunningServers(): Promise<number | undefined> {
+  if (process.platform !== 'win32') return undefined;
+
+  const output = await runPowerShell(
+    "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | " +
+      'Select-Object -ExpandProperty CommandLine',
+  );
+  if (output === undefined) return undefined;
+
+  let largest: number | undefined;
+  for (const match of output.matchAll(/--max[-_]old[-_]space[-_]size[=\s]+(\d+)/gi)) {
+    const value = Number(match[1]);
+    if (Number.isFinite(value) && (largest === undefined || value > largest)) largest = value;
+  }
+  return largest;
+}
+
+function runPowerShell(command: string): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', command],
+      { timeout: 15_000, maxBuffer: 4 * 1024 * 1024 },
+      (error, stdout) => {
+        resolve(error === null && stdout.trim() !== '' ? stdout : undefined);
+      },
+    );
+  });
+}
+
 function pidListeningOn(port: string): Promise<string | undefined> {
   return new Promise((resolve) => {
     execFile('netstat', ['-ano'], { timeout: 10_000 }, (error, stdout) => {

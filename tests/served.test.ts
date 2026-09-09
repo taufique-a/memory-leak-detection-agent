@@ -210,3 +210,20 @@ describe('serve arguments', () => {
     expect(args.checkOnly).toBe(true);
   });
 });
+
+describe('suggesting a heap that is known to work here', () => {
+  /**
+   * "Try more memory" is advice anybody could give. Another dev server
+   * already running on this machine says what the application actually
+   * needs - IOSense's own instance runs with 22900 MB, and 8192 was not
+   * enough for it to start at all.
+   */
+  it('returns a number or nothing, never a guess', async () => {
+    const { heapUsedByRunningServers } = await import('../src/project/served');
+    const value = await heapUsedByRunningServers();
+    if (value !== undefined) {
+      expect(Number.isFinite(value)).toBe(true);
+      expect(value).toBeGreaterThan(0);
+    }
+  }, 30_000);
+});

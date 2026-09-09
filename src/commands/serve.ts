@@ -8,7 +8,7 @@
  */
 
 import { colour, field, heading, info, warn } from '../utils/logger';
-import { checkServedProject } from '../project/served';
+import { checkServedProject, heapUsedByRunningServers } from '../project/served';
 import { serveUrl, startDevServer } from '../project/serve';
 import { validateSource } from '../project/validate';
 
@@ -191,8 +191,28 @@ export async function runServe(argv: string[]): Promise<number> {
     field('Waited', `${Math.round(result.waitedMs / 1000)}s`);
     console.log('');
     warn(result.error ?? 'It did not come up.');
-    if (parsed.memoryMb === undefined && /out of memory/i.test(result.error ?? '')) {
-      info(colour.dim('  Try again with --memory 8192, or higher for a large application.'));
+    if (/out of memory/i.test(result.error ?? '')) {
+      /**
+       * Suggest a figure that is known to work HERE.
+       *
+       * "Try more memory" is advice anybody could have given. Another dev
+       * server already running on this machine says what this application
+       * actually needs, and that is worth reading rather than guessing.
+       */
+      const inUse = await heapUsedByRunningServers();
+      if (inUse !== undefined && inUse > (parsed.memoryMb ?? 0)) {
+        info(
+          colour.dim(
+            `  Another server running on this machine uses ${inUse} MB. Try --memory ${inUse}.`,
+          ),
+        );
+      } else {
+        info(
+          colour.dim(
+            `  Try again with --memory ${Math.max((parsed.memoryMb ?? 4096) * 2, 8192)}.`,
+          ),
+        );
+      }
     }
     if (result.output.length > 0) {
       console.log(colour.dim('\n  --- what it printed ---'));
