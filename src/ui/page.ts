@@ -477,6 +477,7 @@ a{color:var(--accent)}
           first, then press <strong>check</strong>. Everything else uses this address, so
           you never have to type your port twice.
         </div>
+        <div id="servedCheck"></div>
       </div>
 
       <div id="steps-setup"></div>
@@ -641,13 +642,26 @@ function renderReady() {
 
   /* ---- the app ---- */
   const anyScenarioUp = Object.values(state.reachable || {}).some(Boolean);
-  cards.push(
-    appUp || anyScenarioUp
-      ? card('ok', 'Your app', appUrl || 'running', 'Reachable — measuring can run')
-      : card('bad', 'Your app', appUrl || 'not set',
-          appUrl ? 'Not answering. Start it, then press check.'
-                 : 'Enter the address above and press check.'),
-  );
+  if (servedVerdict === 'mismatch') {
+    // Louder than "reachable", because a reachable WRONG app is the worst
+    // of the three states: everything runs and none of it means anything.
+    cards.push(card('bad', 'Your app', appUrl || 'running', 'Serving a DIFFERENT project'));
+  } else if (appUp || anyScenarioUp) {
+    cards.push(
+      card(
+        'ok',
+        'Your app',
+        appUrl || 'running',
+        servedVerdict === 'match' ? 'Reachable, and it is your project' : 'Reachable — measuring can run',
+      ),
+    );
+  } else {
+    cards.push(
+      card('bad', 'Your app', appUrl || 'not set',
+        appUrl ? 'Not answering. Start it, then press check.'
+               : 'Enter the address above and press check.'),
+    );
+  }
 
   /* ---- the sign-in ---- */
   const wanted = originOfUrl(appUrl);
@@ -718,6 +732,7 @@ async function checkApp() {
   }
   renderReady();
   render();
+  void checkServed();
 }
 
 /* ---- is a step usable right now? ---- */
@@ -1594,6 +1609,80 @@ $('entitySearch').addEventListener('input', () => {
 $('entityRefresh').addEventListener('click', () => searchEntities(true));
 
 /* ------------------------------------------------------------------ */
+/* Is the running app the code we chose?                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The two settings that never agreed.
+ *
+ * The source folder and the app URL were independent. Analysing folder A
+ * while measuring the app served from folder B succeeds at every stage and
+ * produces a report about nothing - and the first time this ran against a
+ * live dev server on this machine, that is exactly what it found.
+ */
+let servedVerdict = '';
+
+async function checkServed() {
+  if (!appUrl || !sourcePath) {
+    $('servedCheck').innerHTML = '';
+    servedVerdict = '';
+    return;
+  }
+
+  $('servedCheck').innerHTML =
+    '<div class="sub" style="margin-top:.5rem"><span class="spinner"></span>' +
+    'Comparing what the server hands back with the files on disk...</div>';
+
+  let data;
+  try {
+    data = await api(
+      '/api/served?url=' + encodeURIComponent(appUrl) + '&project=' + encodeURIComponent(sourcePath),
+    );
+  } catch {
+    $('servedCheck').innerHTML = '';
+    return;
+  }
+
+  if (data.error) {
+    $('servedCheck').innerHTML = '<div class="sub">' + esc(data.error) + '</div>';
+    return;
+  }
+
+  servedVerdict = data.verdict || '';
+
+  if (data.verdict === 'match') {
+    $('servedCheck').innerHTML =
+      '<div class="sub" style="margin-top:.5rem">' +
+      '<span class="pill ok">right project</span> ' + esc(data.summary) + '</div>';
+  } else if (data.verdict === 'mismatch') {
+    /**
+     * The whole reason this exists. Say what to do, and offer to do it -
+     * but only ever with the folder that was chosen.
+     */
+    $('servedCheck').innerHTML =
+      '<div class="danger" style="margin-top:.6rem">' +
+      '<strong>This is not the project you selected.</strong><br>' +
+      esc(data.summary) +
+      (data.servedFrom ? '<br>It looks like it is serving <code>' + esc(data.servedFrom) + '</code>.' : '') +
+      '<br><br>Measuring this would analyse one copy of your code and time a different ' +
+      'one. Every finding would name files the running app never used.' +
+      '</div>' +
+      '<div class="sub" style="margin-top:.4rem">Either stop whatever is on that port and ' +
+      'start your own project, or point the address at a free port and use ' +
+      '<strong>Serve the project I chose</strong> below.</div>';
+  } else if (data.verdict === 'no-server') {
+    $('servedCheck').innerHTML =
+      '<div class="sub" style="margin-top:.5rem">Nothing is running there yet. Start it ' +
+      'yourself, or use <strong>Serve the project I chose</strong> below.</div>';
+  } else {
+    $('servedCheck').innerHTML =
+      '<div class="sub" style="margin-top:.5rem">' +
+      '<span class="pill warn">cannot tell</span> ' + esc(data.summary) + '</div>';
+  }
+
+  renderReady();
+}
+/* ------------------------------------------------------------------ */
 /* Choosing and checking the source folder                             */
 /* ------------------------------------------------------------------ */
 
@@ -1742,6 +1831,8 @@ async function checkSource() {
   $('sourceChecks').innerHTML = html;
   renderReady();
   render();
+  // Both halves are now known, so the pair can be reconciled.
+  void checkServed();
 }
 
 $('sourceBrowse').addEventListener('click', () => {

@@ -143,6 +143,72 @@ export const ACTIONS: readonly ActionDefinition[] = [
     needsApp: false,
   },
   {
+    id: 'serve',
+    step: 1,
+    title: 'Serve the project I chose',
+    summary: 'Starts your project on the address above, and proves it is the right one',
+    why:
+      'The folder you picked and the address you measure are two different settings, and ' +
+      'nothing used to check they agreed. Analysing one copy of the code while timing a ' +
+      'different one succeeds at every stage and produces a report about nothing - and on ' +
+      'this machine there are several folders with the same name.\n\n' +
+      'This runs YOUR chosen folder and nothing else, then compares files the server hands ' +
+      'back against the files on disk to prove it. A first build on a big application takes ' +
+      'minutes, so the wait is yours to set.',
+    expect: 'as long as your first build takes - the wait is configurable',
+    params: [
+      { name: 'project', type: 'project', required: true, label: 'Project folder' },
+      { name: 'port', type: 'number', required: false, label: 'Port', default: 4200 },
+      {
+        name: 'wait',
+        type: 'number',
+        required: false,
+        label: 'Wait up to this many seconds',
+        default: 300,
+      },
+      {
+        name: 'poll',
+        type: 'number',
+        required: false,
+        label: 'Check every N seconds',
+        default: 5,
+      },
+      {
+        name: 'delay',
+        type: 'number',
+        required: false,
+        label: 'Wait N seconds before the first check',
+        default: 2,
+      },
+      {
+        name: 'memory',
+        type: 'number',
+        required: false,
+        label: 'Server memory in MB (large apps need several thousand)',
+      },
+      {
+        name: 'checkOnly',
+        type: 'flag',
+        required: false,
+        label: 'Only check what is running - do not start anything',
+      },
+    ],
+    build: (v) => {
+      const args = ['serve', v['project'] ?? ''];
+      args.push('--port', v['port'] ?? '4200');
+      if (v['checkOnly'] === 'true') {
+        args.push('--check');
+        return args;
+      }
+      args.push('--wait', v['wait'] ?? '300');
+      args.push('--poll', v['poll'] ?? '5');
+      args.push('--delay', v['delay'] ?? '2');
+      if (v['memory'] !== undefined && v['memory'] !== '') args.push('--memory', v['memory']);
+      return args;
+    },
+    needsApp: false,
+  },
+  {
     id: 'scan',
     step: 2,
     title: 'Take stock of the project',

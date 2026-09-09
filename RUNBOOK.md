@@ -116,6 +116,58 @@ Or compile it yourself however you normally do, and press **check it** again —
 the "Compiled output" line notices. Or skip it entirely: the memory measurement
 runs against the app you serve, not against a build.
 
+### Step three: is the running app actually your project?
+
+The folder you pick and the address you measure are two different settings, and
+nothing used to check they agreed. Analysing folder A while measuring the app
+served from folder B **succeeds at every stage** — the findings name files the
+running app never used, the correlation joins them to unrelated heap growth, and
+the report reads like an answer.
+
+The first time this check ran against a live dev server on this machine it found
+exactly that: port 7300 was serving a *different* IOSense checkout.
+
+**How it decides.** Files under `src/assets` are served verbatim — no bundling,
+no injection. A handful are fetched and compared byte for byte with the files on
+disk.
+
+| Verdict | Means |
+|---|---|
+| **match** | The served bytes are your files. Two byte-identical checkouts cannot be told apart, and then it does not matter |
+| **mismatch** | Definitive. The bytes differ, so it is not this folder |
+| **no server** | Nothing is answering there |
+| **cannot tell** | Too few files to compare — said plainly rather than guessed |
+
+`index.html` is deliberately not compared: the dev server injects its bundle tags,
+so it never matches exactly and the near-miss is worse than no signal.
+
+### Starting the right one
+
+```powershell
+# just look - never starts anything
+npm run dev -- serve "e:\path\to\your\project" --port 7411 --check
+
+# start it, and prove afterwards that it is the folder you chose
+npm run dev -- serve "e:\path\to\your\project" --port 7411 --wait 900 --memory 8192
+```
+
+| Flag | Default | For |
+|---|---|---|
+| `--wait` | 180s | How long to wait for it to answer. A first Angular build takes minutes |
+| `--poll` | 3s | How often to check |
+| `--delay` | 2s | Pause before the first check |
+| `--memory` | *(none)* | Heap in MB. IOSense's `ng serve` aborts on Node 14's default |
+| `--script` | `start` | Which npm script serves it |
+| `--check` | — | Report only; start nothing |
+
+**It only ever serves the folder you named.** It never searches for other
+checkouts and never picks one for you — on a machine with eleven copies of the
+same application, that restraint is the whole point.
+
+The server is left **running** when the command returns, including when it runs
+out of wait: a first build can take longer than any sensible default, and killing
+it would throw away minutes of work that is about to finish. The PID and the
+`taskkill` line to stop it are printed.
 ### The layout
 
 **Three pages, one sidebar.** One long scroll held setup, searching, fixing and
@@ -458,7 +510,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~62s, 665 tests)
+npm test                       # everything (~65s, 688 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -761,8 +813,8 @@ src/
   heap/        snapshot capture, parsing, retaining paths
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search
-  project/     source folder browsing and validation
-tests/         665 tests, mirrors src/
+  project/     source folder browsing, validation, serving, and served-app checks
+tests/         688 tests, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)

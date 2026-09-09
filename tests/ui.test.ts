@@ -510,6 +510,76 @@ describe('page', () => {
     // end up disagreeing.
     expect(page).toContain('sourcePath || p.default || DEFAULT_PROJECT');
   });
+  /* ---- the right project, served ---- */
+
+  it("reconciles the folder you chose with the app you measure", () => {
+    /**
+     * They were independent settings. Analysing folder A while measuring
+     * the app served from folder B succeeds at every stage and produces
+     * a report about nothing.
+     */
+    expect(page).toContain('/api/served');
+    expect(page).toContain('id="servedCheck"');
+    expect(page).toContain('function checkServed');
+  });
+
+  it("says plainly when the wrong project is running", () => {
+    expect(page).toContain('This is not the project you selected');
+    expect(page).toContain('analyse one copy of your code and time a different');
+  });
+
+  it("treats a reachable WRONG app as worse than an unreachable one", () => {
+    // Everything runs and none of it means anything - the failure mode
+    // that leaves you with a confident report about the wrong code.
+    expect(page).toContain('Serving a DIFFERENT project');
+  });
+
+  it("offers to serve the chosen project, with a configurable wait", () => {
+    const serve = ACTIONS.find((a) => a.id === "serve");
+    expect(serve).toBeDefined();
+    const names = (serve?.params ?? []).map((x) => x.name);
+    for (const expected of ["project", "port", "wait", "poll", "delay", "memory", "checkOnly"]) {
+      expect(names).toContain(expected);
+    }
+  });
+
+  it("builds a serve command that only names the chosen folder", () => {
+    /**
+     * On a machine with several copies of the same application, picking
+     * one for the user is the mistake this whole feature prevents.
+     */
+    const serve = findAction("serve");
+    if (serve === undefined) throw new Error("serve missing");
+
+    const built = buildArgs(serve, {
+      project: "E:/chosen/app",
+      port: "7411",
+      wait: "600",
+      poll: "5",
+      delay: "2",
+      memory: "8192",
+    });
+    if (!("args" in built)) throw new Error(built.error);
+
+    expect(built.args[0]).toBe("serve");
+    expect(built.args[1]).toBe("E:/chosen/app");
+    expect(built.args).toContain("--wait");
+    expect(built.args).toContain("600");
+    expect(built.args).toContain("--memory");
+    // Exactly one folder is ever named.
+    expect(built.args.filter((a) => a.includes("/") && !a.startsWith("--"))).toEqual([
+      "E:/chosen/app",
+    ]);
+  });
+
+  it("can check without starting anything", () => {
+    const serve = findAction("serve");
+    if (serve === undefined) throw new Error("serve missing");
+    const built = buildArgs(serve, { project: "E:/app", checkOnly: "true" });
+    if (!("args" in built)) throw new Error(built.error);
+    expect(built.args).toContain("--check");
+    expect(built.args).not.toContain("--wait");
+  });
   /* ---- the approval dialog ---- */
 
   it("shows each change in a dialog rather than a scrolling log", () => {
@@ -876,6 +946,32 @@ describe('server security', () => {
     expect(angular?.fix).toBeTruthy();
   });
 
+  it("checks whether the running app is the selected project", async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/served?token=${server.token}` +
+        `&url=${encodeURIComponent("http://127.0.0.1:9")}` +
+        `&project=${encodeURIComponent(process.cwd())}`,
+    );
+    const body = (await res.json()) as { verdict?: string };
+    expect(body.verdict).toBe("no-server");
+  }, 20_000);
+
+  it("REFUSES the served check without the token", async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/served?url=http://x&project=C:/p`,
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("REFUSES a non-http target for the served check", async () => {
+    // Otherwise the endpoint is a file-read primitive on request.
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/served?token=${server.token}` +
+        `&url=${encodeURIComponent("file:///etc/passwd")}&project=${encodeURIComponent(process.cwd())}`,
+    );
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toBeDefined();
+  });
   it("REFUSES to validate without the token", async () => {
     const res = await fetch(`http://127.0.0.1:${server.port}/api/validate-source?path=C:/`);
     expect(res.status).toBe(403);

@@ -35,6 +35,7 @@ import { renderPage } from './page';
 import { explainSessionMismatch, readSavedSession } from '../scenario/session';
 import { verifyScenarioRoutes } from './routeProbe';
 import { browseFolder, findProjectsUnder } from '../project/browse';
+import { checkServedProject } from '../project/served';
 import { validateSource } from '../project/validate';
 
 export interface UiServerOptions {
@@ -583,6 +584,39 @@ async function handle(
       sendJson(res, validateSource(folder));
     } catch (err) {
       sendJson(res, { error: `Could not check that folder: ${(err as Error).message}` });
+    }
+    return;
+  }
+
+  /**
+   * Is the running app the code we selected?
+   *
+   * The two were independent settings, so analysing folder A while
+   * measuring the app served from folder B succeeded at every stage and
+   * produced a report about nothing.
+   */
+  if (url.pathname === '/api/served' && req.method === 'GET') {
+    const target = url.searchParams.get('url') ?? '';
+    const project = url.searchParams.get('project') ?? '';
+    if (target === '' || project === '' || target.length > 400 || project.length > 400) {
+      sendJson(res, { error: 'Both an app URL and a project folder are needed.' });
+      return;
+    }
+    let parsedTarget: URL;
+    try {
+      parsedTarget = new URL(target);
+    } catch {
+      sendJson(res, { error: 'That app URL is not valid.' });
+      return;
+    }
+    if (parsedTarget.protocol !== 'http:' && parsedTarget.protocol !== 'https:') {
+      sendJson(res, { error: 'Only http and https.' });
+      return;
+    }
+    try {
+      sendJson(res, await checkServedProject(target, project));
+    } catch (err) {
+      sendJson(res, { error: `Could not check: ${(err as Error).message}` });
     }
     return;
   }
