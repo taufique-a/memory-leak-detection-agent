@@ -211,7 +211,7 @@ export async function runVerification(options: VerifyOptions): Promise<Verificat
  * was written for, and clears NODE_OPTIONS in case we raised the heap limit
  * for our own analysis.
  */
-function buildTargetEnv(pathOverride?: string): NodeJS.ProcessEnv {
+export function buildTargetEnv(pathOverride?: string): NodeJS.ProcessEnv {
   const env = { ...process.env };
 
   if (pathOverride !== undefined) {

@@ -458,6 +458,58 @@ describe('page', () => {
       expect(markup).not.toContain(word);
     }
   });
+  /* ---- choosing the source ---- */
+
+  it("lets you pick the project folder instead of typing it", () => {
+    /**
+     * This machine has eleven folders called IOSense. Typing the path by
+     * hand means a run against the wrong checkout succeeds and tells you
+     * nothing about the code you care about.
+     */
+    expect(page).toContain('id="sourcePath"');
+    expect(page).toContain('id="sourceBrowse"');
+    expect(page).toContain('id="sourceCheck"');
+    expect(page).toContain('/api/browse');
+    expect(page).toContain('/api/validate-source');
+  });
+
+  it("shows every check, not just a verdict", () => {
+    // "Invalid project" tells nobody anything.
+    expect(page).toContain('sourceChecks');
+    expect(page).toContain('class="crow');
+  });
+
+  it("remembers the folder across reloads", () => {
+    expect(page).toContain('memoryAgentSource');
+  });
+
+  it("offers compiling as its own step, before anything depends on it", () => {
+    const compile = ACTIONS.find((a) => a.id === "compile");
+    expect(compile).toBeDefined();
+    expect(compile?.step).toBe(1);
+    expect(compile?.needsApp).toBe(false);
+    expect((compile?.params ?? []).map((x) => x.name)).toContain("buildMemory");
+  });
+
+  it("builds a compile command with and without a memory ceiling", () => {
+    const compile = findAction("compile");
+    if (compile === undefined) throw new Error("compile missing");
+
+    const plain = buildArgs(compile, { project: "E:/app" });
+    if (!("args" in plain)) throw new Error(plain.error);
+    expect(plain.args).toEqual(["compile", "E:/app"]);
+
+    const withMemory = buildArgs(compile, { project: "E:/app", buildMemory: "8192" });
+    if (!("args" in withMemory)) throw new Error(withMemory.error);
+    expect(withMemory.args).toContain("--build-memory");
+    expect(withMemory.args).toContain("8192");
+  });
+
+  it("feeds the chosen folder into every project field", () => {
+    // Nine actions take a project path. Typing it nine times is how they
+    // end up disagreeing.
+    expect(page).toContain('sourcePath || p.default || DEFAULT_PROJECT');
+  });
   /* ---- the approval dialog ---- */
 
   it("shows each change in a dialog rather than a scrolling log", () => {
@@ -772,6 +824,71 @@ describe('server security', () => {
     expect(res.status).toBe(403);
   });
 
+  /* ---- choosing the source folder ---- */
+
+  it("browses folders", async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/browse?token=${server.token}&path=${encodeURIComponent(process.cwd())}`,
+    );
+    const body = (await res.json()) as {
+      entries?: Array<{ name: string; isProject: boolean }>;
+      roots?: string[];
+      parent?: string;
+    };
+    expect(Array.isArray(body.entries)).toBe(true);
+    expect(body.roots?.length).toBeGreaterThan(0);
+    expect(body.parent).toBeDefined();
+  });
+
+  it("REFUSES to browse without the token", async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/browse?path=C:/`);
+    expect(res.status).toBe(403);
+  });
+
+  it("NEVER returns file names from a browse", async () => {
+    /**
+     * A browse that lists files is a way to read the disk. Directories
+     * only, always - the tool already reads the project it is pointed
+     * at, but that is not the same as enumerating anything on request.
+     */
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/browse?token=${server.token}&path=${encodeURIComponent(process.cwd())}`,
+    );
+    const body = (await res.json()) as { entries?: Array<{ name: string }> };
+    const names = (body.entries ?? []).map((e) => e.name);
+    expect(names).not.toContain("package.json");
+    expect(names).not.toContain("tsconfig.json");
+    expect(names).not.toContain("node_modules");
+  });
+
+  it("validates a folder and says why it is unusable", async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/validate-source?token=${server.token}&path=${encodeURIComponent(process.cwd())}`,
+    );
+    const body = (await res.json()) as {
+      usable?: boolean;
+      checks?: Array<{ name: string; status: string; fix?: string }>;
+    };
+    // This tool is a node project but not an Angular one.
+    expect(body.usable).toBe(false);
+    const angular = body.checks?.find((c) => c.name === "Angular");
+    expect(angular?.status).toBe("fail");
+    expect(angular?.fix).toBeTruthy();
+  });
+
+  it("REFUSES to validate without the token", async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/validate-source?path=C:/`);
+    expect(res.status).toBe(403);
+  });
+
+  it("reports a folder that does not exist rather than erroring", async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/api/validate-source?token=${server.token}&path=${encodeURIComponent("E:/nope/nothing")}`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { usable?: boolean };
+    expect(body.usable).toBe(false);
+  });
   /* ---- deleting ---- */
 
   /**

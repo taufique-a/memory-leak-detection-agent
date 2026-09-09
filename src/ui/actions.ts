@@ -112,6 +112,37 @@ export const ACTIONS: readonly ActionDefinition[] = [
     needsApp: false,
   },
   {
+    id: 'compile',
+    step: 1,
+    title: 'Check and compile your project',
+    summary: 'Makes sure the folder is a real project, then builds it',
+    why:
+      'Everything after this assumes your project is complete and buildable. Finding out ' +
+      'otherwise later is confusing: the code analysis finds nothing, or the check after a ' +
+      'fix fails for a reason that has nothing to do with the fix.\n\n' +
+      'This checks the folder first - package.json, Angular, node_modules, git - and then ' +
+      'runs your own build script with your own Node. If your build needs more memory than ' +
+      'Node gives it by default, raise it here.',
+    expect: 'a few seconds to check, then as long as your build takes',
+    params: [
+      { name: 'project', type: 'project', required: true, label: 'Project folder' },
+      {
+        name: 'buildMemory',
+        type: 'number',
+        required: false,
+        label: 'Build memory in MB (leave blank for the default)',
+      },
+    ],
+    build: (v) => {
+      const args = ['compile', v['project'] ?? ''];
+      if (v['buildMemory'] !== undefined && v['buildMemory'] !== '') {
+        args.push('--build-memory', v['buildMemory']);
+      }
+      return args;
+    },
+    needsApp: false,
+  },
+  {
     id: 'scan',
     step: 2,
     title: 'Take stock of the project',

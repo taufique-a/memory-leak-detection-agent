@@ -58,7 +58,7 @@ interface AngularJsonShape {
       architect?: {
         build?: {
           builder?: string;
-          options?: { main?: string; tsConfig?: string };
+          options?: { main?: string; tsConfig?: string; outputPath?: string };
         };
       };
     }
@@ -105,6 +105,7 @@ export function readWorkspace(rootDir: string): WorkspaceReadResult {
         builder: entry.architect?.build?.builder,
         main: entry.architect?.build?.options?.main,
         tsConfig: entry.architect?.build?.options?.tsConfig,
+        outputPath: entry.architect?.build?.options?.outputPath,
       });
     }
   }

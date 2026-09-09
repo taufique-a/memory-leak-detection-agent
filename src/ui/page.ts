@@ -356,6 +356,30 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
   padding:.5rem .6rem;border-bottom:1px solid var(--line);font-size:.78rem;color:var(--muted)}
 .diskline .grow{flex:1}
 
+/* ---- choosing and checking the source folder ---- */
+.crumbs{display:flex;flex-wrap:wrap;gap:.25rem;align-items:center;font-size:.78rem;
+  margin:.5rem 0 .4rem}
+.crumbs button{background:transparent;border:1px solid var(--line);color:var(--accent);
+  border-radius:4px;padding:.12rem .45rem;font-size:.75rem}
+.folders{max-height:15rem;overflow:auto;border:1px solid var(--line);border-radius:6px}
+.frow2{display:flex;align-items:center;gap:.5rem;padding:.35rem .55rem;cursor:pointer;
+  border-bottom:1px solid var(--line)}
+.frow2:last-child{border-bottom:0}
+.frow2:hover{background:var(--code)}
+.frow2 .fico{width:1.1rem;text-align:center;opacity:.7}
+.frow2 .fnm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:.85rem}
+.checks{margin:.6rem 0 0}
+.crow{display:flex;gap:.6rem;padding:.3rem .1rem;font-size:.83rem;align-items:flex-start}
+.crow .cst{flex:0 0 3.2rem;font-size:.7rem;font-weight:600;text-transform:uppercase;
+  letter-spacing:.04em;padding-top:.12rem}
+.crow.pass .cst{color:var(--ok)}
+.crow.warn .cst{color:var(--warn)}
+.crow.fail .cst{color:var(--bad)}
+.crow .cnm{flex:0 0 8rem;color:var(--muted)}
+.crow .cdt{flex:1;min-width:0}
+.crow .cfx{color:var(--muted);font-size:.78rem;display:block;margin-top:.1rem}
+
 /* ---- motion ---- */
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
@@ -418,6 +442,27 @@ a{color:var(--accent)}
       <div class="pagehead">
         <h2>Set up</h2>
         <p>Tell it where your app is, check the tools are there, and sign in once.</p>
+      </div>
+
+      <div class="banner" id="sourceBanner">
+        <strong>Which code are you investigating?</strong>
+        <div class="row" style="margin-top:.5rem">
+          <input type="text" id="sourcePath" placeholder="E:\\path\\to\\your\\project">
+          <button class="ghost" id="sourceBrowse">browse</button>
+          <button id="sourceCheck">check it</button>
+        </div>
+        <div class="sub" id="sourceHint" style="margin-top:.4rem">
+          Pick the folder you run <code>npm start</code> from. There are often several
+          copies of the same project on a machine, and a run against the wrong one
+          succeeds and tells you nothing.
+        </div>
+
+        <div id="sourcePicker" style="display:none">
+          <div class="crumbs" id="sourceCrumbs"></div>
+          <div class="folders" id="sourceFolders"></div>
+        </div>
+
+        <div id="sourceChecks"></div>
       </div>
 
       <div class="banner">
@@ -619,13 +664,17 @@ function renderReady() {
       'Saved for a different port. Sign in again at this one.'));
   }
 
-  /* ---- what we can drive ---- */
-  cards.push(
-    entityTotal > 0
-      ? card('ok', 'Your project', entityTotal.toLocaleString() + ' components',
-          'Search any of them above')
-      : card('idle', 'Your project', 'not read yet', 'Search above to read it'),
-  );
+  /* ---- the source folder ---- */
+  const shortSource = sourcePath ? sourcePath.split(/[\\\\/]/).filter(Boolean).slice(-1)[0] : '';
+  if (!sourcePath) {
+    cards.push(card('bad', 'Your project', 'not chosen', 'Pick a folder on the Set up page'));
+  } else if (!sourceValid) {
+    cards.push(card('warn', 'Your project', shortSource, 'Not checked yet - press "check it"'));
+  } else if (entityTotal > 0) {
+    cards.push(card('ok', 'Your project', entityTotal.toLocaleString() + ' components', shortSource));
+  } else {
+    cards.push(card('ok', 'Your project', shortSource, sourceCompiled ? 'Checked and compiled' : 'Checked'));
+  }
 
   /* ---- what has been produced ---- */
   const reports = (state.reports || []).length;
@@ -708,7 +757,7 @@ function paramField(action, p) {
   // The URL field follows whatever the user entered at the top, so they do
   // not have to type their port twice.
   const dflt = p.type === 'project'
-    ? (p.default ?? DEFAULT_PROJECT)
+    ? (sourcePath || p.default || DEFAULT_PROJECT)
     : p.type === 'url'
       ? (appUrl || p.default || '')
       : (p.default ?? '');
@@ -1545,6 +1594,166 @@ $('entitySearch').addEventListener('input', () => {
 $('entityRefresh').addEventListener('click', () => searchEntities(true));
 
 /* ------------------------------------------------------------------ */
+/* Choosing and checking the source folder                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The chosen project, remembered.
+ *
+ * Every later step needs it, and re-typing a long Windows path on each
+ * visit is the kind of friction that makes people paste the wrong one.
+ */
+let sourcePath = localStorage.getItem('memoryAgentSource') || DEFAULT_PROJECT || '';
+let sourceValid = false;
+let sourceCompiled = false;
+
+function setSource(value) {
+  sourcePath = value;
+  localStorage.setItem('memoryAgentSource', value);
+  $('sourcePath').value = value;
+  // Every action that takes a project folder follows this one field.
+  for (const el of document.querySelectorAll('input[id$="_project"]')) el.value = value;
+}
+
+/* ---- browsing ---- */
+
+async function browseTo(where) {
+  const data = await api('/api/browse' + (where ? '?path=' + encodeURIComponent(where) : ''));
+
+  $('sourcePicker').style.display = 'block';
+
+  /* Drive roots, then each folder on the way down. */
+  const crumbs = (data.roots || []).map((r) =>
+    '<button data-go="' + esc(r) + '">' + esc(r) + '</button>',
+  );
+  if (data.path) {
+    const parts = data.path.split(/[\\\\/]/).filter(Boolean);
+    let built = '';
+    for (const part of parts) {
+      built += (built ? '\\\\' : '') + part;
+      const target = built.endsWith(':') ? built + '\\\\' : built;
+      crumbs.push('<button data-go="' + esc(target) + '">' + esc(part) + '</button>');
+    }
+  }
+  $('sourceCrumbs').innerHTML = crumbs.join('');
+
+  if (data.error) {
+    $('sourceFolders').innerHTML = '<div class="status">' + esc(data.error) + '</div>';
+  } else if (!(data.entries || []).length) {
+    $('sourceFolders').innerHTML = '<div class="status">No sub-folders here.</div>';
+  } else {
+    $('sourceFolders').innerHTML = data.entries
+      .map(
+        (e) =>
+          '<div class="frow2" data-open="' + esc(e.path) + '">' +
+          '<span class="fico">' + (e.isAngular ? '&#9679;' : e.isProject ? '&#9675;' : '&#8250;') + '</span>' +
+          '<span class="fnm">' + esc(e.name) + '</span>' +
+          (e.isAngular ? '<span class="etag ok">Angular</span>' : e.isProject ? '<span class="etag">project</span>' : '') +
+          '<button class="mini" data-pick="' + esc(e.path) + '">use this</button>' +
+          '</div>',
+      )
+      .join('');
+  }
+
+  for (const b of document.querySelectorAll('#sourceCrumbs [data-go]')) {
+    b.addEventListener('click', () => browseTo(b.getAttribute('data-go')));
+  }
+  for (const row of document.querySelectorAll('#sourceFolders [data-open]')) {
+    row.addEventListener('click', (e) => {
+      if (e.target && e.target.getAttribute('data-pick')) return;
+      browseTo(row.getAttribute('data-open'));
+    });
+  }
+  for (const b of document.querySelectorAll('#sourceFolders [data-pick]')) {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setSource(b.getAttribute('data-pick'));
+      $('sourcePicker').style.display = 'none';
+      checkSource();
+    });
+  }
+}
+
+/* ---- checking ---- */
+
+/**
+ * Show every check, not just the verdict.
+ *
+ * "Invalid folder" tells somebody nothing. Which of the six things is
+ * wrong, and what to do about it, is the whole value of the step.
+ */
+async function checkSource() {
+  const value = $('sourcePath').value.trim();
+  if (!value) {
+    $('sourceChecks').innerHTML = '<div class="danger">Type a folder, or press browse.</div>';
+    return;
+  }
+  setSource(value);
+
+  $('sourceChecks').innerHTML = '<div class="sub" style="margin-top:.5rem">' +
+    '<span class="spinner"></span>Checking the folder...</div>';
+
+  let data;
+  try {
+    data = await api('/api/validate-source?path=' + encodeURIComponent(value));
+  } catch {
+    $('sourceChecks').innerHTML = '<div class="danger">Could not reach the server.</div>';
+    return;
+  }
+
+  if (data.error) {
+    $('sourceChecks').innerHTML = '<div class="danger">' + esc(data.error) + '</div>';
+    sourceValid = false;
+    renderReady();
+    return;
+  }
+
+  sourceValid = data.usable === true;
+  sourceCompiled = data.compiled === true && data.compiledOutOfDate !== true;
+
+  let html = '<div class="checks">';
+  for (const c of data.checks || []) {
+    const label = c.status === 'pass' ? 'ok' : c.status === 'warn' ? 'note' : 'stop';
+    html +=
+      '<div class="crow ' + esc(c.status) + '">' +
+      '<span class="cst">' + label + '</span>' +
+      '<span class="cnm">' + esc(c.name) + '</span>' +
+      '<span class="cdt">' + esc(c.detail) +
+      (c.fix ? '<span class="cfx">' + esc(c.fix) + '</span>' : '') +
+      '</span></div>';
+  }
+  html += '</div>';
+
+  if (sourceValid) {
+    html +=
+      '<div class="sub" style="margin-top:.6rem">' +
+      (sourceCompiled
+        ? 'This project is ready. '
+        : 'This project is usable. It has not been compiled recently - ') +
+      'You can compile it below, do it yourself and press <strong>check it</strong> again, ' +
+      'or skip compiling entirely: the memory measurement runs against the app you serve, ' +
+      'not against a build.</div>';
+  } else {
+    html +=
+      '<div class="danger" style="margin-top:.6rem">This folder cannot be investigated. ' +
+      'Fix the items marked <strong>stop</strong>, then press check it again.</div>';
+  }
+
+  $('sourceChecks').innerHTML = html;
+  renderReady();
+  render();
+}
+
+$('sourceBrowse').addEventListener('click', () => {
+  const open = $('sourcePicker').style.display === 'block';
+  if (open) { $('sourcePicker').style.display = 'none'; return; }
+  browseTo($('sourcePath').value.trim() || undefined);
+});
+$('sourceCheck').addEventListener('click', checkSource);
+$('sourcePath').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); checkSource(); }
+});
+/* ------------------------------------------------------------------ */
 /* Which page are we on                                                */
 /* ------------------------------------------------------------------ */
 
@@ -1585,6 +1794,8 @@ $('appUrl').addEventListener('keydown', (e) => {
     appUrl = state.scenarios[0].baseUrl;
   }
   $('appUrl').value = appUrl;
+  $('sourcePath').value = sourcePath;
+  if (sourcePath) checkSource();
   if (appUrl) checkApp();
   refreshFiles();
   showPage(page);

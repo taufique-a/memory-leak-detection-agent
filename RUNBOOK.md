@@ -3,7 +3,7 @@
 Everything you need to run, test and extend this tool without help.
 
 **Project:** `E:\taufique\memory-agent`
-**Target app:** `E:\taufique\io-sense\IOSense` (Angular 15.2.10)
+**Target app:** `E:\taufique\io-sense-memory-leak\IOSense` (Angular 15.2.10)
 
 ---
 
@@ -57,12 +57,60 @@ re-read the section above for your shell.
 If you would rather not memorise commands, run this and work through the page:
 
 ```powershell
-npm run dev -- ui --project "e:\taufique\io-sense\IOSense"
+npm run dev -- ui --project "e:\taufique\io-sense-memory-leak\IOSense"
 ```
 
 A browser opens on a local page that walks you from **step 0 (see how it works)**
 through to **step 8 (write it up)**. Each step says what it does, why it matters
 and roughly how long it takes, in plain language.
+
+### Step one: choosing the code
+
+The Set up page starts by asking **which code you are investigating**. Type the
+folder or press **browse** to walk the drives; Angular projects are marked and
+sorted to the top.
+
+This matters more than it sounds. This machine has **eleven folders called
+IOSense** across several drives. Pointing the tool at the wrong one produces a
+completely successful investigation of code you do not care about — nothing
+fails, so nothing tells you.
+
+Pressing **check it** runs six checks and shows all of them:
+
+| Check | Blocking? | If it fails |
+|---|---|---|
+| Folder | yes | The path does not exist, or is a file |
+| package.json | yes | Missing or unreadable — and if a sub-folder has one, it says which |
+| Angular | yes | No `@angular/core`; the code analysis would find nothing |
+| Dependencies | yes | No `node_modules` — run `npm install` first |
+| Build script | no | Nothing to compile; measuring still works |
+| Git repository | no | Reading and measuring work; applying a fix does not |
+| Compiled output | no | Not built, or built before your last edit |
+
+A blocking failure stops there and says what to do. A warning is stated and
+stepped past. The folder you choose then fills the project field on **every**
+later step, so it cannot drift between them, and it is remembered across
+reloads.
+
+### Step two: compiling
+
+Optional, and worth doing. Verification already runs your build — but only
+*after* a fix has been written, which is too late to discover the project was
+already broken. That failure then reads as "your change broke the build".
+
+```powershell
+# check the folder, then run its own build with its own Node
+npm run dev -- compile "e:\path\to\your\project"
+
+# for a build that needs more heap than Node gives it
+npm run dev -- compile "e:\path\to\your\project" --build-memory 8192
+```
+
+Or compile it yourself however you normally do, and press **check it** again —
+the "Compiled output" line notices. Or skip it entirely: the memory measurement
+runs against the app you serve, not against a build.
+
+### The layout
 
 **Three pages, one sidebar.** One long scroll held setup, searching, fixing and
 the report together, so you could never tell where you were in the process:
@@ -234,20 +282,20 @@ npm run dev -- selftest --headed        # watch it happen in a real window
 
 ```powershell
 # What is in this project?
-npm run dev -- scan "e:\taufique\io-sense\IOSense"
+npm run dev -- scan "e:\taufique\io-sense-memory-leak\IOSense"
 
 # What resources does the code acquire and release? (raw observations)
-npm run dev -- analyze "e:\taufique\io-sense\IOSense" --limit 10
+npm run dev -- analyze "e:\taufique\io-sense-memory-leak\IOSense" --limit 10
 
 # Ranked, explained risks  <-- the useful one
-npm run dev -- risk "e:\taufique\io-sense\IOSense" --detail 5
+npm run dev -- risk "e:\taufique\io-sense-memory-leak\IOSense" --detail 5
 
 # Same, but resolve observable types properly (~20s, needs memory headroom)
 $env:NODE_OPTIONS = "--max-old-space-size=8192"
-npm run dev -- risk "e:\taufique\io-sense\IOSense" --types --detail 5
+npm run dev -- risk "e:\taufique\io-sense-memory-leak\IOSense" --types --detail 5
 
 # Focus on one area
-npm run dev -- risk "e:\taufique\io-sense\IOSense" --filter overview
+npm run dev -- risk "e:\taufique\io-sense-memory-leak\IOSense" --filter overview
 ```
 
 Useful flags: `--json <file>`, `--limit <n>` (findings kept, `0` = all),
@@ -328,10 +376,10 @@ npm run dev -- auto <project> --scenario <file>
 
 ```powershell
 # Static-only report
-npm run dev -- report "e:\taufique\io-sense\IOSense" --format all --limit 25
+npm run dev -- report "e:\taufique\io-sense-memory-leak\IOSense" --format all --limit 25
 
 # Static + runtime in one document  <-- the complete picture
-npm run dev -- investigate "e:\taufique\io-sense\IOSense" `
+npm run dev -- investigate "e:\taufique\io-sense-memory-leak\IOSense" `
   --scenario "scenarios/iosense-overview-devices.json" --limit 25
 ```
 
@@ -349,7 +397,7 @@ Use a **normal** terminal — one where you have *not* activated the agent
 environment. IOSense builds with Node 14.
 
 ```
-cd /d e:\taufique\io-sense\IOSense
+cd /d e:\taufique\io-sense-memory-leak\IOSense
 npm start -- --port 7400
 ```
 
@@ -379,7 +427,7 @@ says `/login`, the sign-in did not complete — run it again.
 ### Step 3 — investigate
 
 ```
-npm run dev -- investigate "e:\taufique\io-sense\IOSense" --scenario "scenarios/iosense-overview-devices.json" --limit 25
+npm run dev -- investigate "e:\taufique\io-sense-memory-leak\IOSense" --scenario "scenarios/iosense-overview-devices.json" --limit 25
 ```
 
 Takes about 45 seconds. Then open the HTML report in `reports\`.
@@ -404,7 +452,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~61s, 626 tests)
+npm test                       # everything (~62s, 662 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -707,7 +755,8 @@ src/
   heap/        snapshot capture, parsing, retaining paths
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search
-tests/         626 tests, mirrors src/
+  project/     source folder browsing and validation
+tests/         662 tests, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)

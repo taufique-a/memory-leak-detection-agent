@@ -34,6 +34,8 @@ import { generateScenario, writeGeneratedScenario } from './generateScenario';
 import { renderPage } from './page';
 import { explainSessionMismatch, readSavedSession } from '../scenario/session';
 import { verifyScenarioRoutes } from './routeProbe';
+import { browseFolder, findProjectsUnder } from '../project/browse';
+import { validateSource } from '../project/validate';
 
 export interface UiServerOptions {
   /** 0 asks the OS for a free port. */
@@ -533,6 +535,55 @@ async function handle(
 
   if (url.pathname === '/api/scenario/generate' && req.method === 'POST') {
     await generateScenarioEndpoint(req, res, ctx);
+    return;
+  }
+
+  /**
+   * Picking the source folder.
+   *
+   * Typing the path by hand is how you end up investigating the wrong
+   * checkout: this machine has eleven folders called IOSense across several
+   * drives, and a run against the wrong one succeeds and tells you nothing
+   * about the code you care about.
+   *
+   * Directories only, never file contents - see project/browse.ts.
+   */
+  if (url.pathname === '/api/browse' && req.method === 'GET') {
+    const at = url.searchParams.get('path') ?? '';
+    if (at.length > 400) {
+      sendJson(res, { error: 'path too long' });
+      return;
+    }
+    sendJson(res, browseFolder(at === '' ? undefined : at));
+    return;
+  }
+
+  if (url.pathname === '/api/find-projects' && req.method === 'GET') {
+    const at = url.searchParams.get('path') ?? '';
+    if (at === '' || at.length > 400) {
+      sendJson(res, { error: 'nothing to search' });
+      return;
+    }
+    try {
+      sendJson(res, { projects: findProjectsUnder(at, 2, 40) });
+    } catch (err) {
+      sendJson(res, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  /** Is the chosen folder something we can actually work on? */
+  if (url.pathname === '/api/validate-source' && req.method === 'GET') {
+    const folder = url.searchParams.get('path') ?? '';
+    if (folder === '' || folder.length > 400) {
+      sendJson(res, { error: 'No folder given.' });
+      return;
+    }
+    try {
+      sendJson(res, validateSource(folder));
+    } catch (err) {
+      sendJson(res, { error: `Could not check that folder: ${(err as Error).message}` });
+    }
     return;
   }
 

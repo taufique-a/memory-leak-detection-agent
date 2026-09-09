@@ -121,6 +121,8 @@ export interface AngularProjectEntry {
   builder?: string;
   main?: string;
   tsConfig?: string;
+  /** Where a build lands, from architect.build.options.outputPath. */
+  outputPath?: string;
 }
 
 /** Everything we learned from angular.json + package.json. */

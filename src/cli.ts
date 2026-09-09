@@ -13,6 +13,7 @@ import { runAuto } from './commands/autoInvestigate';
 import { runCorrelate } from './commands/correlate';
 import { runDoctor } from './commands/doctor';
 import { runFix } from './commands/fix';
+import { runCompile } from './commands/compile';
 import { runVerify } from './commands/verify';
 import { runHeap } from './commands/heap';
 import { runInvestigate } from './commands/investigate';
@@ -56,6 +57,7 @@ COMMANDS
   ${'heap <scenario>'.padEnd(28)} Heap snapshots: what accumulated, and what holds it
   ${'correlate <project>'.padEnd(28)} Join static findings to observed behaviour
   ${'fix <project>'.padEnd(28)} Propose fixes, show diffs, ask approval, apply
+  ${'compile <project>'.padEnd(28)} Check the folder is a valid project, then build it
   ${'verify <project>'.padEnd(28)} Run project checks and compare before/after
   ${'auto <project>'.padEnd(28)} The whole pipeline, end to end`);
 
@@ -227,6 +229,10 @@ export function run(argv: string[]): number | Promise<number> {
 
   if (first === 'fix') {
     return runFix(args.slice(1));
+  }
+
+  if (first === 'compile') {
+    return runCompile(args.slice(1));
   }
 
   if (first === 'verify') {
