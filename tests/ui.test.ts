@@ -580,6 +580,62 @@ describe('page', () => {
     expect(built.args).toContain("--check");
     expect(built.args).not.toContain("--wait");
   });
+  /* ---- offering to serve, only when it would help ---- */
+
+  it("offers the serve controls right under the check that found the problem", () => {
+    /**
+     * The moment somebody learns their app is not running is the moment
+     * to hand them the button, rather than a step further down the page.
+     */
+    expect(page).toContain('function serveForm');
+    expect(page).toContain('id="serveForm"');
+    expect(page).toContain('id="serveGo"');
+    expect(page).toContain('start it for me');
+  });
+
+  it("HIDES the serve step once the right project is confirmed running", () => {
+    // An option that cannot help is clutter to read past.
+    expect(page).toContain('function isHidden');
+    const hidden = page.slice(page.indexOf('function isHidden'), page.indexOf('function isHidden') + 420);
+    expect(hidden).toContain("action.id === 'serve'");
+    expect(hidden).toContain("servedVerdict === 'match'");
+  });
+
+  it("distinguishes hiding a step from blocking one", () => {
+    /**
+     * A blocked step is one you will want once a condition is met, so it
+     * stays visible with its reason. A hidden one cannot help at all.
+     */
+    const doc = page.slice(page.indexOf('function isHidden') - 600, page.indexOf('function isHidden'));
+    expect(doc).toContain('Different from');
+  });
+
+  it("prefills the serve form from what is already known", () => {
+    // The port comes from the address that was typed; the heap from a
+    // server already running on this machine.
+    expect(page).toContain('portFromUrl(appUrl)');
+    expect(page).toContain('data.suggestedMemoryMb');
+  });
+
+  it("starts the server through the same allowlist as everything else", () => {
+    // A control outside the rendered form still goes through /api/run
+    // with an action id, never around it.
+    expect(page).toContain('function startAction');
+    const startFn = page.slice(page.indexOf('async function startAction'));
+    expect(startFn.slice(0, 600)).toContain("'/api/run'");
+    expect(page).toContain("startAction('serve'");
+  });
+
+  it("REGRESSION: the app card describes YOUR address, not any live scenario", () => {
+    /**
+     * It used to reuse the "is any scenario baseUrl up" rule that decides
+     * whether a step is blocked. With nothing running at the address that
+     * was typed, an unrelated live scenario made the card say
+     * "Reachable - measuring can run".
+     */
+    expect(page).toContain('Nothing is running there');
+    expect(page).toContain('Not answering, though a saved journey is');
+  });
   /* ---- the approval dialog ---- */
 
   it("shows each change in a dialog rather than a scrolling log", () => {

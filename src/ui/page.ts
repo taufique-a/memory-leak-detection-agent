@@ -642,25 +642,40 @@ function renderReady() {
 
   /* ---- the app ---- */
   const anyScenarioUp = Object.values(state.reachable || {}).some(Boolean);
+  /**
+   * This card is a statement about YOUR app, so it uses your address only.
+   *
+   * It used to fall back to "is any scenario's baseUrl up", which is what
+   * decides whether a step is blocked - a reasonable rule there, and wrong
+   * here. With nothing at all running on the address that was typed, an
+   * unrelated scenario pointing somewhere live made the card say
+   * "Reachable - measuring can run".
+   */
   if (servedVerdict === 'mismatch') {
     // Louder than "reachable", because a reachable WRONG app is the worst
     // of the three states: everything runs and none of it means anything.
     cards.push(card('bad', 'Your app', appUrl || 'running', 'Serving a DIFFERENT project'));
-  } else if (appUp || anyScenarioUp) {
+  } else if (servedVerdict === 'no-server') {
+    cards.push(card('bad', 'Your app', appUrl, 'Nothing is running there'));
+  } else if (appUp) {
     cards.push(
       card(
         'ok',
         'Your app',
-        appUrl || 'running',
-        servedVerdict === 'match' ? 'Reachable, and it is your project' : 'Reachable — measuring can run',
+        appUrl,
+        servedVerdict === 'match'
+          ? 'Reachable, and it is your project'
+          : 'Reachable — measuring can run',
       ),
     );
+  } else if (!appUrl) {
+    cards.push(card('bad', 'Your app', 'not set', 'Enter the address above and press check.'));
+  } else if (anyScenarioUp) {
+    // Something is up, but not what was typed - say which is which rather
+    // than borrowing one's status for the other.
+    cards.push(card('warn', 'Your app', appUrl, 'Not answering, though a saved journey is'));
   } else {
-    cards.push(
-      card('bad', 'Your app', appUrl || 'not set',
-        appUrl ? 'Not answering. Start it, then press check.'
-               : 'Enter the address above and press check.'),
-    );
+    cards.push(card('bad', 'Your app', appUrl, 'Not answering. Start it, then press check.'));
   }
 
   /* ---- the sign-in ---- */
@@ -735,6 +750,21 @@ async function checkApp() {
   void checkServed();
 }
 
+/**
+ * Should this step be on the page at all?
+ *
+ * Different from "blocked". A blocked step is something you will want
+ * once a condition is met, so it stays visible with its reason. A hidden
+ * one is something that cannot help you at all right now, and leaving it
+ * on screen is just noise to read past.
+ */
+function isHidden(action) {
+  // Once the right project is confirmed running, offering to start it is
+  // an answer to a question nobody has.
+  if (action.id === 'serve' && servedVerdict === 'match') return true;
+  return false;
+}
+
 /* ---- is a step usable right now? ---- */
 function blockedReason(action) {
   if (!action.needsApp) return null;
@@ -790,6 +820,7 @@ function render() {
     html[page] += '<div class="step"><h2>' + step + '. ' + esc(STEP_TITLES[step] || '') + '</h2>';
     if (STEP_NOTES[step]) html[page] += '<div class="note">' + esc(STEP_NOTES[step]) + '</div>';
     for (const a of actions) {
+      if (isHidden(a)) continue;
       const blocked = blockedReason(a);
       html[page] += '<div class="action' + (a.requiresConfirmation ? ' writes' : '') + '">' +
         '<h3>' + esc(a.title) + '</h3>' +
@@ -1584,6 +1615,32 @@ async function createAndRun(actionId) {
   await runWithScenario(actionId, result.file, project);
 }
 
+/**
+ * Start an action with parameters the page assembled itself.
+ *
+ * The rendered form is the usual route, but some controls live outside the
+ * step list - starting the dev server from the check that noticed it was
+ * not running, for one - and those still have to go through the same
+ * allowlisted endpoint rather than around it.
+ */
+async function startAction(actionId, params) {
+  const action = ACTIONS.find((a) => a.id === actionId);
+  if (!action || currentRun) return false;
+
+  $('out').textContent = '';
+  const result = await api('/api/run', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: actionId, params: params }),
+  });
+  if (result.error) {
+    $('out').textContent = result.error;
+    return false;
+  }
+  attachRun(result, action);
+  return true;
+}
+
 /** Start an action with an explicit scenario file, bypassing the dropdown. */
 async function runWithScenario(actionId, scenarioFile, project) {
   const action = ACTIONS.find((a) => a.id === actionId);
@@ -1651,10 +1708,16 @@ async function checkServed() {
   servedVerdict = data.verdict || '';
 
   if (data.verdict === 'match') {
+    // Nothing to do, so nothing to offer. The serve controls and the serve
+    // step both disappear - an option that cannot help is clutter.
     $('servedCheck').innerHTML =
       '<div class="sub" style="margin-top:.5rem">' +
       '<span class="pill ok">right project</span> ' + esc(data.summary) + '</div>';
-  } else if (data.verdict === 'mismatch') {
+    render();
+    return;
+  }
+
+  if (data.verdict === 'mismatch') {
     /**
      * The whole reason this exists. Say what to do, and offer to do it -
      * but only ever with the folder that was chosen.
@@ -1667,20 +1730,89 @@ async function checkServed() {
       '<br><br>Measuring this would analyse one copy of your code and time a different ' +
       'one. Every finding would name files the running app never used.' +
       '</div>' +
-      '<div class="sub" style="margin-top:.4rem">Either stop whatever is on that port and ' +
-      'start your own project, or point the address at a free port and use ' +
-      '<strong>Serve the project I chose</strong> below.</div>';
+      '<div class="sub" style="margin-top:.4rem">Point the address at a free port and start ' +
+      'your own project below, or stop whatever is on that one first.</div>' +
+      serveForm(data);
   } else if (data.verdict === 'no-server') {
     $('servedCheck').innerHTML =
-      '<div class="sub" style="margin-top:.5rem">Nothing is running there yet. Start it ' +
-      'yourself, or use <strong>Serve the project I chose</strong> below.</div>';
+      '<div class="sub" style="margin-top:.5rem">Nothing is running at that address yet.</div>' +
+      serveForm(data);
   } else {
     $('servedCheck').innerHTML =
       '<div class="sub" style="margin-top:.5rem">' +
       '<span class="pill warn">cannot tell</span> ' + esc(data.summary) + '</div>';
   }
 
+  wireServeForm();
   renderReady();
+  render();
+}
+
+/**
+ * The offer to start it, shown only when starting it would help.
+ *
+ * Right under the verdict that found the problem, rather than as a step
+ * further down the page: the moment somebody learns their app is not
+ * running is the moment to hand them the button.
+ */
+function serveForm(data) {
+  const port = portFromUrl(appUrl) || '4200';
+  const memory = data.suggestedMemoryMb || '';
+
+  return (
+    '<div class="banner" id="serveForm" style="margin:.7rem 0 0">' +
+    '<strong>Start the project you chose</strong>' +
+    '<div class="sub" style="margin-top:.2rem">' +
+    'Runs <code>npm start</code> in <code>' + esc(sourcePath) + '</code> and nothing else. ' +
+    'A first build takes minutes, so the wait is yours to set.</div>' +
+    '<div class="params" style="margin-top:.5rem">' +
+      '<label>Port<input type="number" id="serve_port" value="' + esc(port) + '"></label>' +
+      '<label>Wait up to (seconds)<input type="number" id="serve_wait" value="900"></label>' +
+      '<label>Check every (seconds)<input type="number" id="serve_poll" value="5"></label>' +
+      '<label>Memory (MB)' +
+        '<input type="number" id="serve_memory" value="' + esc(memory) + '" placeholder="leave blank for the default">' +
+      '</label>' +
+    '</div>' +
+    (memory
+      ? '<div class="sub">Another server on this machine runs with <strong>' + esc(memory) +
+        ' MB</strong>. This application needs it.</div>'
+      : '') +
+    '<button id="serveGo">start it for me</button>' +
+    '<span class="expect">or start it yourself, then press <strong>check</strong> above</span>' +
+    '</div>'
+  );
+}
+
+function wireServeForm() {
+  const go = $('serveGo');
+  if (!go) return;
+  go.addEventListener('click', async () => {
+    const params = {
+      project: sourcePath,
+      port: $('serve_port').value,
+      wait: $('serve_wait').value,
+      poll: $('serve_poll').value,
+      delay: '2',
+    };
+    const memory = $('serve_memory').value;
+    if (memory) params.memory = memory;
+
+    go.disabled = true;
+    go.textContent = 'starting...';
+    const ok = await startAction('serve', params);
+    if (!ok) {
+      go.disabled = false;
+      go.textContent = 'start it for me';
+    }
+  });
+}
+
+function portFromUrl(value) {
+  try {
+    return new URL(value).port;
+  } catch {
+    return '';
+  }
 }
 /* ------------------------------------------------------------------ */
 /* Choosing and checking the source folder                             */

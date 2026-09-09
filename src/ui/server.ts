@@ -35,7 +35,7 @@ import { renderPage } from './page';
 import { explainSessionMismatch, readSavedSession } from '../scenario/session';
 import { verifyScenarioRoutes } from './routeProbe';
 import { browseFolder, findProjectsUnder } from '../project/browse';
-import { checkServedProject } from '../project/served';
+import { checkServedProject, heapUsedByRunningServers } from '../project/served';
 import { validateSource } from '../project/validate';
 
 export interface UiServerOptions {
@@ -614,7 +614,19 @@ async function handle(
       return;
     }
     try {
-      sendJson(res, await checkServedProject(target, project));
+      const check = await checkServedProject(target, project);
+      /**
+       * Carry a heap figure that is known to work on this machine.
+       *
+       * Only when it is going to be needed: reading the process list on
+       * every successful check is work nobody asked for.
+       */
+      const suggestedMemoryMb =
+        check.verdict === 'match' ? undefined : await heapUsedByRunningServers();
+      sendJson(res, {
+        ...check,
+        ...(suggestedMemoryMb !== undefined ? { suggestedMemoryMb } : {}),
+      });
     } catch (err) {
       sendJson(res, { error: `Could not check: ${(err as Error).message}` });
     }

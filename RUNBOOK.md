@@ -143,6 +143,22 @@ so it never matches exactly and the near-miss is worse than no signal.
 
 ### Starting the right one
 
+The UI does not make you go find this. As soon as the served-project check
+comes back anything other than a match, a **"Start the project you chose"**
+panel appears right under the verdict that found the problem — prefilled with
+the port from the address you typed and, when your machine has another dev
+server running, the heap it uses. One button starts it; nothing else is ever
+considered.
+
+Once the check comes back **match**, the panel disappears and so does the
+equivalent step further down the page. An option that cannot help is
+clutter, not caution — hidden is not the same as blocked: a *blocked* step
+stays visible with its reason because you will want it once a condition is
+met, a *hidden* one is offered nothing to wait for.
+
+The same thing from the command line:
+
+
 ```powershell
 # just look - never starts anything
 npm run dev -- serve "e:\path\to\your\project" --port 7411 --check
@@ -514,7 +530,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~65s, 689 tests)
+npm test                       # everything (~66s, 695 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -818,7 +834,7 @@ src/
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search
   project/     source folder browsing, validation, serving, and served-app checks
-tests/         689 tests, mirrors src/
+tests/         695 tests, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)
