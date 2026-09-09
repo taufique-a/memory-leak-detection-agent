@@ -34,7 +34,9 @@ export interface CompileArgs {
 export function parseCompileArgs(args: string[]): CompileArgs | string {
   const positional: string[] = [];
   let buildMemoryMb: number | undefined;
-  let timeoutMs = 15 * 60_000;
+  // IOSense was still bundling at fifteen minutes, and a build cut short
+  // used to be reported as a build that fails.
+  let timeoutMs = 30 * 60_000;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -125,6 +127,28 @@ export async function runCompile(argv: string[]): Promise<number> {
     return 0;
   }
 
+  if (result.timedOut) {
+    /**
+     * Still building when the clock ran out.
+     *
+     * This says nothing at all about whether the project compiles, so it
+     * must not be reported as a build failure. IOSense hit exactly this at
+     * the old fifteen-minute default.
+     */
+    heading('STILL BUILDING');
+    field('Stopped after', `${seconds}s`);
+    console.log('');
+    warn('The build had not finished, so this says nothing about whether it compiles.');
+    info(
+      colour.dim(
+        `Give it longer with --timeout ${Math.round((parsed.timeoutMs / 1000) * 2)}, or build ` +
+          'it yourself and skip this step.',
+      ),
+    );
+    console.log('');
+    return 1;
+  }
+
   heading('BUILD FAILED');
   field('Took', `${seconds}s`);
   console.log('');
@@ -157,14 +181,22 @@ function run(
   script: string,
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
-): Promise<{ ok: boolean; output: string }> {
+): Promise<{ ok: boolean; output: string; timedOut: boolean }> {
   return new Promise((resolve) => {
     const child = execFile(
       'npm',
       ['run', script],
       { cwd, env, timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, shell: true },
       (error, stdout, stderr) => {
-        resolve({ ok: error === null, output: `${stdout}\n${stderr}`.trim() });
+        resolve({
+          ok: error === null,
+          output: `${stdout}\n${stderr}`.trim(),
+          // execFile sets killed when it enforces the timeout. Without this
+          // a build that was still working reads as one that is broken.
+          timedOut:
+            error !== null &&
+            (error as NodeJS.ErrnoException & { killed?: boolean }).killed === true,
+        });
       },
     );
 

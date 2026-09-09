@@ -286,3 +286,30 @@ describe('compile arguments', () => {
     expect(args.buildMemoryMb).toBeUndefined();
   });
 });
+
+describe('a build that runs out of time, not out of correctness', () => {
+  /**
+   * IOSense's build was still bundling when the fifteen-minute default
+   * expired, and the tool announced "the project does not currently
+   * compile". It had said no such thing - it had been stopped mid-work.
+   *
+   * The same mistake as reporting an out-of-memory abort as a broken
+   * build, and with the same consequence: advice to throw away code that
+   * was never shown to be wrong.
+   */
+  it('gives the build long enough by default', () => {
+    const args = parseCompileArgs(['E:/app']);
+    if (typeof args === 'string') throw new Error(args);
+    expect(args.timeoutMs).toBeGreaterThanOrEqual(30 * 60_000);
+  });
+
+  it('lets the limit be raised', () => {
+    const args = parseCompileArgs(['E:/app', '--timeout', '3600']);
+    if (typeof args === 'string') throw new Error(args);
+    expect(args.timeoutMs).toBe(3_600_000);
+  });
+
+  it('rejects a nonsensical timeout', () => {
+    expect(parseCompileArgs(['E:/app', '--timeout', '2'])).toContain('seconds');
+  });
+});

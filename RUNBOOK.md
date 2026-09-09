@@ -106,6 +106,12 @@ npm run dev -- compile "e:\path\to\your\project"
 npm run dev -- compile "e:\path\to\your\project" --build-memory 8192
 ```
 
+**If it says STILL BUILDING**, the time limit ran out - that is not a verdict on
+your code, the build had not finished either way. IOSense hit exactly this at the
+old fifteen-minute default; it now gets thirty, and `--timeout <seconds>` raises
+it further. Verification's own build check had the same limit and the same
+misreport, and now says so too.
+
 Or compile it yourself however you normally do, and press **check it** again —
 the "Compiled output" line notices. Or skip it entirely: the memory measurement
 runs against the app you serve, not against a build.
@@ -452,7 +458,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~62s, 662 tests)
+npm test                       # everything (~62s, 665 tests)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -756,7 +762,7 @@ src/
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search
   project/     source folder browsing and validation
-tests/         662 tests, mirrors src/
+tests/         665 tests, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)

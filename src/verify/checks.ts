@@ -41,6 +41,15 @@ export interface CheckResult {
   name: string;
   command: string;
   passed: boolean;
+  /**
+   * True when the check was KILLED for taking too long.
+   *
+   * Not the same as failing, and saying so matters: a build that was still
+   * working when the clock ran out has said nothing about whether the code
+   * compiles, and "the change must not be kept in this state" is then
+   * advice to throw away work for no reason.
+   */
+  timedOut?: boolean;
   durationMs: number;
   exitCode: number | null;
   /** Trimmed output, capped so a report stays readable. */
@@ -75,7 +84,9 @@ export function defaultChecks(scripts: Record<string, string>): CheckDefinition[
       name: 'build',
       script: 'build',
       purpose: 'The application still compiles.',
-      timeoutMs: 900_000,
+      // Half an hour. IOSense's own build was still bundling at fifteen
+      // minutes, and a build cut short reports as a broken one.
+      timeoutMs: 1_800_000,
     });
   }
   if (scripts['lint'] !== undefined) {
@@ -180,7 +191,17 @@ export async function runVerification(options: VerifyOptions): Promise<Verificat
      * know.
      */
     if (!result.passed && result.skippedReason === undefined) {
-      report(`${check.name} failed - stopping here`);
+      report(
+        result.timedOut === true
+          ? `${check.name} was still running after ${Math.round(check.timeoutMs / 60000)} minutes and was stopped`
+          : `${check.name} failed - stopping here`,
+      );
+      if (result.timedOut === true) {
+        report(
+          `  That is a time limit, not a verdict on the code - ${check.name} had not ` +
+            'finished either way.',
+        );
+      }
       if (looksLikeOutOfMemory(result.output)) {
         report(
           `  ${check.name} ran out of memory rather than finding a problem with the code. ` +
@@ -282,6 +303,10 @@ function runScript(
         const combined = `${stdout}\n${stderr}`.trim();
         const exitCode =
           error === null ? 0 : typeof error.code === 'number' ? error.code : null;
+        // execFile sets killed + a signal when it enforces the timeout.
+        const timedOut =
+          error !== null &&
+          (error as NodeJS.ErrnoException & { killed?: boolean }).killed === true;
 
         resolve({
           name: check.name,
@@ -290,6 +315,7 @@ function runScript(
           durationMs: Date.now() - started,
           exitCode,
           output: tail(combined, 4000),
+          ...(timedOut ? { timedOut: true } : {}),
         });
       },
     );
