@@ -2,21 +2,30 @@
 
 Everything you need to run, test and extend this tool without help.
 
-**Project:** `E:\taufique\memory-agent`
-**Target app:** `E:\taufique\io-sense-memory-leak\IOSense` (Angular 15.2.10)
+**Project:** `C:\Users\Taufique\memory-leak-detection-agent`
+**Target app:** `C:\Users\Taufique\IOSense` (Angular 15.2.10)
 
 ---
 
+## 0. The fastest way — run-ui.cmd
+
+Double-click `run-ui.cmd` in this folder, or type its full path in any terminal
+from any directory. It activates the portable Node and opens the guided UI
+already pointed at the IOSense checkout above — no `cd`, no dot-sourcing, no
+retyping the project path. The rest of this section explains what that script
+is doing under the hood, and how to do it by hand if you need to.
+
 ## 1. Activate the environment — do this first, every time
 
-This project runs on a **portable Node 22** on `E:`. Your system Node 14 (which
-IOSense builds with) is never touched. Activation lasts **only for the window you
-run it in**; close the window and you are back to Node 14.
+This project runs on a **portable Node 22** kept outside the system install.
+Your system Node 14 (which IOSense builds with) is never touched. Activation
+lasts **only for the window you run it in**; close the window and you are back
+to Node 14.
 
-### If your prompt looks like `PS E:\taufique\memory-agent>` — PowerShell
+### If your prompt looks like `PS C:\Users\Taufique\memory-leak-detection-agent>` — PowerShell
 
 ```powershell
-cd e:\taufique\memory-agent
+cd C:\Users\Taufique\memory-leak-detection-agent
 . .\env.ps1
 ```
 
@@ -24,10 +33,10 @@ cd e:\taufique\memory-agent
 script *inside* your current window. Without it the change happens in a throwaway
 child process and vanishes.
 
-### If your prompt looks like `E:\taufique\memory-agent>` — Command Prompt
+### If your prompt looks like `C:\Users\Taufique\memory-leak-detection-agent>` — Command Prompt
 
 ```
-cd /d e:\taufique\memory-agent
+cd /d C:\Users\Taufique\memory-leak-detection-agent
 .\env.cmd
 ```
 
@@ -57,7 +66,7 @@ re-read the section above for your shell.
 If you would rather not memorise commands, run this and work through the page:
 
 ```powershell
-npm run dev -- ui --project "e:\taufique\io-sense-memory-leak\IOSense"
+npm run dev -- ui --project "C:\Users\Taufique\IOSense"
 ```
 
 A browser opens on a local page that walks you from **step 0 (see how it works)**
@@ -370,20 +379,20 @@ npm run dev -- selftest --headed        # watch it happen in a real window
 
 ```powershell
 # What is in this project?
-npm run dev -- scan "e:\taufique\io-sense-memory-leak\IOSense"
+npm run dev -- scan "C:\Users\Taufique\IOSense"
 
 # What resources does the code acquire and release? (raw observations)
-npm run dev -- analyze "e:\taufique\io-sense-memory-leak\IOSense" --limit 10
+npm run dev -- analyze "C:\Users\Taufique\IOSense" --limit 10
 
 # Ranked, explained risks  <-- the useful one
-npm run dev -- risk "e:\taufique\io-sense-memory-leak\IOSense" --detail 5
+npm run dev -- risk "C:\Users\Taufique\IOSense" --detail 5
 
 # Same, but resolve observable types properly (~20s, needs memory headroom)
 $env:NODE_OPTIONS = "--max-old-space-size=8192"
-npm run dev -- risk "e:\taufique\io-sense-memory-leak\IOSense" --types --detail 5
+npm run dev -- risk "C:\Users\Taufique\IOSense" --types --detail 5
 
 # Focus on one area
-npm run dev -- risk "e:\taufique\io-sense-memory-leak\IOSense" --filter overview
+npm run dev -- risk "C:\Users\Taufique\IOSense" --filter overview
 ```
 
 Useful flags: `--json <file>`, `--limit <n>` (findings kept, `0` = all),
@@ -464,10 +473,10 @@ npm run dev -- auto <project> --scenario <file>
 
 ```powershell
 # Static-only report
-npm run dev -- report "e:\taufique\io-sense-memory-leak\IOSense" --format all --limit 25
+npm run dev -- report "C:\Users\Taufique\IOSense" --format all --limit 25
 
 # Static + runtime in one document  <-- the complete picture
-npm run dev -- investigate "e:\taufique\io-sense-memory-leak\IOSense" `
+npm run dev -- investigate "C:\Users\Taufique\IOSense" `
   --scenario "scenarios/iosense-overview-devices.json" --limit 25
 ```
 
@@ -485,7 +494,7 @@ Use a **normal** terminal — one where you have *not* activated the agent
 environment. IOSense builds with Node 14.
 
 ```
-cd /d e:\taufique\io-sense-memory-leak\IOSense
+cd /d C:\Users\Taufique\IOSense
 npm start -- --port 7400
 ```
 
@@ -496,7 +505,7 @@ Wait for `Compiled successfully`. Confirm `http://localhost:7400` loads.
 Sessions expire, so expect to repeat this — it takes about 30 seconds.
 
 ```
-cd /d e:\taufique\memory-agent
+cd /d C:\Users\Taufique\memory-leak-detection-agent
 .\env.cmd
 npm run dev -- scenario login --base-url http://localhost:7400 --out .auth/iosense.auth.json
 ```
@@ -515,7 +524,7 @@ says `/login`, the sign-in did not complete — run it again.
 ### Step 3 — investigate
 
 ```
-npm run dev -- investigate "e:\taufique\io-sense-memory-leak\IOSense" --scenario "scenarios/iosense-overview-devices.json" --limit 25
+npm run dev -- investigate "C:\Users\Taufique\IOSense" --scenario "scenarios/iosense-overview-devices.json" --limit 25
 ```
 
 Takes about 45 seconds. Then open the HTML report in `reports\`.

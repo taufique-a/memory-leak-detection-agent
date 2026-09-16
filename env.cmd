@@ -9,7 +9,7 @@ REM  external command", which looks like a broken project rather than the
 REM  wrong shell.
 REM
 REM  HOW TO USE (from cmd.exe):
-REM      cd /d e:\taufique\memory-agent
+REM      cd /d C:\Users\Taufique\memory-leak-detection-agent
 REM      .\env.cmd
 REM
 REM  Note the ".\" prefix, written WITHOUT a space. This machine has
@@ -25,9 +25,12 @@ REM  WHAT IT DOES NOT DO
 REM      It does not change your system PATH.
 REM      It does not touch C:\Program Files\nodejs (Node 14 / IOSense).
 REM      Close this window and everything is back to Node 14.
+REM
+REM  Want to skip this whole file? Run run-ui.cmd instead - it does this step
+REM  and launches the guided UI in one go, from any directory.
 REM ============================================================================
 
-set "MEMORY_AGENT_NODE=E:\taufique\node-portable\node-v22.23.2-win-x64"
+set "MEMORY_AGENT_NODE=C:\Users\Taufique\node-portable\node-v22.23.2-win-x64"
 
 if not exist "%MEMORY_AGENT_NODE%\node.exe" (
     echo ERROR: portable Node not found at %MEMORY_AGENT_NODE%
@@ -39,9 +42,9 @@ REM Only prepend once, even if this is run twice in the same window.
 echo %PATH% | find /i "%MEMORY_AGENT_NODE%" >nul
 if errorlevel 1 set "PATH=%MEMORY_AGENT_NODE%;%PATH%"
 
-REM Keep npm's cache and Playwright's browsers off C:, which is nearly full.
-set "npm_config_cache=E:\taufique\node-portable\npm-cache"
-set "PLAYWRIGHT_BROWSERS_PATH=E:\taufique\node-portable\playwright-browsers"
+REM Keep npm's cache and Playwright's browsers alongside the portable Node install.
+set "npm_config_cache=C:\Users\Taufique\node-portable\npm-cache"
+set "PLAYWRIGHT_BROWSERS_PATH=C:\Users\Taufique\node-portable\playwright-browsers"
 
 echo.
 echo   Memory Leak Agent environment ACTIVE (this window only)

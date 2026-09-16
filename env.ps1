@@ -11,15 +11,18 @@
 #    Close this window, and everything is back to Node 14.
 #
 #  HOW TO USE
-#    cd e:\taufique\memory-agent
+#    cd C:\Users\Taufique\memory-leak-detection-agent
 #    . .\env.ps1              <-- note the leading dot-space. That matters.
 #
 #  The leading "dot space" is called dot-sourcing. It runs the script INSIDE
 #  your current shell so the PATH change sticks. Without it, the change would
 #  happen in a child process and vanish immediately.
+#
+#  Want to skip this whole file? Run run-ui.cmd instead - it does this step
+#  and launches the guided UI in one go, from any directory.
 # ============================================================================
 
-$MEMORY_AGENT_NODE = "E:\taufique\node-portable\node-v22.23.2-win-x64"
+$MEMORY_AGENT_NODE = "C:\Users\Taufique\node-portable\node-v22.23.2-win-x64"
 
 if (-not (Test-Path "$MEMORY_AGENT_NODE\node.exe")) {
     Write-Host "ERROR: portable Node not found at $MEMORY_AGENT_NODE" -ForegroundColor Red
@@ -32,11 +35,11 @@ if ($env:Path -notlike "*$MEMORY_AGENT_NODE*") {
     $env:Path = "$MEMORY_AGENT_NODE;" + $env:Path
 }
 
-# Keep npm's cache off C: - that drive only has ~5 GB free.
-$env:npm_config_cache = "E:\taufique\node-portable\npm-cache"
+# Keep npm's cache alongside the portable Node install.
+$env:npm_config_cache = "C:\Users\Taufique\node-portable\npm-cache"
 
-# Keep Playwright browser downloads off C: too (used from Phase 7 onward).
-$env:PLAYWRIGHT_BROWSERS_PATH = "E:\taufique\node-portable\playwright-browsers"
+# Keep Playwright browser downloads there too (used from Phase 7 onward).
+$env:PLAYWRIGHT_BROWSERS_PATH = "C:\Users\Taufique\node-portable\playwright-browsers"
 
 Write-Host ""
 Write-Host "  Memory Leak Agent environment ACTIVE (this window only)" -ForegroundColor Green
