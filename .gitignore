@@ -42,3 +42,8 @@ npm-debug.log*
 .idea/
 Thumbs.db
 Desktop.ini
+
+# Per-machine overrides for run-ui.cmd (portable Node location, default
+# project path). Every machine's values differ, so this never gets committed -
+# see run-ui.local.cmd.example.
+run-ui.local.cmd

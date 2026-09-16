@@ -1,0 +1,22 @@
+@echo off
+REM ============================================================================
+REM  Per-machine overrides for run-ui.cmd
+REM ============================================================================
+REM  Copy this file to "run-ui.local.cmd" (same folder, no ".example") and
+REM  fill in the values that apply to THIS machine. That copy is gitignored -
+REM  it never gets committed, so machines never fight over each other's paths.
+REM
+REM  Only set what you actually need:
+REM    - Leave MEMORY_AGENT_NODE blank if this machine's default "node" is
+REM      already >=20.
+REM    - Leave MEMORY_AGENT_PROJECT blank to pick the project inside the
+REM      guided UI instead (Set up page -> browse).
+REM ============================================================================
+
+REM set "MEMORY_AGENT_NODE=C:\path\to\a\portable\node-v22.x.x-win-x64"
+REM set "MEMORY_AGENT_PROJECT=C:\path\to\the\Angular\app\you\investigate"
+
+REM Optional: keep npm's cache / Playwright's browser downloads off a drive
+REM that is nearly full, instead of the defaults next to the portable Node.
+REM set "MEMORY_AGENT_NPM_CACHE=C:\path\to\npm-cache"
+REM set "MEMORY_AGENT_PLAYWRIGHT_PATH=C:\path\to\playwright-browsers"

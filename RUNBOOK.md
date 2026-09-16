@@ -10,10 +10,20 @@ Everything you need to run, test and extend this tool without help.
 ## 0. The fastest way — run-ui.cmd
 
 Double-click `run-ui.cmd` in this folder, or type its full path in any terminal
-from any directory. It activates the portable Node and opens the guided UI
-already pointed at the IOSense checkout above — no `cd`, no dot-sourcing, no
-retyping the project path. The rest of this section explains what that script
-is doing under the hood, and how to do it by hand if you need to.
+from any directory, on any machine. It works out which Node to use, installs
+dependencies the first time (`node_modules` missing triggers an automatic
+`npm install`), and opens the guided UI — no `cd`, no dot-sourcing, no manual
+setup on a machine that has never run this before.
+
+If the machine's default `node` is already v20+, that's all there is to it. If
+not (this machine's system Node is v14, for IOSense's own build), copy
+`run-ui.local.cmd.example` to `run-ui.local.cmd` (gitignored — every machine's
+copy stays local) and set `MEMORY_AGENT_NODE` to a portable Node 20+ install.
+The same file can set `MEMORY_AGENT_PROJECT` to skip the guided UI's "choose
+your project" step; leave it unset to pick the project inside the UI instead.
+
+The rest of this section explains what the script is doing under the hood,
+and how to do it by hand if you need to.
 
 ## 1. Activate the environment — do this first, every time
 
