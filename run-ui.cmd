@@ -7,11 +7,18 @@ REM  path in any terminal. It does not matter what your current directory,
 REM  drive letter or Windows user account is.
 REM
 REM  It figures out Node itself, installs dependencies if they are missing,
-REM  and opens the guided UI. The UI's own "choose your project" step lets you
-REM  pick the app to investigate, so no project path needs to be hardcoded
-REM  here either.
+REM  checks and compiles the project you are investigating, and then opens
+REM  the guided UI. The UI's own "choose your project" step lets you pick the
+REM  app to investigate, so no project path needs to be hardcoded here either.
 REM
-REM  MACHINE-SPECIFIC SETUP (optional)
+REM  TWO DIFFERENT NODES, ON PURPOSE
+REM    This script only manages the Node THIS TOOL runs on (it needs >=20).
+REM    The project you are investigating always builds and serves with
+REM    whatever "node" is already the default on this machine - v14 for
+REM    IOSense - never with the Node below. That split is intentional: the
+REM    tool's own requirements should never change how your project builds.
+REM
+REM  MACHINE-SPECIFIC SETUP (optional, for the tool's own Node - see above)
 REM    This tool needs Node >=20. If this machine's system Node already
 REM    satisfies that, you need nothing else - skip to running the script.
 REM
@@ -77,10 +84,25 @@ if not exist "node_modules" (
 )
 
 echo.
-echo   Memory Leak Agent - guided UI
+echo   Memory Leak Agent
 echo   ------------------------------------------------------
 for /f "delims=" %%v in ('node -v') do echo   node    : %%v
 if defined MEMORY_AGENT_PROJECT echo   project : %MEMORY_AGENT_PROJECT%
+echo.
+
+REM Check, debug and compile the project FIRST - before opening anything, and
+REM before assuming it is in working order. If the project already has known
+REM problems, they show up here, plainly, rather than surfacing later as a
+REM confusing failure somewhere downstream. This can take a while on a large
+REM project; it is allowed to.
+if defined MEMORY_AGENT_PROJECT (
+    echo   Checking the project...
+    echo.
+    call npm run dev -- compile "%MEMORY_AGENT_PROJECT%"
+)
+
+echo.
+echo   Opening the guided UI...
 echo.
 
 if defined MEMORY_AGENT_PROJECT (

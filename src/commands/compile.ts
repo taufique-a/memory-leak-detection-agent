@@ -20,7 +20,7 @@
 
 import { execFile } from 'node:child_process';
 
-import { buildTargetEnv, looksLikeOutOfMemory } from '../verify/checks';
+import { buildTargetEnv, looksLikeOutOfMemory, nextAttempt } from '../verify/checks';
 import { validateSource } from '../project/validate';
 import { colour, field, heading, info, warn } from '../utils/logger';
 
@@ -104,16 +104,47 @@ export async function runCompile(argv: string[]): Promise<number> {
   /* ---- build ---- */
   const env = buildTargetEnv();
   if (parsed.buildMemoryMb !== undefined) {
-    env['NODE_OPTIONS'] = `--max-old-space-size=${parsed.buildMemoryMb}`;
     info(colour.dim(`Giving the build ${parsed.buildMemoryMb} MB of heap.`));
   }
 
   heading('BUILDING');
   info(colour.dim(`npm run ${validation.buildScript}, using the project's own Node.`));
+  info(
+    colour.dim(
+      'This can take a while on a large project - that is expected, and it will keep ' +
+        'going rather than give up early.',
+    ),
+  );
   console.log('');
 
+  /**
+   * Running out of time or heap is not a verdict on the code, so it is not
+   * reported as a build failure - it is retried automatically with more of
+   * both first. See nextAttempt() for why and where it stops.
+   */
+  let attempt: { timeoutMs: number; buildMemoryMb?: number } = {
+    timeoutMs: parsed.timeoutMs,
+    ...(parsed.buildMemoryMb !== undefined ? { buildMemoryMb: parsed.buildMemoryMb } : {}),
+  };
+  let result: { ok: boolean; output: string; timedOut: boolean };
   const started = Date.now();
-  const result = await run(validation.root, validation.buildScript, env, parsed.timeoutMs);
+  for (let attemptNumber = 1; ; attemptNumber++) {
+    const attemptEnv = { ...env };
+    if (attempt.buildMemoryMb !== undefined) {
+      attemptEnv['NODE_OPTIONS'] = `--max-old-space-size=${attempt.buildMemoryMb}`;
+    }
+    result = await run(validation.root, validation.buildScript, attemptEnv, attempt.timeoutMs);
+    if (result.ok) break;
+
+    const next = nextAttempt(attempt, result.output, result.timedOut);
+    if (next === undefined) break;
+
+    warn(`Attempt ${attemptNumber} ${next.reason}. Retrying automatically...`);
+    attempt = {
+      timeoutMs: next.timeoutMs,
+      ...(next.buildMemoryMb !== undefined ? { buildMemoryMb: next.buildMemoryMb } : {}),
+    };
+  }
   const seconds = ((Date.now() - started) / 1000).toFixed(0);
 
   if (result.ok) {
@@ -129,22 +160,17 @@ export async function runCompile(argv: string[]): Promise<number> {
 
   if (result.timedOut) {
     /**
-     * Still building when the clock ran out.
+     * Still building after every automatic retry ran out of runway.
      *
      * This says nothing at all about whether the project compiles, so it
      * must not be reported as a build failure. IOSense hit exactly this at
      * the old fifteen-minute default.
      */
     heading('STILL BUILDING');
-    field('Stopped after', `${seconds}s`);
+    field('Stopped after', `${seconds}s (up to ${Math.round(attempt.timeoutMs / 60000)} min, tried automatically)`);
     console.log('');
     warn('The build had not finished, so this says nothing about whether it compiles.');
-    info(
-      colour.dim(
-        `Give it longer with --timeout ${Math.round((parsed.timeoutMs / 1000) * 2)}, or build ` +
-          'it yourself and skip this step.',
-      ),
-    );
+    info(colour.dim('Build it yourself in a normal terminal and skip this step, if you want to check sooner.'));
     console.log('');
     return 1;
   }
@@ -154,12 +180,7 @@ export async function runCompile(argv: string[]): Promise<number> {
   console.log('');
 
   if (looksLikeOutOfMemory(result.output)) {
-    warn('It ran out of memory rather than finding a problem in the code.');
-    info(
-      colour.dim(
-        `Re-run with --build-memory 8192${parsed.buildMemoryMb !== undefined ? ' or higher' : ''}.`,
-      ),
-    );
+    warn(`It ran out of memory even after retrying automatically with up to ${attempt.buildMemoryMb} MB of heap.`);
   } else {
     warn('The project does not currently compile.');
     info(

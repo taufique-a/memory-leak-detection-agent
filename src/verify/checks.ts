@@ -94,7 +94,9 @@ export function defaultChecks(scripts: Record<string, string>): CheckDefinition[
       name: 'lint',
       script: 'lint',
       purpose: 'The change matches the project style rules.',
-      timeoutMs: 600_000,
+      // Same budget as build and test. A large project's lint pass is not
+      // guaranteed to be the cheap step, so it gets no less time than they do.
+      timeoutMs: 1_800_000,
     });
   }
   if (scripts['test'] !== undefined) {
@@ -150,19 +152,6 @@ export async function runVerification(options: VerifyOptions): Promise<Verificat
 
   const checks = options.checks ?? defaultChecks(scripts);
   const env = buildTargetEnv(options.pathOverride);
-
-  /**
-   * A build big enough to need more heap than Node's default.
-   *
-   * IOSense aborts `ng build` after four minutes with SIGABRT on Node 14's
-   * default heap, and completes with 8 GB. That is a property of the
-   * application, not of anything this tool changed - but without a way to
-   * say so, the tool reports "build failed, roll back your change" about
-   * code that is perfectly fine.
-   */
-  if (options.buildMemoryMb !== undefined) {
-    env['NODE_OPTIONS'] = `--max-old-space-size=${options.buildMemoryMb}`;
-  }
   const results: CheckResult[] = [];
 
   for (const check of checks) {
@@ -180,7 +169,40 @@ export async function runVerification(options: VerifyOptions): Promise<Verificat
     }
 
     report(`running ${check.name} (npm run ${check.script})`);
-    const result = await runScript(options.projectRoot, check, env);
+
+    /**
+     * A build big enough to need more heap than Node's default.
+     *
+     * IOSense aborts `ng build` after four minutes with SIGABRT on Node 14's
+     * default heap, and completes with 8 GB. That is a property of the
+     * application, not of anything this tool changed - but without a way to
+     * say so, the tool reports "build failed, roll back your change" about
+     * code that is perfectly fine. So a check that runs out of time or heap
+     * gets retried automatically with more of both, rather than requiring a
+     * person to notice and re-run with the right flag.
+     */
+    let attempt: { timeoutMs: number; buildMemoryMb?: number } = {
+      timeoutMs: check.timeoutMs,
+      ...(options.buildMemoryMb !== undefined ? { buildMemoryMb: options.buildMemoryMb } : {}),
+    };
+    let result: CheckResult;
+    for (let attemptNumber = 1; ; attemptNumber++) {
+      const attemptEnv = { ...env };
+      if (attempt.buildMemoryMb !== undefined) {
+        attemptEnv['NODE_OPTIONS'] = `--max-old-space-size=${attempt.buildMemoryMb}`;
+      }
+      result = await runScript(options.projectRoot, { ...check, timeoutMs: attempt.timeoutMs }, attemptEnv);
+      if (result.passed) break;
+
+      const next = nextAttempt(attempt, result.output, result.timedOut === true);
+      if (next === undefined) break;
+
+      report(`  ${check.name} ${next.reason} - retrying automatically (attempt ${attemptNumber + 1})`);
+      attempt = {
+        timeoutMs: next.timeoutMs,
+        ...(next.buildMemoryMb !== undefined ? { buildMemoryMb: next.buildMemoryMb } : {}),
+      };
+    }
     results.push(result);
 
     /**
@@ -193,7 +215,7 @@ export async function runVerification(options: VerifyOptions): Promise<Verificat
     if (!result.passed && result.skippedReason === undefined) {
       report(
         result.timedOut === true
-          ? `${check.name} was still running after ${Math.round(check.timeoutMs / 60000)} minutes and was stopped`
+          ? `${check.name} was still running after ${Math.round(attempt.timeoutMs / 60000)} minutes (even after retrying with more time) and was stopped`
           : `${check.name} failed - stopping here`,
       );
       if (result.timedOut === true) {
@@ -204,8 +226,8 @@ export async function runVerification(options: VerifyOptions): Promise<Verificat
       }
       if (looksLikeOutOfMemory(result.output)) {
         report(
-          `  ${check.name} ran out of memory rather than finding a problem with the code. ` +
-            'Re-run with --build-memory 8192 to give it a bigger heap.',
+          `  ${check.name} ran out of memory even after retrying with more heap ` +
+            `(up to ${attempt.buildMemoryMb} MB).`,
         );
       }
       break;
@@ -347,6 +369,56 @@ function buildSummary(ran: CheckResult[], skipped: number, allPassed: boolean): 
     `${failed.length} check(s) FAILED: ${failed.join(', ')}. The change must not be kept ` +
     'in this state - fix the failure or roll back.'
   );
+}
+
+/**
+ * Decide whether a failed run deserves an automatic retry with more time or
+ * more heap, and what the next attempt should look like.
+ *
+ * WHY THIS EXISTS
+ * ----------------
+ * A resource limit (ran out of time, ran out of memory) is not a verdict on
+ * the code, so it should not be reported as one - and it should not require
+ * a person to notice, look up the right flag, and re-run by hand either. The
+ * agent already knows what "still building" and "out of memory" look like;
+ * it should just give itself more room and try again.
+ *
+ * Escalation stops once it reaches a point where more resources stop being
+ * the plausible explanation: two hours or sixteen gigabytes of heap is
+ * already generous for anything short of a genuinely stuck process.
+ */
+export function nextAttempt(
+  current: { timeoutMs: number; buildMemoryMb?: number },
+  output: string,
+  timedOut: boolean,
+): { timeoutMs: number; buildMemoryMb?: number; reason: string } | undefined {
+  const MAX_TIMEOUT_MS = 2 * 60 * 60_000;
+  const MAX_MEMORY_MB = 16_384;
+
+  if (timedOut && current.timeoutMs < MAX_TIMEOUT_MS) {
+    const timeoutMs = Math.min(current.timeoutMs * 2, MAX_TIMEOUT_MS);
+    return {
+      timeoutMs,
+      ...(current.buildMemoryMb !== undefined ? { buildMemoryMb: current.buildMemoryMb } : {}),
+      reason:
+        `was still running after ${Math.round(current.timeoutMs / 60000)} min - ` +
+        `giving it up to ${Math.round(timeoutMs / 60000)} min`,
+    };
+  }
+
+  if (looksLikeOutOfMemory(output) && (current.buildMemoryMb ?? 0) < MAX_MEMORY_MB) {
+    const buildMemoryMb = Math.min(
+      current.buildMemoryMb === undefined ? 4096 : current.buildMemoryMb * 2,
+      MAX_MEMORY_MB,
+    );
+    return {
+      timeoutMs: current.timeoutMs,
+      buildMemoryMb,
+      reason: `ran out of memory - retrying with ${buildMemoryMb} MB of heap`,
+    };
+  }
+
+  return undefined;
 }
 
 /**
