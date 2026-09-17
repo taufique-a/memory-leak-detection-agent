@@ -761,15 +761,16 @@ async function checkApp() {
  * on screen is just noise to read past.
  */
 function isHidden(action) {
-  if (action.id === 'serve') {
-    // Once the right project is confirmed running, offering to start it
-    // is an answer to a question nobody has.
-    if (servedVerdict === 'match') return true;
-    // And once ANY earlier action in this session has already started it
-    // - even at a different address than the one currently typed -
-    // starting a second one is never useful, only wasteful.
-    if (alreadyServing) return true;
-  }
+  /**
+   * "compile" and "serve" as generic run-this cards ask a normal person to
+   * pick project folders and heap sizes for something the tool already
+   * does for them elsewhere: compiling now happens automatically before the
+   * guided UI even opens (see run-ui.cmd), and serving is offered inline,
+   * right where the served-check finds a problem, with a single "start it
+   * for me" button instead of a form. The generic cards would just be a
+   * second, more confusing way to do the same two things, so they never show.
+   */
+  if (action.id === 'compile' || action.id === 'serve') return true;
   return false;
 }
 
@@ -2027,9 +2028,12 @@ async function checkSource() {
       (sourceCompiled
         ? 'This project is ready. '
         : 'This project is usable. It has not been compiled recently - ') +
-      'You can compile it below, do it yourself and press <strong>check it</strong> again, ' +
-      'or skip compiling entirely: the memory measurement runs against the app you serve, ' +
-      'not against a build.</div>';
+      (sourceCompiled
+        ? ''
+        : 'compile it yourself (or with <code>run-ui.cmd</code>, which does this before ' +
+          'opening) and press <strong>check it</strong> again, or skip compiling entirely: ' +
+          'the memory measurement runs against the app you serve, not against a build.') +
+      '</div>';
   } else {
     html +=
       '<div class="danger" style="margin-top:.6rem">This folder cannot be investigated. ' +

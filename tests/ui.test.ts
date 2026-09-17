@@ -593,12 +593,18 @@ describe('page', () => {
     expect(page).toContain('start it for me');
   });
 
-  it("HIDES the serve step once the right project is confirmed running", () => {
-    // An option that cannot help is clutter to read past.
+  it("always hides the generic compile and serve cards from step 1", () => {
+    /**
+     * Both are superseded by something more automatic: compiling happens
+     * before the guided UI even opens (run-ui.cmd), and serving is offered
+     * inline, right under the check that found the problem (see the
+     * "offers the serve controls" test above). The generic cards would just
+     * be a second, more confusing way to do the same two things, so an
+     * ordinary person should never see them as separate options.
+     */
     expect(page).toContain('function isHidden');
-    const hidden = page.slice(page.indexOf('function isHidden'), page.indexOf('function isHidden') + 420);
-    expect(hidden).toContain("action.id === 'serve'");
-    expect(hidden).toContain("servedVerdict === 'match'");
+    const hidden = page.slice(page.indexOf('function isHidden'), page.indexOf('function isHidden') + 700);
+    expect(hidden).toContain("action.id === 'compile' || action.id === 'serve'");
   });
 
   it("distinguishes hiding a step from blocking one", () => {

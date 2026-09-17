@@ -113,9 +113,15 @@ reloads.
 
 ### Step two: compiling
 
-Optional, and worth doing. Verification already runs your build — but only
-*after* a fix has been written, which is too late to discover the project was
-already broken. That failure then reads as "your change broke the build".
+Worth doing, and no longer something you have to remember to do: `run-ui.cmd`
+checks and compiles the project before it even opens the guided UI (see
+section 0), so a broken build shows up immediately rather than being
+discovered later, disguised as "your change broke the build" after
+verification runs it again post-fix. Because of that, **the UI itself no
+longer offers a separate "check and compile" button** - it would just be a
+second, more confusing way to do something that already happened.
+
+From the command line, the same check-and-build is still its own command:
 
 ```powershell
 # check the folder, then run its own build with its own Node
@@ -125,15 +131,22 @@ npm run dev -- compile "e:\path\to\your\project"
 npm run dev -- compile "e:\path\to\your\project" --build-memory 8192
 ```
 
-**If it says STILL BUILDING**, the time limit ran out - that is not a verdict on
-your code, the build had not finished either way. IOSense hit exactly this at the
-old fifteen-minute default; it now gets thirty, and `--timeout <seconds>` raises
-it further. Verification's own build check had the same limit and the same
-misreport, and now says so too.
+**If it says STILL BUILDING**, the build ran out of time even after the tool
+retried automatically with more of it - that is not a verdict on your code,
+the build had not finished either way (see "Automatic retries" below).
 
 Or compile it yourself however you normally do, and press **check it** again —
 the "Compiled output" line notices. Or skip it entirely: the memory measurement
 runs against the app you serve, not against a build.
+
+#### Automatic retries
+
+A build, lint or test run that times out or runs out of memory is not a
+verdict on the code, so the tool does not just report it and stop - it
+doubles the time or heap and tries again by itself (up to 2 hours or 16 GB),
+before finally giving up. IOSense hit exactly this kind of limit at the old
+fifteen-minute build timeout and the old ten-minute lint timeout; both are
+handled automatically now, with no flag to remember.
 
 ### Step three: is the running app actually your project?
 
@@ -161,6 +174,12 @@ disk.
 so it never matches exactly and the near-miss is worse than no signal.
 
 ### Starting the right one
+
+There used to also be a generic "Serve the project I chose" button sitting in
+step 1 alongside the environment checks, asking for a project, port, memory
+and wait time up front, whether or not anything was actually wrong. It is
+gone now - the inline panel below is the only way the UI offers to start a
+project, and it only appears once there is something to fix.
 
 The UI does not make you go find this. As soon as the served-project check
 comes back anything other than a match, a **"Start the project you chose"**
