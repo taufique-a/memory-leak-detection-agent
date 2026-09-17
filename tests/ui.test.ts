@@ -669,6 +669,42 @@ describe('page', () => {
     expect(page).toContain('.dline.del');
   });
 
+  it("offers a side-by-side old/new view alongside the unified diff", () => {
+    /**
+     * A unified diff is one column of +/- lines; the side-by-side view
+     * lines up what the file said against what it will say, in two
+     * columns, the way an editor's diff view does.
+     */
+    expect(page).toContain('id="diffToggle"');
+    expect(page).toContain('id="viewUnified"');
+    expect(page).toContain('id="viewSplit"');
+    expect(page).toContain('id="approveSplit"');
+    expect(page).toContain('function buildSplitRows');
+    expect(page).toContain('function extractDiffBlock');
+  });
+
+  it("hides the side-by-side toggle when a proposal has no diff to compare", () => {
+    // A manual-only fix (no newContent) has rationale and risks but no
+    // diff, so there is nothing to line up - offering the toggle anyway
+    // would be a button that does nothing.
+    const fn = page.slice(page.indexOf('function renderApproveBody'));
+    const body = fn.slice(0, fn.indexOf('function openApproval'));
+    expect(body).toContain("extractDiffBlock(proposalLines)");
+    expect(body).toContain("canSplit ? 'flex' : 'none'");
+  });
+
+  it("keeps a side-by-side block's old and new columns the same length", () => {
+    /**
+     * Consecutive removals and additions between two context lines get
+     * padded to the same row count with blank filler cells - otherwise a
+     * block with more additions than removals (the common case: these
+     * fixes are close to pure insertions) would drift the two columns
+     * out of alignment from that point on.
+     */
+    const fn = page.slice(page.indexOf('function buildSplitRows'), page.indexOf('function renderSplitHtml'));
+    expect(fn).toContain('Math.max(dels.length, adds.length)');
+  });
+
   /* ---- where the change lands ---- */
 
   it("offers a separate branch and a commit, both off by default", () => {

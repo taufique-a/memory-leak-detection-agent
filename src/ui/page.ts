@@ -352,6 +352,21 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 .dline.add{color:var(--ok)}
 .dline.del{color:var(--bad)}
 .dline.hunk{color:var(--muted)}
+.diffToggle{display:flex;gap:.35rem;padding:.5rem 1.1rem;border-bottom:1px solid var(--line)}
+.diffToggle button{background:transparent;color:var(--muted);border:1px solid var(--line);
+  border-radius:4px;padding:.15rem .55rem;font-size:.75rem}
+.diffToggle button.on{color:var(--accent);border-color:var(--accent);font-weight:600}
+.modal.split{max-width:74rem}
+.split-row{display:flex;font:12px/1.5 ui-monospace,Consolas,"Courier New",monospace}
+.split-row .cell{flex:1 1 50%;min-width:0;padding:.05rem .7rem;white-space:pre-wrap;
+  word-break:break-word;border-right:1px solid var(--line)}
+.split-row .cell:last-child{border-right:none}
+.split-row .cell.del{background:rgba(239,68,68,.14);color:var(--bad)}
+.split-row .cell.add{background:rgba(34,197,94,.14);color:var(--ok)}
+.split-row .cell.filler{background:repeating-linear-gradient(45deg,transparent,transparent 6px,
+  var(--line) 6px,var(--line) 7px);opacity:.5}
+.split-hunk{padding:.3rem 1.1rem;color:var(--muted);background:var(--code);
+  font:12px ui-monospace,Consolas,"Courier New",monospace}
 .diskline{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;
   padding:.5rem .6rem;border-bottom:1px solid var(--line);font-size:.78rem;color:var(--muted)}
 .diskline .grow{flex:1}
@@ -551,9 +566,16 @@ a{color:var(--accent)}
   </section>
 
   <div class="modalback" id="approveBack">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="approveTitle">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="approveTitle" id="approveModal">
       <h3 id="approveTitle">Apply this change?</h3>
-      <div class="body"><pre id="approveBody"></pre></div>
+      <div class="diffToggle" id="diffToggle" style="display:none">
+        <button id="viewUnified">unified</button>
+        <button id="viewSplit">side by side (old | new)</button>
+      </div>
+      <div class="body">
+        <pre id="approveBody"></pre>
+        <div id="approveSplit" style="display:none"></div>
+      </div>
       <div class="foot">
         <span class="sub" id="approveNote">Nothing is written until you say yes.</span>
         <button class="ghost" id="approveNo">no, skip it</button>
@@ -1030,9 +1052,113 @@ function watchForApproval(line) {
   openApproval(match[1], match[2]);
 }
 
-function openApproval(title, file) {
-  $('approveTitle').textContent = 'Apply this change to ' + file + '?';
-  $('approveNote').textContent = title;
+/**
+ * Which view the approval dialog shows: the raw unified diff, or a
+ * side-by-side old-versus-new layout like an editor's diff view.
+ *
+ * Kept across proposals on purpose - picking "side by side" once should
+ * not need repeating for the next fix in the same session.
+ */
+let diffView = 'unified';
+
+/**
+ * Pull just the diff out of everything printed for this proposal.
+ *
+ * printProposals (fix.ts) writes title, rationale, the diff, then risks,
+ * all through the same channel the unified view already reads. The diff
+ * itself always starts with its "--- a/<file>" header - that is the one
+ * line nothing else printed could produce - and ends where the risks
+ * section begins. Returns undefined when no such header is found, e.g. a
+ * manual-only fix that has no diff to show at all.
+ */
+function extractDiffBlock(lines) {
+  const start = lines.findIndex((l) => /^ {0,6}---\\s+a\\//.test(l));
+  if (start === -1) return undefined;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/risks if this is wrong:/i.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start, end);
+}
+
+/**
+ * Turn unified-diff lines into aligned old/new rows.
+ *
+ * Consecutive removals and additions between two context lines are one
+ * "block" - filled to the same row count so the shorter side gets blank
+ * filler rows, the same trick an editor's diff view uses to keep both
+ * columns lined up. The fixes this tool generates are close to pure
+ * insertions, so most blocks here are all-addition: old stays blank,
+ * new shows the line, and the two columns stay in step regardless.
+ *
+ * The five-character strip matches fix.ts's own '     ' + line indent
+ * exactly - a diff line's own marker (its leading +, - or context space)
+ * must survive untouched, or context lines become unrecognisable.
+ */
+function buildSplitRows(diffLines) {
+  const body = diffLines.slice(2).map((l) => l.replace(/^ {5}/, ''));
+  const rows = [];
+  let dels = [];
+  let adds = [];
+  const flush = () => {
+    const n = Math.max(dels.length, adds.length);
+    for (let i = 0; i < n; i++) rows.push({ old: dels[i], new: adds[i] });
+    dels = [];
+    adds = [];
+  };
+  for (const raw of body) {
+    if (raw.indexOf('@@') === 0) {
+      flush();
+      rows.push({ hunk: raw });
+    } else if (raw.indexOf(' ') === 0) {
+      flush();
+      const text = raw.slice(1);
+      rows.push({ old: text, new: text, ctx: true });
+    } else if (raw.indexOf('-') === 0) {
+      dels.push(raw.slice(1));
+    } else if (raw.indexOf('+') === 0) {
+      adds.push(raw.slice(1));
+    }
+  }
+  flush();
+  return rows;
+}
+
+function renderSplitHtml(rows) {
+  const cell = (text, cls) =>
+    '<span class="cell ' + cls + '">' +
+    (text === undefined || text === '' ? '&nbsp;' : esc(text)) +
+    '</span>';
+  return rows
+    .map((r) => {
+      if (r.hunk !== undefined) return '<div class="split-hunk">' + esc(r.hunk) + '</div>';
+      const oldCls = r.ctx === true ? '' : r.old === undefined ? 'filler' : 'del';
+      const newCls = r.ctx === true ? '' : r.new === undefined ? 'filler' : 'add';
+      return '<div class="split-row">' + cell(r.old, oldCls) + cell(r.new, newCls) + '</div>';
+    })
+    .join('');
+}
+
+function renderApproveBody() {
+  const diffLines = extractDiffBlock(proposalLines);
+  const canSplit = diffLines !== undefined;
+
+  $('diffToggle').style.display = canSplit ? 'flex' : 'none';
+  $('viewUnified').classList.toggle('on', diffView !== 'split');
+  $('viewSplit').classList.toggle('on', diffView === 'split');
+
+  const useSplit = diffView === 'split' && canSplit;
+  $('approveModal').classList.toggle('split', useSplit);
+  $('approveBody').style.display = useSplit ? 'none' : 'block';
+  $('approveSplit').style.display = useSplit ? 'block' : 'none';
+
+  if (useSplit) {
+    $('approveSplit').innerHTML = renderSplitHtml(buildSplitRows(diffLines));
+    return;
+  }
 
   // Colour the diff so additions and removals are distinguishable at a
   // glance - the whole reason for showing it rather than summarising it.
@@ -1046,6 +1172,12 @@ function openApproval(title, file) {
       return '<span class="dline ' + cls + '">' + esc(line) + '</span>';
     })
     .join('\\n');
+}
+
+function openApproval(title, file) {
+  $('approveTitle').textContent = 'Apply this change to ' + file + '?';
+  $('approveNote').textContent = title;
+  renderApproveBody();
 
   $('approveBack').classList.add('on');
   $('approveYes').focus();
@@ -1068,6 +1200,14 @@ window.ACTIONS = ACTIONS;
 
 $('approveYes').addEventListener('click', () => answerApproval(true));
 $('approveNo').addEventListener('click', () => answerApproval(false));
+$('viewUnified').addEventListener('click', () => {
+  diffView = 'unified';
+  renderApproveBody();
+});
+$('viewSplit').addEventListener('click', () => {
+  diffView = 'split';
+  renderApproveBody();
+});
 
 /* Escape means no. The safe answer is the easy one. */
 document.addEventListener('keydown', (e) => {
