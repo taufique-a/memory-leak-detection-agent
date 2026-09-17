@@ -9,7 +9,7 @@
 import { startFixtureServer } from '../src/runtime/fixtures/server';
 import { buildSpaFixture } from '../src/runtime/fixtures/spaFixture';
 import { isChromeAvailable } from '../src/runtime/browser';
-import { joinUrl, runScenario } from '../src/scenario/runner';
+import { joinUrl, looksLikeTimeout, runScenario, withMoreTime } from '../src/scenario/runner';
 import type { Scenario, Step } from '../src/scenario/types';
 import { describeStep, validateScenario } from '../src/scenario/validate';
 
@@ -231,6 +231,40 @@ describe('joinUrl', () => {
     ['http://x:4200//', '//a', 'http://x:4200//a'],
   ])('%s + %s = %s', (base, pathPart, expected) => {
     expect(joinUrl(base, pathPart)).toBe(expected);
+  });
+});
+
+describe('looksLikeTimeout', () => {
+  it('recognises Playwright\'s own timeout wording', () => {
+    expect(looksLikeTimeout('page.waitForSelector: Timeout 60000ms exceeded.')).toBe(true);
+    expect(looksLikeTimeout('page.click: Timeout 30000ms exceeded.')).toBe(true);
+  });
+
+  it('does not mistake an unrelated failure for a timeout', () => {
+    expect(looksLikeTimeout('No such selector: #missing')).toBe(false);
+    expect(looksLikeTimeout(undefined)).toBe(false);
+  });
+});
+
+describe('withMoreTime', () => {
+  it('scales up the timeout on steps that carry one, floored at 5 minutes', () => {
+    const step: Step = { action: 'waitFor', selector: '#rfid', timeoutMs: 60_000 };
+    const longer = withMoreTime(step, 5);
+    expect(longer).not.toBe(step); // original step is left untouched
+    expect(longer).toEqual({ action: 'waitFor', selector: '#rfid', timeoutMs: 300_000 });
+  });
+
+  it('assumes a 30s default when the step set no timeout of its own', () => {
+    const step: Step = { action: 'click', selector: '#a' };
+    // 30_000 * 5 = 150_000, below the 300_000 floor.
+    expect(withMoreTime(step, 5)).toEqual({ action: 'click', selector: '#a', timeoutMs: 300_000 });
+  });
+
+  it('leaves step kinds with no timeout of their own alone', () => {
+    // A goto uses Playwright's own navigation timeout, not a step field -
+    // there is nothing here to scale.
+    const step: Step = { action: 'goto', path: '/' };
+    expect(withMoreTime(step, 5)).toBe(step);
   });
 });
 

@@ -165,7 +165,43 @@ export async function runScenario(
       for (let i = 0; i < scenario.setup.length; i++) {
         const step = scenario.setup[i];
         if (step === undefined) continue;
-        const result = await executeStep(session, scenario, step, -1, i, options, screenshots);
+        let result = await executeStep(session, scenario, step, -1, i, options, screenshots);
+
+        /**
+         * A setup step that timed out gets ONE retry with far more patience
+         * before it is treated as broken.
+         *
+         * WHY THIS IS A REAL FAILURE MODE, NOT A GUESS
+         * A cold Angular dev server compiles a lazy-loaded route's chunk on
+         * its FIRST visit, on demand - and a generated scenario's control
+         * route is exactly the kind of page nobody happened to open first.
+         * IOSense's own /rfids module is lazy-loaded; a 60-second wait for
+         * its marker can fail for that reason alone, with a selector that
+         * is completely correct. A route that has not finished compiling is
+         * not a verdict on the scenario, the same way a build that has not
+         * finished is not a verdict on the code (see verify/checks.ts).
+         *
+         * WHY ONLY SETUP, AND ONLY ONCE
+         * Setup runs once per scenario, not once per iteration, so getting
+         * this wrong costs seconds, not minutes multiplied by however many
+         * iterations were requested. That asymmetry is why the retry does
+         * not extend into the measured loop below: a per-iteration step
+         * that silently ran five times longer would make a run's total
+         * time unpredictable, and a real per-iteration timeout problem is
+         * something worth knowing about, not something to paper over.
+         */
+        if (!result.ok && looksLikeTimeout(result.error)) {
+          const longer = withMoreTime(step, 5);
+          if (longer !== step) {
+            report(
+              `  ${result.description} timed out after ${Math.round(result.durationMs / 1000)}s - ` +
+                'retrying once with more patience, in case this route just needed to compile ' +
+                'for the first time',
+            );
+            result = await executeStep(session, scenario, longer, -1, i, options, screenshots);
+          }
+        }
+
         stepResults.push(result);
 
         /**
@@ -494,6 +530,32 @@ async function applyAuth(
  * Returns as soon as two consecutive reads agree, so a page that does not
  * redirect costs one extra poll interval rather than the whole budget.
  */
+/** Does this look like a Playwright timeout, rather than some other failure? */
+export function looksLikeTimeout(message: string | undefined): boolean {
+  return message !== undefined && /Timeout \d+ms exceeded/i.test(message);
+}
+
+/**
+ * The same step, with several times more time to work with.
+ *
+ * Only the step kinds that carry their own `timeoutMs` can be scaled - a
+ * `goto` uses Playwright's own navigation timeout and is not touched here.
+ * Floored at 5 minutes so scaling up a short default (Playwright's own is
+ * 30s) still buys a cold compile a real chance.
+ */
+export function withMoreTime(step: Step, factor: number): Step {
+  if (
+    step.action !== 'click' &&
+    step.action !== 'clickText' &&
+    step.action !== 'waitFor' &&
+    step.action !== 'waitForText'
+  ) {
+    return step;
+  }
+  const current = step.timeoutMs ?? 30_000;
+  return { ...step, timeoutMs: Math.max(current * factor, 300_000) };
+}
+
 async function waitForUrlToSettle(
   session: BrowserSession,
   budgetMs: number,
