@@ -175,14 +175,11 @@ export class DemoComponent implements OnDestroy {
     ).toContain('already has an ngOnDestroy');
   });
 
-  it('REFUSES a subscribe inside a nested callback', () => {
-    /**
-     * `this` inside a nested function may not be the component at all, so
-     * wrapping the call in this.subscriptions.add() could reference the
-     * wrong object - or nothing.
-     */
-    expect(
-      refuse(`import { Component } from '@angular/core';
+  it('wraps a subscribe nested inside an arrow callback - `this` is still the component', () => {
+    // An arrow function does not rebind `this`, so a subscribe inside
+    // another subscribe's arrow handler - the normal RxJS shape - is just
+    // as safe to wrap as one at the top of the method.
+    const out = apply(`import { Component } from '@angular/core';
 @Component({ selector: 'app-demo', template: '' })
 export class DemoComponent {
   start(): void {
@@ -191,8 +188,24 @@ export class DemoComponent {
     });
   }
 }
+`);
+    expect(out).toContain('this.subscriptions.add(this.ready$.pipe(first()).subscribe(');
+    expect(out).toContain('this.subscriptions.add(this.service.values$.subscribe(');
+  });
+
+  it('REFUSES a subscribe inside a real function() callback, where `this` rebinds', () => {
+    expect(
+      refuse(`import { Component } from '@angular/core';
+@Component({ selector: 'app-demo', template: '' })
+export class DemoComponent {
+  start(): void {
+    this.items.forEach(function (item) {
+      item.changed$.subscribe(() => {});
+    });
+  }
+}
 `),
-    ).toContain('nested callback');
+    ).toContain('nested function()');
   });
 
   it('leaves a subscription that is already stored somewhere', () => {

@@ -27,7 +27,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { addCleanup } from './addCleanup';
-import { addOnDestroyWithUnsubscribe, isFailure } from './addOnDestroy';
+import { DEFINITION_BY_KIND } from '../analyzer/resources';
 import type { CorrelatedFinding } from '../types/correlation';
 import type { Finding } from '../types/finding';
 
@@ -111,29 +111,17 @@ export function proposeFix(
   }
 
   /**
-   * No ngOnDestroy at all, but subscriptions that need one.
-   *
-   * The larger of the two generated changes: it creates the hook, the
-   * Subscription that feeds it, the interface and the imports. See
-   * addOnDestroy.ts for what it refuses to touch.
+   * Everything else: try to release whatever THIS finding's kind names,
+   * along with anything else unmanaged in the same class - see addCleanup.ts
+   * for why one pass covers every resource kind at once. Only a class whose
+   * OWN kind came back unaddressed (its specific reason is in `skipped`)
+   * falls through to a manual description.
    */
-  const missingOnDestroy = finding.lifecycleIssues?.find((i) => i.code === 'ONDESTROY_MISSING');
-  let createRefusal: string | undefined;
-  if (missingOnDestroy !== undefined) {
-    const created = createOnDestroy(finding, source, absolute);
-    if (created !== undefined && created.safety !== 'manual-only') return created;
-    createRefusal = created?.rationale;
-  }
-
-  /**
-   * The general case: subscriptions or intervals nothing releases, in a
-   * class that may already have an ngOnDestroy doing other teardown.
-   */
-  const cleanup = CLEANUP_KINDS.has(finding.kind) ? createCleanup(finding, source, absolute) : undefined;
-  if (cleanup !== undefined && 'newContent' in cleanup) return cleanup;
+  const cleanup = createCleanup(finding, source, absolute);
+  if (!('reason' in cleanup)) return cleanup;
 
   const emptyOnDestroy = finding.lifecycleIssues?.find((i) => i.code === 'ONDESTROY_EMPTY');
-  if (emptyOnDestroy !== undefined && cleanup === undefined) {
+  if (emptyOnDestroy !== undefined) {
     return describeManualFix(
       finding,
       'ngOnDestroy exists but is empty. What belongs in it depends on what this ' +
@@ -141,28 +129,29 @@ export function proposeFix(
     );
   }
 
-  return describeManualFix(
-    finding,
-    (cleanup !== undefined && 'reason' in cleanup ? cleanup.reason : undefined) ?? createRefusal ?? 'No unambiguous automatic fix exists for this pattern.',
-  );
+  return describeManualFix(finding, cleanup.reason);
 }
 
-const CLEANUP_KINDS: ReadonlySet<string> = new Set(['rxjs.subscription', 'timer.interval']);
-
-function createCleanup(
-  finding: Finding,
-  source: string,
-  absolutePath: string,
-): ProposedFix | { reason: string } {
+function createCleanup(finding: Finding, source: string, absolutePath: string): ProposedFix | { reason: string } {
   const className =
     finding.operations.find((o) => o.className !== undefined)?.className ?? finding.location.className;
   const result = addCleanup(source, path.basename(absolutePath), className);
   if ('reason' in result) return { reason: result.reason };
 
-  const parts: string[] = [];
-  if (result.wrappedSubscriptions > 0) parts.push(`${result.wrappedSubscriptions} subscription(s)`);
-  if (result.clearedIntervals > 0) parts.push(`${result.clearedIntervals} interval timer(s)`);
-  const what = parts.join(' and ');
+  const addressed = result.wrapped[finding.kind];
+  if (addressed === undefined || addressed === 0) {
+    // addCleanup may have fixed OTHER kinds in this class, but not the one
+    // this finding is actually about - that is not a fix for THIS finding.
+    return {
+      reason:
+        result.skipped[finding.kind] ??
+        `${finding.location.className} no longer has an unmanaged ${labelForKind(finding.kind)} for this ` +
+          'to release - it may already have been fixed by an earlier change in this session.',
+    };
+  }
+
+  const parts = describeWrapped(result.wrapped);
+  const what = parts.join(', ');
 
   return {
     findingId: finding.id,
@@ -192,59 +181,15 @@ function createCleanup(
   };
 }
 
-/**
- * Create an ngOnDestroy that releases what this class subscribes to.
- *
- * Bigger than the append-two-lines fix, and marked 'behavioural' rather
- * than 'additive' because it genuinely changes teardown: subscriptions
- * that used to outlive the component now stop with it. That is the point,
- * and it is also exactly what breaks a component that was relying on one
- * surviving - so the risks say so and nothing applies without approval.
- */
-function createOnDestroy(
-  finding: Finding,
-  source: string,
-  absolutePath: string,
-): ProposedFix | undefined {
-  const className = finding.operations.find((o) => o.className !== undefined)?.className;
-  if (className === undefined) {
-    return describeManualFix(
-      finding,
-      'The subscriptions are not inside a class, so there is no lifecycle hook to add.',
-    );
-  }
+function labelForKind(kind: Finding['kind']): string {
+  return DEFINITION_BY_KIND.get(kind)?.label ?? kind;
+}
 
-  const result = addOnDestroyWithUnsubscribe(source, path.basename(absolutePath), className);
-  if (isFailure(result)) return describeManualFix(finding, result.reason);
-
-  const relative = finding.location.file;
-  return {
-    findingId: finding.id,
-    file: relative,
-    title: `Add ngOnDestroy to ${className} and release ${result.wrapped} subscription(s)`,
-    rationale:
-      `${className} starts ${result.wrapped} subscription(s) and never stops them, so each ` +
-      'visit to this page leaves the previous set running. This adds a Subscription that ' +
-      'collects them and an ngOnDestroy that releases it - the pattern the Angular docs ' +
-      'describe, applied to the existing code rather than around it.',
-    safety: 'behavioural',
-    newContent: result.newContent,
-    diff: buildUnifiedDiff(relative, source, result.newContent),
-    functionalRisks: [
-      'Anything relying on one of these subscriptions outliving the component will now stop ' +
-        'when the component does. That is usually the bug being fixed and occasionally the ' +
-        'behaviour somebody wanted.',
-      'The class gains OnDestroy and two imports. If it already implements a lifecycle ' +
-        'interface from somewhere unusual, check the declaration reads correctly.',
-      ...result.notes,
-    ],
-    verificationPlan: [
-      'Build and run the application; the component should behave exactly as before.',
-      'Open and leave this page several times and re-measure - the growth should be gone.',
-      `Read the diff: ${result.wrapped} subscribe() call(s) are now wrapped, and nothing else ` +
-        'in the file changed.',
-    ],
-  };
+/** "3 subscription(s)", "1 chart instance" etc, one entry per kind addCleanup addressed. */
+function describeWrapped(wrapped: Partial<Record<Finding['kind'], number>>): string[] {
+  return Object.entries(wrapped)
+    .filter((entry): entry is [Finding['kind'], number] => (entry[1] ?? 0) > 0)
+    .map(([kind, count]) => `${count} ${labelForKind(kind).toLowerCase()}${count === 1 ? '' : 's'}`);
 }
 
 /* ------------------------------------------------------------------ */
@@ -284,7 +229,8 @@ function fixBrokenDestroySubject(
     // No hook to append to, so create one. This used to be where every
     // IOSense finding stopped - all 30 broken-destroy$ components lack an
     // ngOnDestroy, so every one came back "manual fix required".
-    return createOnDestroy(finding, source, absolutePath);
+    const created = createCleanup(finding, source, absolutePath);
+    return 'reason' in created ? undefined : created;
   }
 
   // Find the opening brace of the method, which may be on a later line.
@@ -391,40 +337,28 @@ function manualInstructionsFor(finding: Finding): string[] {
       ];
     case 'dom.eventListener':
       return [
-        'Store the handler as a bound property, not an inline arrow: ' +
-          'private onResize = () => { ... }',
-        'Register with addEventListener(event, this.onResize).',
-        'In ngOnDestroy: removeEventListener(event, this.onResize).',
-        'removeEventListener matches on function identity, so an inline arrow can ' +
-          'never be removed.',
+        'removeEventListener matches on function identity, so an inline arrow or ' +
+          'function() handler can never be removed - it needs a stable reference first.',
+        'Store the handler as a bound property: private onResize = () => { ... }',
+        'Register with addEventListener(event, this.onResize), then in ngOnDestroy: ' +
+          'removeEventListener(event, this.onResize).',
       ];
-    case 'map.here':
+    default: {
+      const def = DEFINITION_BY_KIND.get(finding.kind);
+      const method = def?.releaseMethods[0] ?? def?.releaseGlobals[0];
+      if (def === undefined || method === undefined) {
+        return [
+          `Release the ${finding.kind} resource in ngOnDestroy.`,
+          'See the "why it leaks" note on the finding for what it retains.',
+        ];
+      }
       return [
-        'Keep the map instance on the component.',
-        'In ngOnDestroy: map.dispose().',
-        'HERE maps hold a WebGL context; browsers cap concurrent contexts near 16, so ' +
-          'leaked maps eventually break rendering as well as memory.',
+        `Keep the ${def.label} instance on the component.`,
+        def.releaseMethods.length > 0
+          ? `In ngOnDestroy: <the instance>.${method}().`
+          : `In ngOnDestroy: ${method}(<the handle>).`,
       ];
-    case 'chart.echarts':
-    case 'chart.amcharts':
-      return [
-        'Keep the chart instance on the component.',
-        'In ngOnDestroy: chart.dispose().',
-        'These libraries hold instances in a global registry keyed by DOM element, so ' +
-          'the element cannot be collected either.',
-      ];
-    case 'chart.highcharts':
-    case 'chart.apex':
-      return ['Keep the chart instance.', 'In ngOnDestroy: chart.destroy().'];
-    case 'net.webSocket':
-      return ['In ngOnDestroy: socket.close().', 'Remove message handlers first.'];
-    case 'thread.worker':
-      return ['In ngOnDestroy: worker.terminate().'];
-    default:
-      return [
-        `Release the ${finding.kind} resource in ngOnDestroy.`,
-        'See the "why it leaks" note on the finding for what it retains.',
-      ];
+    }
   }
 }
 

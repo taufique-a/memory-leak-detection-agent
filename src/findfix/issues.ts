@@ -100,12 +100,24 @@ export function buildIssues(input: BuildIssuesInput): { issues: FindFixIssue[]; 
   const toIssue = (cf: CorrelatedFinding): FindFixIssue =>
     describe(cf, input, angularMajor);
 
-  const confirmed = relevant.filter((cf) => cf.confidence === 'PROVEN' || cf.confidence === 'LIKELY');
-  const issues = confirmed.slice(0, 6).map(toIssue);
-  const watchList = relevant
-    .filter((cf) => cf.confidence === 'POSSIBLE' && inScope(cf))
-    .slice(0, 5)
-    .map(toIssue);
+  const confirmed = relevant.filter((cf) => cf.confidence === 'PROVEN' || cf.confidence === 'LIKELY').map(toIssue);
+
+  /**
+   * Only ever show an issue the agent can actually act on.
+   *
+   * There is no manual-fix path in this product - a card whose only offer
+   * is "here is what you would need to write yourself" is exactly the
+   * dead end that path was removed to avoid. A confirmed leak the fixer
+   * genuinely cannot resolve automatically (a handful of patterns remain,
+   * see propose.ts) is still real and still worth knowing about, so it
+   * goes in the watch list - visible, with the evidence, but without a
+   * button that does nothing.
+   */
+  const issues = confirmed.filter((i) => i.canFix).slice(0, 6);
+  const watchList = confirmed
+    .filter((i) => !i.canFix)
+    .concat(relevant.filter((cf) => cf.confidence === 'POSSIBLE' && inScope(cf)).map(toIssue))
+    .slice(0, 5);
 
   return { issues, watchList };
 }

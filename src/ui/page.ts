@@ -441,6 +441,14 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 .splithead{display:flex;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
   border-bottom:1px solid var(--line)}
 .splithead span{flex:1 1 50%;padding:.35rem .7rem}
+.fixblock{border-bottom:6px solid var(--bg)}
+.fixblock:last-child{border-bottom:0}
+.selectbar{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;padding:.5rem .1rem;
+  margin:-.3rem 0 .6rem;font-size:.85rem}
+.selectbar label{flex-direction:row;align-items:center;gap:.4rem;font-size:.85rem;color:var(--fg)}
+.selectbar .grow{flex:1}
+.issue .pick{padding:.6rem 1rem;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:.5rem}
+.issue .pick label{flex-direction:row;align-items:center;gap:.5rem;font-size:.85rem;color:var(--fg)}
 
 /* ---- motion ---- */
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -660,23 +668,11 @@ a{color:var(--accent)}
   <div class="modalback" id="fixBack">
     <div class="modal split" role="dialog" aria-modal="true" aria-labelledby="fixTitle" id="fixModal">
       <h3 id="fixTitle">Review the fix</h3>
-      <div class="body">
-        <div class="fixsec">
-          <div class="lbl2">File being changed</div>
-          <code id="fixFile"></code>
-          <button class="linkish" id="fixOpen" type="button">open in VS Code</button>
-        </div>
-        <div class="diffToggle" id="diffToggle">
-          <button id="viewSplit" type="button">side by side (existing | proposed)</button>
-          <button id="viewUnified" type="button">unified</button>
-        </div>
-        <div class="splithead" id="fixSplitHead"><span>Existing code</span><span>Proposed code</span></div>
-        <div id="fixSplit"></div>
-        <pre id="fixUnified" style="display:none"></pre>
-        <div class="fixsec"><div class="lbl2">What this changes</div><div id="fixExplain"></div></div>
-        <div class="fixsec"><div class="lbl2">Why this should resolve the issue</div><div id="fixWhy"></div></div>
-        <div class="fixsec"><div class="lbl2">What could be affected</div><ul id="fixRisks"></ul></div>
+      <div class="diffToggle" id="diffToggle">
+        <button id="viewSplit" type="button">side by side (existing | proposed)</button>
+        <button id="viewUnified" type="button">unified</button>
       </div>
+      <div class="body" id="fixBody"></div>
       <div class="foot">
         <span class="sub" id="fixNote">Nothing is written until you press Apply Fix.</span>
         <button class="ghost" id="fixCancel" type="button">cancel</button>
@@ -1539,6 +1535,8 @@ function openLink(file, line) {
 }
 
 let ffRound = null;
+/** Issue ids currently checked, for "apply N selected fixes". */
+let ffSelected = new Set();
 
 function renderRound(r) {
   ffRound = r;
@@ -1571,6 +1569,8 @@ function renderRound(r) {
       '</div>';
   }
 
+  const fixable = r.issues.filter((i) => !appliedChange(i.id));
+  if (fixable.length > 1) html += selectBar(fixable);
   html += r.issues.map(issueCard).join('');
 
   if (!r.issues.length && m && m.verdict === 'GROWING') {
@@ -1585,24 +1585,53 @@ function renderRound(r) {
 
   if (r.watchList.length) {
     html += '<details class="banner"><summary>Also worth a look: ' + r.watchList.length +
-      ' place(s) that start something without stopping it, which this measurement did not implicate</summary>' +
+      ' place(s) the agent could not tie a working automatic fix to</summary>' +
       '<ul class="state">' + r.watchList.map((w) => '<li>' + esc(w.issue) + ' — ' + openLink(w.file, w.line) + '</li>').join('') +
       '</ul></details>';
   }
 
   $('ffResult').innerHTML = html;
+  updateSelectBar();
 }
 
 /** The change applied for this issue in this scan, if it is still in place. */
 function appliedChange(id) {
-  return (ff.changes || []).filter((c) => c.findingId === id && !c.undoneAt).pop();
+  return (ff.changes || []).filter((c) => (c.findingIds || []).includes(id) && !c.undoneAt).pop();
+}
+
+/** The bar above the issue cards: select all, how many are picked, apply them together. */
+function selectBar() {
+  return '<div class="selectbar">' +
+    '<label><input type="checkbox" id="ffSelectAll"> select all</label>' +
+    '<span class="sub grow" id="ffSelectCount"></span>' +
+    '<button id="ffApplySelected" disabled>Apply selected fixes</button>' +
+    '</div>';
+}
+
+function updateSelectBar() {
+  const bar = $('ffSelectCount');
+  if (!bar) return;
+  const n = ffSelected.size;
+  bar.textContent = n === 0 ? 'Nothing selected' : n === 1 ? '1 fix selected' : n + ' fixes selected';
+  const applyBtn = $('ffApplySelected');
+  if (applyBtn) applyBtn.disabled = n === 0 || !!currentRun;
+  const all = $('ffSelectAll');
+  if (all) {
+    const boxes = [...document.querySelectorAll('.issue [data-select]')];
+    all.checked = boxes.length > 0 && boxes.every((b) => b.checked);
+  }
 }
 
 function issueCard(issue) {
   const sure = issue.confidence === 'PROVEN'
     ? '<span class="pill bad">confirmed</span>'
     : '<span class="pill warn">likely</span>';
+  const applied = appliedChange(issue.id);
   return '<div class="issue">' +
+    (applied
+      ? ''
+      : '<div class="pick"><label><input type="checkbox" data-select="' + esc(issue.id) + '"' +
+        (ffSelected.has(issue.id) ? ' checked' : '') + '> select for a combined fix</label></div>') +
     '<h3>' + esc(issue.issue) + sure + '</h3>' +
     section('Why it may be happening', '<p>' + esc(issue.why) + '</p>') +
     section('Affected file / component', '<p>' + openLink(issue.file, issue.line) + ' &middot; ' +
@@ -1614,45 +1643,51 @@ function issueCard(issue) {
         : '')) +
     section('Suggested change', '<p>' + esc(issue.suggestedChange) + '</p>') +
     '<div class="sec fixrow">' +
-    (appliedChange(issue.id)
-      ? '<span class="pill ok">fix applied</span><span class="sub">' +
-        esc(appliedChange(issue.id).title) + ' — see the result above.</span>'
-      : issue.canFix
-      ? '<button data-fix="' + esc(issue.id) + '">Fix with AI</button>' +
-        '<span class="sub">You see the exact change before anything is written.</span>'
-      : '<button disabled>Fix with AI</button><span class="sub">The agent will not change this one on its own: ' +
-        esc(issue.blockedReason || '') + '</span>') +
+    (applied
+      ? '<span class="pill ok">fix applied</span><span class="sub">' + esc(applied.title) + ' — see the result above.</span>'
+      : '<button data-fix="' + esc(issue.id) + '">Fix with AI</button>' +
+        '<span class="sub">You see the exact change before anything is written.</span>') +
     '</div></div>';
 }
 
 function renderVerify(v) {
-  ff.changes = (ff.changes || []).filter((c) => c.index !== v.change.index).concat([v.change]);
+  ff.changes = (ff.changes || []).filter((c) => !v.changes.some((n) => n.index === c.index)).concat(v.changes);
   saveFF();
+  ffSelected = new Set();
   if (ffRound) renderRound(ffRound);
   const tone = v.status === 'VERIFIED' ? 'ok' : v.status === 'CHECKS_FAILED' ? 'bad' : 'warn';
   const c = v.comparison;
   const failed = v.checks.find((ch) => !ch.passed && !ch.skipped && ch.tail);
+  const files = v.changes.map((ch) => ch.file);
   $('ffVerify').innerHTML = '<div class="verdict ' + tone + '"><h3>' + esc(v.headline) + '</h3>' +
     '<p>' + esc(v.explanation) + '</p>' +
     '<div class="facts2">' +
-      fact('Changed', openLink(v.change.file, 0)) +
+      fact('Changed', files.map((f) => openLink(f, 0)).join(', ')) +
       v.checks.map((ch) => fact(ch.name === 'build' ? 'Build' : ch.name,
         ch.skipped ? 'no build script' : ch.passed ? 'passed' : 'failed')).join('') +
       (c ? fact('Left behind per visit', esc(perVisitText(c.beforeBytesPerIteration)) + ' → ' +
         esc(perVisitText(c.afterBytesPerIteration))) : '') +
-      fact('The flagged code', v.findingGone ? 'no longer flagged' : 'still flagged') +
+      fact('Flagged code resolved', v.resolvedIssues.length + ' of ' + countIssuesIn(v.changes)) +
     '</div>' +
     (failed ? '<details><summary class="sub">build output</summary><div class="snip">' + esc(failed.tail) +
       '</div></details>' : '') +
     '<div class="golive" style="margin-top:.6rem">' +
-      '<button class="ghost" data-open="' + esc(v.change.file) + '" data-line="1">Open in VS Code</button>' +
-      '<button' + (v.next === 'undo' ? '' : ' class="ghost"') + ' id="ffUndo">Undo this fix</button>' +
+      files.map((f) => '<button class="ghost" data-open="' + esc(f) + '" data-line="1">Open ' + esc(f.split('/').pop()) +
+        ' in VS Code</button>').join('') +
+      '<button' + (v.next === 'undo' ? '' : ' class="ghost"') + ' id="ffUndo">Undo ' +
+      (v.changes.length > 1 ? 'these fixes' : 'this fix') + '</button>' +
     '</div>' +
     (v.next === 'next-round'
       ? '<div class="sub" style="margin-top:.5rem">Memory is still being held, so the agent is scanning ' +
         'again for the next cause.</div>'
       : '') +
     '</div>' + changesList();
+}
+
+function countIssuesIn(changes) {
+  const ids = new Set();
+  for (const c of changes) for (const id of c.findingIds || []) ids.add(id);
+  return ids.size;
 }
 
 /** Every change made in this scan, and why - the record the brief asks for. */
@@ -1667,44 +1702,67 @@ function changesList() {
 
 /* ---- Fix with AI, and the review window ---- */
 
-async function prepareFixUI(issueId, button) {
-  if (currentRun || !ff.session) return;
-  button.disabled = true;
-  button.innerHTML = '<span class="spinner"></span>Preparing fix...';
+/** Prepare and review one or many selected issues together. */
+async function prepareFixUI(issueIds, button, busyLabel) {
+  if (currentRun || !ff.session || issueIds.length === 0) return;
+  const originalLabel = button ? button.textContent : '';
+  if (button) {
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner"></span>' + (busyLabel || 'Preparing fix...');
+  }
   if (!ffStages.prepare) resetStages('fix');
   $('ffProgress').style.display = 'block';
-  setStage('prepare', 'start', 'looking at the issue again, against the file as it is now');
+  setStage('prepare', 'start', 'looking at ' + (issueIds.length === 1 ? 'the issue' : issueIds.length + ' issues') + ' again, against the files as they are now');
 
   let data;
   try {
-    data = await api('/api/findfix/fix', {
+    data = await api('/api/findfix/select', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ session: ff.session, issue: issueId }),
+      body: JSON.stringify({ session: ff.session, issues: issueIds }),
     });
   } catch {
     data = { error: 'Could not reach the server.' };
   }
-  button.disabled = false;
-  button.textContent = 'Fix with AI';
+  if (button) {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
   if (data.error) {
     setStage('prepare', 'fail', data.error);
     return;
   }
-  setStage('prepare', 'done', data.title);
+  setStage('prepare', 'done', data.files.length === 1 ? data.files[0].title : data.files.length + ' file(s) to change');
   openFixModal(data);
 }
 
-function openFixModal(p) {
-  ffFix = p;
-  $('fixTitle').textContent = 'Review the fix — ' + p.title;
-  $('fixFile').textContent = p.file;
-  $('fixExplain').textContent = p.explanation;
-  $('fixWhy').textContent = p.whyItResolves;
-  $('fixRisks').innerHTML = p.risks.map((r) => '<li>' + esc(r) + '</li>').join('');
-  $('fixNote').textContent =
-    'Nothing is written until you press Apply Fix. A copy of the original is kept, so Undo puts it back exactly.' +
-    (p.otherChanges ? ' Your project has ' + p.otherChanges + ' other uncommitted change(s); they are not touched.' : '');
+function openFixModal(data) {
+  ffFix = data;
+  const n = data.files.length;
+  $('fixTitle').textContent = n === 1 ? 'Review the fix — ' + data.files[0].title : 'Review ' + n + ' fixes, across ' + n + ' file(s)';
+  $('fixApply').textContent = n === 1 ? 'Apply Fix' : 'Apply ' + n + ' Fixes';
+  const otherNote = data.otherChanges
+    ? ' Your project has ' + data.otherChanges + ' other uncommitted change(s); they are not touched.'
+    : '';
+  $('fixNote').textContent = 'Nothing is written until you press Apply. A copy of each original is kept, so Undo puts them back exactly.' + otherNote;
+
+  $('fixBody').innerHTML = data.files.map((f, i) =>
+    '<div class="fixblock">' +
+      '<div class="fixsec">' +
+        '<div class="lbl2">File being changed</div>' +
+        '<code>' + esc(f.file) + '</code> ' +
+        '<button class="linkish" data-open-in-modal="' + esc(f.file) + '" type="button">open in VS Code</button>' +
+      '</div>' +
+      '<div class="splithead" data-splithead="' + i + '"><span>Existing code</span><span>Proposed code</span></div>' +
+      '<div data-split="' + i + '"></div>' +
+      '<pre data-unified="' + i + '" style="display:none"></pre>' +
+      '<div class="fixsec"><div class="lbl2">What this changes</div><div>' + esc(f.explanation) + '</div></div>' +
+      '<div class="fixsec"><div class="lbl2">Why this should resolve the issue</div><div>' + esc(f.whyItResolves) + '</div></div>' +
+      '<div class="fixsec"><div class="lbl2">What could be affected</div><ul>' +
+        f.risks.map((r) => '<li>' + esc(r) + '</li>').join('') + '</ul></div>' +
+    '</div>'
+  ).join('');
+
   renderFixDiff();
   $('fixBack').classList.add('on');
   $('fixApply').focus();
@@ -1761,20 +1819,8 @@ function renderSplitHtml(rows) {
   }).join('');
 }
 
-function renderFixDiff() {
-  const lines = ffFix.diff.split('\\n');
-  const split = diffView === 'split';
-  $('viewSplit').classList.toggle('on', split);
-  $('viewUnified').classList.toggle('on', !split);
-  $('fixSplitHead').style.display = split ? 'flex' : 'none';
-  $('fixSplit').style.display = split ? 'block' : 'none';
-  $('fixUnified').style.display = split ? 'none' : 'block';
-  if (split) {
-    $('fixSplit').innerHTML = renderSplitHtml(buildSplitRows(lines));
-    return;
-  }
-  // Coloured, so additions and removals are distinguishable at a glance.
-  $('fixUnified').innerHTML = lines.map((line) => {
+function renderUnifiedHtml(lines) {
+  return lines.map((line) => {
     let cls = '';
     if (/^\\+/.test(line) && !/^\\+\\+\\+/.test(line)) cls = 'add';
     else if (/^-/.test(line) && !/^---/.test(line)) cls = 'del';
@@ -1783,17 +1829,38 @@ function renderFixDiff() {
   }).join('\\n');
 }
 
+/** Re-render every file block's diff area in whichever view is current. */
+function renderFixDiff() {
+  const split = diffView === 'split';
+  $('viewSplit').classList.toggle('on', split);
+  $('viewUnified').classList.toggle('on', !split);
+
+  ffFix.files.forEach((f, i) => {
+    const lines = f.diff.split('\\n');
+    const splitEl = document.querySelector('[data-split="' + i + '"]');
+    const unifiedEl = document.querySelector('[data-unified="' + i + '"]');
+    const headEl = document.querySelector('[data-splithead="' + i + '"]');
+    if (!splitEl || !unifiedEl) return;
+    headEl.style.display = split ? 'flex' : 'none';
+    splitEl.style.display = split ? 'block' : 'none';
+    unifiedEl.style.display = split ? 'none' : 'block';
+    if (split) splitEl.innerHTML = renderSplitHtml(buildSplitRows(lines));
+    else unifiedEl.innerHTML = renderUnifiedHtml(lines);
+  });
+}
+
 async function applyFix() {
-  const p = ffFix;
+  const data = ffFix;
   closeFixModal();
-  if (!p || currentRun) return;
+  if (!data || currentRun) return;
   resetStages('fix');
-  ffStages.prepare.text = p.title;
+  ffStages.prepare.text = data.files.length === 1 ? data.files[0].title : data.files.length + ' file(s)';
   renderStages();
-  $('ffProgressTitle').textContent = 'Applying and verifying: ' + p.title;
+  $('ffProgressTitle').textContent = 'Applying and verifying: ' +
+    (data.files.length === 1 ? data.files[0].title : data.files.length + ' fixes');
   $('ffVerify').innerHTML = '';
   $('ffProgress').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  const ok = await startAction('findfixApply', { session: ff.session, issue: p.issue, expect: p.expect });
+  const ok = await startAction('findfixApply', { session: ff.session });
   if (!ok) setStage('apply', 'fail', 'could not start - see the console');
 }
 
@@ -1816,7 +1883,10 @@ async function openFile(file, line) {
 
 $('fixApply').addEventListener('click', applyFix);
 $('fixCancel').addEventListener('click', closeFixModal);
-$('fixOpen').addEventListener('click', () => { if (ffFix) openFile(ffFix.file, 1); });
+$('fixBody').addEventListener('click', (e) => {
+  const t = e.target.closest('[data-open-in-modal]');
+  if (t) openFile(t.getAttribute('data-open-in-modal'), 1);
+});
 $('viewSplit').addEventListener('click', () => { diffView = 'split'; renderFixDiff(); });
 $('viewUnified').addEventListener('click', () => { diffView = 'unified'; renderFixDiff(); });
 
@@ -1828,14 +1898,30 @@ $('fixBack').addEventListener('click', (e) => {
   if (e.target === $('fixBack')) closeFixModal();
 });
 
-/* One listener for every button the results draw. */
+/* One listener for every button and checkbox the results draw. */
 $('page-fix').addEventListener('click', (e) => {
-  const t = e.target.closest('[data-open],[data-fix],#ffUndo,#ffRescan');
-  if (!t) return;
-  if (t.hasAttribute('data-open')) openFile(t.getAttribute('data-open'), t.getAttribute('data-line'));
-  else if (t.hasAttribute('data-fix')) prepareFixUI(t.getAttribute('data-fix'), t);
-  else if (t.id === 'ffUndo') undoFix();
-  else if (t.id === 'ffRescan' && ff.session && !currentRun) startFind();
+  const t = e.target.closest('[data-open],[data-fix],#ffUndo,#ffRescan,#ffApplySelected');
+  if (t) {
+    if (t.hasAttribute('data-open')) openFile(t.getAttribute('data-open'), t.getAttribute('data-line'));
+    else if (t.hasAttribute('data-fix')) prepareFixUI([t.getAttribute('data-fix')], t);
+    else if (t.id === 'ffUndo') undoFix();
+    else if (t.id === 'ffRescan' && ff.session && !currentRun) startFind();
+    else if (t.id === 'ffApplySelected') prepareFixUI([...ffSelected], t, 'Preparing fixes...');
+    return;
+  }
+  if (e.target.matches('[data-select]')) {
+    const id = e.target.getAttribute('data-select');
+    if (e.target.checked) ffSelected.add(id);
+    else ffSelected.delete(id);
+    updateSelectBar();
+  } else if (e.target.id === 'ffSelectAll') {
+    for (const box of document.querySelectorAll('.issue [data-select]')) {
+      box.checked = e.target.checked;
+      if (e.target.checked) ffSelected.add(box.getAttribute('data-select'));
+      else ffSelected.delete(box.getAttribute('data-select'));
+    }
+    updateSelectBar();
+  }
 });
 
 /* Put back what the last scan showed, after a reload. */

@@ -117,14 +117,41 @@ export interface FindFixBaseline {
   consoleErrors?: string[];
 }
 
-/** One entry of changes.json. */
-export interface ChangeRecord {
-  index: number;
-  round: number;
-  findingId: string;
+/**
+ * One selected fix, as the server prepared it - written by
+ * POST /api/findfix/select, read by `findfix apply`.
+ *
+ * The client only ever sends WHICH issues it wants; the server regenerates
+ * every diff itself (never trusting a hash or a diff the client sent back)
+ * and records what it showed here, so apply can refuse anything that no
+ * longer matches what was actually reviewed.
+ */
+export interface FindFixSelection {
+  issue: string;
   file: string;
   title: string;
   why: string;
+  /** Hash of the file this selection's diff was generated against. */
+  expect: string;
+}
+
+/** selection-<n>.json - written by the select endpoint, read by apply. */
+export interface FindFixSelectionFile {
+  round: number;
+  selected: FindFixSelection[];
+}
+
+/** One entry of changes.json - one file actually written, in one batch. */
+export interface ChangeRecord {
+  index: number;
+  round: number;
+  /** Every issue this single file change addressed - often more than one. */
+  findingIds: string[];
+  file: string;
+  title: string;
+  why: string;
+  /** All changes applied together are given the same batch number. */
+  batch: number;
   appliedAt: string;
   beforeHash: string;
   afterHash: string;
@@ -135,20 +162,21 @@ export interface ChangeRecord {
 
 export type VerifyStatus = 'VERIFIED' | 'STILL_ISSUE' | 'CHECKS_FAILED';
 
-/** verify-<n>.json */
+/** verify-<n>.json - one verification of one batch, however many files it touched. */
 export interface FindFixVerification {
   schemaVersion: 1;
   session: string;
   round: number;
-  change: ChangeRecord;
+  batch: number;
+  changes: ChangeRecord[];
   status: VerifyStatus;
   headline: string;
   explanation: string;
   checks: Array<{ name: string; passed: boolean; skipped: boolean; durationMs: number; tail?: string }>;
   checksPassed: boolean;
   comparison?: VerificationComparison;
-  /** Did the static finding itself disappear from the changed file? */
-  findingGone: boolean;
+  /** Which of the ORIGINALLY SELECTED issues are no longer flagged by a fresh scan. */
+  resolvedIssues: string[];
   /** 'done', or what the UI should do next. */
   next: 'done' | 'next-round' | 'undo';
 }

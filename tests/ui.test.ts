@@ -53,19 +53,13 @@ describe('action allowlist', () => {
     }
   });
 
-  it('apply cannot start without the hash of the change that was reviewed', () => {
+  it('apply takes only a session - what was reviewed is looked up server-side, never resent', () => {
     const apply = findAction('findfixApply');
     if (apply === undefined) throw new Error('findfixApply missing');
-    expect('error' in buildArgs(apply, { session: 'ff-abcdef123456', issue: 'a1b2c3d4e5f6' })).toBe(true);
-    const built = buildArgs(apply, {
-      session: 'ff-abcdef123456',
-      issue: 'a1b2c3d4e5f6',
-      expect: '0123456789abcdef',
-    });
+    expect('error' in buildArgs(apply, {})).toBe(true);
+    const built = buildArgs(apply, { session: 'ff-abcdef123456' });
     if (!('args' in built)) throw new Error(built.error);
-    expect(built.args).toEqual([
-      'findfix', 'apply', '--session', 'ff-abcdef123456', '--issue', 'a1b2c3d4e5f6', '--expect', '0123456789abcdef',
-    ]);
+    expect(built.args).toEqual(['findfix', 'apply', '--session', 'ff-abcdef123456']);
   });
 
   it('NOTHING can pass --yes, so approval can never be skipped', () => {
@@ -134,22 +128,13 @@ describe('parameter validation', () => {
   });
 
   it.each([
-    ['session', 'ff-abc; rm -rf /'],
-    ['session', '../ff-abcdef123456'],
-    ['issue', 'a1b2c3d4e5f6 --yes'],
-    ['issue', 'A1B2C3D4E5F6'],
-    ['expect', '0123456789abcdeg'],
-    ['expect', '$(id)'],
-  ])('rejects a malformed %s for Find & Fix (%s)', (name, value) => {
+    ['ff-abc; rm -rf /'],
+    ['../ff-abcdef123456'],
+    ['ff-abc`id`'],
+  ])('rejects a malformed session id for Find & Fix (%s)', (value) => {
     const apply = findAction('findfixApply');
     if (apply === undefined) throw new Error('findfixApply missing');
-    const params: Record<string, string> = {
-      session: 'ff-abcdef123456',
-      issue: 'a1b2c3d4e5f6',
-      expect: '0123456789abcdef',
-    };
-    params[name] = value;
-    expect('error' in buildArgs(apply, params)).toBe(true);
+    expect('error' in buildArgs(apply, { session: value })).toBe(true);
   });
 
   it('accepts an ordinary Windows path', () => {
@@ -693,14 +678,16 @@ describe('page', () => {
   /* ---- the review window ---- */
 
   it("shows the fix in a review window before anything is written", () => {
-    const modal = page.slice(page.indexOf('id="fixBack"'), page.indexOf('<div class="rail">'));
-    expect(modal).toContain('File being changed');
-    expect(modal).toContain('Existing code');
-    expect(modal).toContain('Proposed code');
-    expect(modal).toContain('What this changes');
-    expect(modal).toContain('Why this should resolve the issue');
-    expect(modal).toContain('>Apply Fix<');
-    expect(page).toContain('/api/findfix/fix');
+    // The modal shell is static; each file's own block (file name, diff,
+    // explanation) is built by openFixModal once the fix is prepared.
+    const shell = page.slice(page.indexOf('id="fixBack"'), page.indexOf('<div class="rail">'));
+    expect(shell).toContain('id="fixBody"');
+    expect(shell).toContain('id="fixApply"');
+    const fn = page.slice(page.indexOf('function openFixModal'), page.indexOf('function closeFixModal'));
+    expect(fn).toContain('File being changed');
+    expect(fn).toContain('What this changes');
+    expect(fn).toContain('Why this should resolve the issue');
+    expect(page).toContain('/api/findfix/select');
   });
 
   it("makes the safe answer the easy one", () => {
@@ -711,10 +698,19 @@ describe('page', () => {
     expect(escape).not.toContain('applyFix');
   });
 
-  it("applies exactly the change that was reviewed, by its hash", () => {
+  it("never sends the review back to the server - apply looks up what was selected itself", () => {
+    // What was reviewed lives in selection-<round>.json, written when the
+    // fix was prepared; applying only needs to say which scan it belongs to.
     const fn = page.slice(page.indexOf('async function applyFix'), page.indexOf('async function undoFix'));
-    expect(fn).toContain("startAction('findfixApply'");
-    expect(fn).toContain('expect: p.expect');
+    expect(fn).toContain("startAction('findfixApply', { session: ff.session })");
+  });
+
+  it("lets more than one issue be selected and applied together", () => {
+    expect(page).toContain('data-select=');
+    expect(page).toContain('id="ffSelectAll"');
+    expect(page).toContain('id="ffApplySelected"');
+    const fn = page.slice(page.indexOf('function prepareFixUI'), page.indexOf('function openFixModal'));
+    expect(fn).toContain('issues: issueIds');
   });
 
   it("colours the diff so additions and removals are distinguishable", () => {
@@ -726,7 +722,7 @@ describe('page', () => {
     expect(page).toContain('id="diffToggle"');
     expect(page).toContain('id="viewUnified"');
     expect(page).toContain('id="viewSplit"');
-    expect(page).toContain('id="fixSplit"');
+    expect(page).toContain('data-split="');
     expect(page).toContain('function buildSplitRows');
   });
 
@@ -765,9 +761,9 @@ describe('page', () => {
     expect(fn).toContain('startFind()');
   });
 
-  it("offers to open the changed file in VS Code", () => {
+  it("offers to open every changed file in VS Code", () => {
     expect(page).toContain('/api/findfix/open');
-    expect(page).toContain('Open in VS Code');
+    expect(page).toContain('in VS Code</button>');
   });
 
   /* ---- deleting ---- */
@@ -1344,7 +1340,7 @@ describe('server security', () => {
     });
 
   it('REFUSES every Find & Fix endpoint without the token', async () => {
-    for (const path of ['/api/findfix/start', '/api/findfix/fix', '/api/findfix/open']) {
+    for (const path of ['/api/findfix/start', '/api/findfix/select', '/api/findfix/open']) {
       const res = await post(path, { session: 'ff-abcdef123456' }, false);
       expect(res.status).toBe(403);
     }
@@ -1396,7 +1392,7 @@ describe('server security', () => {
 
   it('refuses to prepare or open anything for a session that is not real', async () => {
     for (const session of ['ff-doesnotexist99', '../../etc', 'ff-a;calc']) {
-      const fix = await post('/api/findfix/fix', { session, issue: 'a1b2c3d4e5f6' });
+      const fix = await post('/api/findfix/select', { session, issues: ['a1b2c3d4e5f6'] });
       expect(((await fix.json()) as { error?: string }).error).toBeDefined();
       const open = await post('/api/findfix/open', { session, file: 'x.ts' });
       expect(((await open.json()) as { error?: string }).error).toBeDefined();

@@ -3,20 +3,25 @@
  *
  *   find    analyse the scope, run the navigation, snapshot the heap,
  *           correlate, and write the issues with their fixes worked out
- *   apply   write ONE approved fix, open it in VS Code, then verify: build,
- *           re-run the same navigation, compare with the measurement it
- *           started from
- *   undo    put the file back exactly as it was before the last fix
+ *   apply   write every fix the person selected and reviewed, open the
+ *           changed files in VS Code, then verify once: build, re-run the
+ *           same navigation, compare with the measurement it started from
+ *   undo    put every file from the last apply back exactly as it was
  *
- * The UI server writes the session's request.json; these commands take only
- * the session id, so nothing about the scan travels on the command line.
+ * The UI server writes the session's request.json and, before an apply,
+ * selection-<round>.json (via POST /api/findfix/select); these commands
+ * take only the session id, so nothing about WHAT was selected travels on
+ * the command line either.
  *
- * WHY APPLY NEEDS --expect
- * ------------------------
- * The person approves a specific change in the browser. --expect is the
- * hash of the file content they were shown, and apply regenerates the fix
- * and refuses unless it produces exactly that content. So what is written is
- * what was reviewed - not whatever the file has turned into since.
+ * WHY THE SELECTION FILE, NOT ARGUMENTS
+ * --------------------------------------
+ * The person can select any number of issues to apply together. Passing a
+ * list of ids and a matching list of hashes as command-line arguments is
+ * exactly the kind of thing that goes wrong at the edges (ordering,
+ * escaping, a mismatched pair) for no benefit - the server already has to
+ * validate the selection to show the review window, so it writes down
+ * exactly what it showed, and apply's only job is to regenerate each one
+ * fresh and refuse anything that no longer matches.
  */
 
 import * as fs from 'node:fs';
@@ -40,6 +45,7 @@ import type {
   FindFixBaseline,
   FindFixRequest,
   FindFixResult,
+  FindFixSelectionFile,
   FindFixVerification,
   VerifyStatus,
 } from '../findfix/types';
@@ -58,8 +64,6 @@ const AGENT_ROOT = process.cwd();
 interface Parsed {
   sub: 'find' | 'apply' | 'undo';
   session: string;
-  issue?: string;
-  expect?: string;
 }
 
 export function parseFindFixArgs(args: string[]): Parsed | string {
@@ -68,34 +72,18 @@ export function parseFindFixArgs(args: string[]): Parsed | string {
     return 'Use "findfix find", "findfix apply" or "findfix undo".';
   }
   let session: string | undefined;
-  let issue: string | undefined;
-  let expect: string | undefined;
   for (let i = 1; i < args.length; i++) {
     const arg = args[i];
     const value = args[i + 1];
     if (arg === '--session' && value !== undefined) {
       session = value;
       i++;
-    } else if (arg === '--issue' && value !== undefined) {
-      issue = value;
-      i++;
-    } else if (arg === '--expect' && value !== undefined) {
-      expect = value;
-      i++;
     } else {
       return `Unknown option for findfix: ${arg ?? ''}`;
     }
   }
   if (session === undefined || !SESSION_PATTERN.test(session)) return 'findfix needs --session <id>';
-  if (sub === 'apply' && (issue === undefined || expect === undefined)) {
-    return 'findfix apply needs --issue <id> and --expect <hash> - the fix that was approved.';
-  }
-  return {
-    sub,
-    session,
-    ...(issue !== undefined ? { issue } : {}),
-    ...(expect !== undefined ? { expect } : {}),
-  };
+  return { sub, session };
 }
 
 export async function runFindFix(args: string[]): Promise<number> {
@@ -119,7 +107,7 @@ export async function runFindFix(args: string[]): Promise<number> {
   }
 
   if (parsed.sub === 'find') return find(dir, request, scenario);
-  if (parsed.sub === 'apply') return apply(dir, request, scenario, parsed.issue ?? '', parsed.expect ?? '');
+  if (parsed.sub === 'apply') return apply(dir, request, scenario);
   return undo(dir, request);
 }
 
@@ -212,7 +200,7 @@ async function find(dir: string, request: FindFixRequest, scenario: Scenario): P
   stage('rootcause', 'start', 'Matching what was retained to the code that holds it');
   const correlation = correlate({ risk, scenario, run, ...(heap !== undefined ? { heap } : {}) });
   const retained = summariseHeap(heap);
-  const exclude = new Set(readChanges(dir).filter((c) => c.undoneAt === undefined).map((c) => c.findingId));
+  const exclude = new Set(readChanges(dir).filter((c) => c.undoneAt === undefined).flatMap((c) => c.findingIds));
   stage('rootcause', 'done', `${correlation.summary.corroborated} finding(s) backed by what the browser showed`);
 
   /* ---- 6. fixes ---- */
@@ -274,74 +262,91 @@ function readChanges(dir: string): ChangeRecord[] {
   return readJson<ChangeRecord[]>(path.join(dir, 'changes.json')) ?? [];
 }
 
-async function apply(
-  dir: string,
-  request: FindFixRequest,
-  scenario: Scenario,
-  issueId: string,
-  expect: string,
-): Promise<number> {
+async function apply(dir: string, request: FindFixRequest, scenario: Scenario): Promise<number> {
   const projectRoot = path.resolve(request.project);
   const round = latestRound(dir);
   const result = readJson<FindFixResult>(path.join(dir, `round-${round}.json`));
-  const issue = result?.issues.find((i) => i.id === issueId);
-  if (result === undefined || issue === undefined) {
-    stage('apply', 'fail', 'That issue is not in the latest scan. Run the scan again.');
+  const selectionFile = readJson<FindFixSelectionFile>(path.join(dir, `selection-${round}.json`));
+  if (result === undefined || selectionFile === undefined || selectionFile.selected.length === 0) {
+    stage('apply', 'fail', 'Nothing was selected to apply. Pick a fix and press Apply Fix again.');
     return 1;
   }
 
-  /* ---- write exactly what was approved ---- */
-  stage('apply', 'start', `Changing ${issue.file}`);
-  const prepared = prepareFix(projectRoot, issue, {
-    route: request.targetRoute,
-    ...(result.measurement !== undefined ? { measurement: result.measurement } : {}),
-  });
-  if ('error' in prepared) {
-    stage('apply', 'fail', prepared.error);
-    return 1;
-  }
-  if (prepared.preview.expect !== expect) {
-    stage(
-      'apply',
-      'fail',
-      `${issue.file} changed after you reviewed the fix, so it was not written. Press Fix with AI again to review the current version.`,
-    );
-    return 1;
+  /* ---- group by file: several selected issues can share one class ---- */
+  const byFile = new Map<string, { issues: string[]; title: string; why: string; expect: string }>();
+  for (const sel of selectionFile.selected) {
+    const existing = byFile.get(sel.file);
+    if (existing !== undefined) existing.issues.push(sel.issue);
+    else byFile.set(sel.file, { issues: [sel.issue], title: sel.title, why: sel.why, expect: sel.expect });
   }
 
-  const absolute = path.join(projectRoot, prepared.proposal.file);
-  const before = fs.readFileSync(absolute, 'utf8');
-  const after = prepared.proposal.newContent ?? before;
-  const changes = readChanges(dir);
-  const index = changes.length + 1;
-  const backup = `originals/${index}-${path.basename(absolute)}.txt`;
-  fs.mkdirSync(path.join(dir, 'originals'), { recursive: true });
-  fs.writeFileSync(path.join(dir, backup), before, 'utf8');
-  fs.writeFileSync(absolute, after, 'utf8');
+  const priorChanges = readChanges(dir);
+  const batch = (priorChanges.at(-1)?.batch ?? 0) + 1;
+  const changes: ChangeRecord[] = [];
+  const failures: string[] = [];
 
-  const change: ChangeRecord = {
-    index,
-    round,
-    findingId: issue.id,
-    file: prepared.proposal.file,
-    title: prepared.proposal.title,
-    why: prepared.preview.explanation,
-    appliedAt: new Date().toISOString(),
-    beforeHash: contentHash(before),
-    afterHash: contentHash(after),
-    backup,
-  };
-  writeJson(path.join(dir, 'changes.json'), [...changes, change]);
-  stage('apply', 'done', `${change.title} (${change.file})`);
+  for (const [file, group] of byFile) {
+    stage('apply', 'start', `Changing ${file}`);
+    const issue = result.issues.find((i) => group.issues.includes(i.id));
+    if (issue === undefined) {
+      failures.push(`${file}: its issue is not in the latest scan.`);
+      continue;
+    }
 
-  const opened = openInEditor(projectRoot, change.file, issue.line);
-  if ('ok' in opened) emit('opened', change.file);
-  else console.log('    ' + opened.error);
+    const prepared = prepareFix(projectRoot, issue, {
+      route: request.targetRoute,
+      ...(result.measurement !== undefined ? { measurement: result.measurement } : {}),
+    });
+    if ('error' in prepared) {
+      failures.push(`${file}: ${prepared.error}`);
+      continue;
+    }
+    if (prepared.preview.expect !== group.expect) {
+      failures.push(`${file} changed after you reviewed the fix, so it was not written.`);
+      continue;
+    }
 
-  /* ---- verify ---- */
-  const verification = await verify(dir, request, scenario, change, issue.id, round);
-  writeJson(path.join(dir, `verify-${index}.json`), verification);
-  emit('result', sessionRelative(request.session, `verify-${index}.json`));
+    const absolute = path.join(projectRoot, prepared.proposal.file);
+    const before = fs.readFileSync(absolute, 'utf8');
+    const after = prepared.proposal.newContent ?? before;
+    const index = priorChanges.length + changes.length + 1;
+    const backup = `originals/${index}-${path.basename(absolute)}.txt`;
+    fs.mkdirSync(path.join(dir, 'originals'), { recursive: true });
+    fs.writeFileSync(path.join(dir, backup), before, 'utf8');
+    fs.writeFileSync(absolute, after, 'utf8');
+
+    const change: ChangeRecord = {
+      index,
+      round,
+      findingIds: group.issues,
+      file: prepared.proposal.file,
+      title: prepared.proposal.title,
+      why: prepared.preview.explanation,
+      batch,
+      appliedAt: new Date().toISOString(),
+      beforeHash: contentHash(before),
+      afterHash: contentHash(after),
+      backup,
+    };
+    changes.push(change);
+    stage('apply', 'done', `${change.title} (${change.file})`);
+
+    const opened = openInEditor(projectRoot, change.file, issue.line);
+    if ('ok' in opened) emit('opened', change.file);
+    else console.log('    ' + opened.error);
+  }
+
+  if (changes.length === 0) {
+    stage('apply', 'fail', failures[0] ?? 'Nothing could be applied.');
+    return 1;
+  }
+  writeJson(path.join(dir, 'changes.json'), [...priorChanges, ...changes]);
+  for (const reason of failures) console.log(`    skipped ${reason}`);
+
+  /* ---- verify the whole batch once ---- */
+  const verification = await verify(dir, request, scenario, changes, selectionFile.selected.map((s) => s.issue), round, batch);
+  writeJson(path.join(dir, `verify-${batch}.json`), verification);
+  emit('result', sessionRelative(request.session, `verify-${batch}.json`));
   return verification.status === 'VERIFIED' ? 0 : 1;
 }
 
@@ -349,9 +354,10 @@ async function verify(
   dir: string,
   request: FindFixRequest,
   scenario: Scenario,
-  change: ChangeRecord,
-  findingId: string,
+  changes: ChangeRecord[],
+  selectedIssues: string[],
   round: number,
+  batch: number,
 ): Promise<FindFixVerification> {
   const projectRoot = path.resolve(request.project);
   const say = (m: string): void => console.log('    ' + m);
@@ -359,8 +365,10 @@ async function verify(
     schemaVersion: 1 as const,
     session: request.session,
     round,
-    change,
+    batch,
+    changes,
   };
+  const changedFiles = changes.map((c) => c.file);
 
   /* ---- 1. it still builds ---- */
   stage('verify', 'start', 'Building the project with the change');
@@ -384,11 +392,11 @@ async function verify(
       status: 'CHECKS_FAILED',
       headline: 'Fix Applied — Verification Still Shows an Issue',
       explanation:
-        'The project does not build with this change. It should be undone - press Undo this fix ' +
-        'to put the file back exactly as it was.',
+        `The project does not build with ${changes.length === 1 ? 'this change' : 'these changes'}. It ` +
+        'should be undone - press Undo this fix to put every file back exactly as it was.',
       checks,
       checksPassed: false,
-      findingGone: false,
+      resolvedIssues: [],
       next: 'undo',
     };
   }
@@ -409,7 +417,7 @@ async function verify(
         'If the page worked before, undo this fix.',
       checks,
       checksPassed: false,
-      findingGone: false,
+      resolvedIssues: [],
       next: 'undo',
     };
   }
@@ -419,13 +427,19 @@ async function verify(
   const newErrors = [...new Set(errorsOf(after))].filter((e) => !known.has(e));
   const pageBroke = after.failures.length > (baseline?.failures ?? 0) || newErrors.length > 0;
 
-  /* ---- 3. the finding itself ---- */
-  let findingGone = false;
+  /* ---- 3. which of the selected findings are actually gone ---- */
+  let resolvedIssues: string[] = [];
   try {
-    const recheck = assessRisk(projectRoot, { filter: change.file, limit: 0 });
-    findingGone = !recheck.findings.some((f) => f.id === findingId);
+    const stillPresent = new Set<string>();
+    for (const file of changedFiles) {
+      const recheck = assessRisk(projectRoot, { filter: file, limit: 0 });
+      for (const f of recheck.findings) stillPresent.add(f.id);
+    }
+    // Only claim a resolution once every changed file was actually
+    // rechecked - a partial recheck must never be read as "the rest passed".
+    resolvedIssues = selectedIssues.filter((id) => !stillPresent.has(id));
   } catch {
-    findingGone = false;
+    resolvedIssues = [];
   }
 
   if (pageBroke) {
@@ -441,7 +455,7 @@ async function verify(
         'The change may have broken something on this page - undo it unless you know why.',
       checks,
       checksPassed: false,
-      findingGone,
+      resolvedIssues,
       next: 'undo',
     };
   }
@@ -455,7 +469,7 @@ async function verify(
       explanation: 'The earlier measurement is missing, so before and after cannot be compared.',
       checks,
       checksPassed: true,
-      findingGone,
+      resolvedIssues,
       next: 'next-round',
     };
   }
@@ -488,7 +502,7 @@ async function verify(
     checks,
     checksPassed: true,
     comparison,
-    findingGone,
+    resolvedIssues,
     next: verified && comparison.verdict === 'FIXED' ? 'done' : 'next-round',
   };
 }
@@ -497,39 +511,47 @@ async function verify(
 /* undo                                                                */
 /* ------------------------------------------------------------------ */
 
+/** Undo the whole last batch together - it was applied and verified as one unit. */
 function undo(dir: string, request: FindFixRequest): number {
   const projectRoot = path.resolve(request.project);
   const changes = readChanges(dir);
-  const last = [...changes].reverse().find((c) => c.undoneAt === undefined);
-  if (last === undefined) {
+  const liveBatches = changes.filter((c) => c.undoneAt === undefined).map((c) => c.batch);
+  const lastBatch = liveBatches.length > 0 ? Math.max(...liveBatches) : undefined;
+  if (lastBatch === undefined) {
     console.log('Nothing to undo in this session.');
     return 0;
   }
+  const toUndo = changes.filter((c) => c.batch === lastBatch && c.undoneAt === undefined);
 
-  stage('apply', 'start', `Putting ${last.file} back as it was`);
-  const absolute = path.join(projectRoot, last.file);
-  let current: string;
-  try {
-    current = fs.readFileSync(absolute, 'utf8');
-  } catch (err) {
-    stage('apply', 'fail', `Could not read ${last.file}: ${(err as Error).message}`);
-    return 1;
-  }
-  if (contentHash(current) !== last.afterHash) {
-    stage(
-      'apply',
-      'fail',
-      `${last.file} has been edited since the fix was applied, so restoring it would lose that work. Undo it in your editor instead.`,
-    );
-    return 1;
+  let ok = true;
+  for (const change of toUndo) {
+    stage('apply', 'start', `Putting ${change.file} back as it was`);
+    const absolute = path.join(projectRoot, change.file);
+    let current: string;
+    try {
+      current = fs.readFileSync(absolute, 'utf8');
+    } catch (err) {
+      stage('apply', 'fail', `Could not read ${change.file}: ${(err as Error).message}`);
+      ok = false;
+      continue;
+    }
+    if (contentHash(current) !== change.afterHash) {
+      stage(
+        'apply',
+        'fail',
+        `${change.file} has been edited since the fix was applied, so restoring it would lose that work. Undo it in your editor instead.`,
+      );
+      ok = false;
+      continue;
+    }
+
+    fs.writeFileSync(absolute, fs.readFileSync(path.join(dir, change.backup), 'utf8'), 'utf8');
+    change.undoneAt = new Date().toISOString();
+    stage('apply', 'done', `${change.file} is back exactly as it was before the fix`);
+    const opened = openInEditor(projectRoot, change.file, 1);
+    if ('ok' in opened) emit('opened', change.file);
   }
 
-  fs.writeFileSync(absolute, fs.readFileSync(path.join(dir, last.backup), 'utf8'), 'utf8');
-  last.undoneAt = new Date().toISOString();
   writeJson(path.join(dir, 'changes.json'), changes);
-  stage('apply', 'done', `${last.file} is back exactly as it was before the fix`);
-  const opened = openInEditor(projectRoot, last.file, 1);
-  if ('ok' in opened) emit('opened', last.file);
-  return 0;
+  return ok ? 0 : 1;
 }
-

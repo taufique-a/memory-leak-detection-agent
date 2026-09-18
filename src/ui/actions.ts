@@ -42,11 +42,7 @@ export type ParamType =
    */
   | 'filter'
   /** A Find & Fix session id, e.g. ff-lq2x9k3a1b2c3. */
-  | 'session'
-  /** A static finding id: 12 hex characters. */
-  | 'findingId'
-  /** The hash of an approved change: 16 hex characters. */
-  | 'hash';
+  | 'session';
 
 export interface ActionParam {
   name: string;
@@ -310,28 +306,17 @@ export const ACTIONS: readonly ActionDefinition[] = [
   {
     id: 'findfixApply',
     step: 2,
-    title: 'Apply the fix and verify it',
-    summary: 'Writes the one change you approved, then builds and re-measures',
+    title: 'Apply the selected fixes and verify them',
+    summary: 'Writes every change you approved, then builds and re-measures once',
     why:
-      'Writes exactly the change shown in the review window - nothing else - keeps a copy of ' +
-      'the original, opens the file in VS Code, then builds the project and repeats the same ' +
-      'navigation to check the leak is gone and the page still works.',
+      'Writes exactly what was shown in the review window - nothing else - keeps a copy of ' +
+      'every original, opens the changed files in VS Code, then builds the project and repeats ' +
+      'the same navigation to check the leak is gone and the page still works. What was ' +
+      'selected and reviewed is looked up server-side by the scan and round it belongs to, ' +
+      'never sent from the page a second time.',
     expect: 'as long as your build takes, plus a few minutes of navigation',
-    params: [
-      { name: 'session', type: 'session', required: true, label: 'Scan' },
-      { name: 'issue', type: 'findingId', required: true, label: 'Issue' },
-      { name: 'expect', type: 'hash', required: true, label: 'Approved change' },
-    ],
-    build: (v) => [
-      'findfix',
-      'apply',
-      '--session',
-      v['session'] ?? '',
-      '--issue',
-      v['issue'] ?? '',
-      '--expect',
-      v['expect'] ?? '',
-    ],
+    params: [{ name: 'session', type: 'session', required: true, label: 'Scan' }],
+    build: (v) => ['findfix', 'apply', '--session', v['session'] ?? ''],
     needsApp: true,
     driven: true,
     writes: true,
@@ -468,12 +453,6 @@ function validate(type: ParamType, value: string): string | undefined {
 
     case 'session':
       return /^ff-[a-z0-9]{8,32}$/.test(value) ? value : undefined;
-
-    case 'findingId':
-      return /^[0-9a-f]{12}$/.test(value) ? value : undefined;
-
-    case 'hash':
-      return /^[0-9a-f]{16}$/.test(value) ? value : undefined;
 
     case 'project':
     case 'scenario':

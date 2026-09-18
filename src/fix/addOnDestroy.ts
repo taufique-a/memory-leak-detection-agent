@@ -275,8 +275,8 @@ export function collectSubscribeCalls(
       if (insideNestedFunction) {
         return {
           reason:
-            'A subscribe() sits inside a nested callback, where `this` may not be the ' +
-            'component. Adding cleanup around it unattended is not safe.',
+            'A subscribe() sits inside a nested function() callback, where `this` is not ' +
+            'the component. Adding cleanup around it unattended is not safe.',
         };
       }
 
@@ -315,13 +315,19 @@ export function collectSubscribeCalls(
       return nestedFailure;
     }
 
-    // Arrow functions and function expressions rebind or capture `this`
-    // differently; anything below one is out of scope.
+    /**
+     * Only a real `function` rebinds `this`.
+     *
+     * An arrow function does not - that is its entire purpose - so a
+     * subscribe() inside one nested arbitrarily deep in arrow callbacks
+     * (another subscribe's handler, a setTimeout, an array method) still
+     * has `this` pointing at the component and is safe to wrap. Refusing
+     * those too was overly cautious and, measured against real code, threw
+     * away the majority of otherwise-fixable subscriptions: RxJS operators
+     * almost always take arrow callbacks.
+     */
     const nested =
-      insideNestedFunction ||
-      ts.isFunctionDeclaration(node) ||
-      ts.isFunctionExpression(node) ||
-      ts.isArrowFunction(node);
+      insideNestedFunction || ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node);
 
     let failure: AddOnDestroyFailure | undefined;
     ts.forEachChild(node, (child) => {

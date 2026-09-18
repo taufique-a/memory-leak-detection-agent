@@ -4,8 +4,10 @@
  *   GET  /api/findfix/options   routes and lazy modules, for the dropdowns
  *   POST /api/findfix/start     work out the scope, check both routes open,
  *                               write the navigation, create the session
- *   POST /api/findfix/fix       "Fix with AI": regenerate the fix for one
- *                               issue against the file as it is now
+ *   POST /api/findfix/select    "Fix with AI" / "Apply N selected": regenerate
+ *                               the fix for one or many issues against the
+ *                               files as they are now, and record exactly
+ *                               what was shown for `findfix apply` to verify
  *   POST /api/findfix/open      open the project in VS Code
  *
  * None of these runs the long work. Starting a scan returns a session id,
@@ -28,7 +30,7 @@ import {
   sessionDir,
   writeJson,
 } from '../findfix/session';
-import type { FindFixRequest, FindFixResult } from '../findfix/types';
+import type { FindFixRequest, FindFixResult, FindFixSelection, FindFixSelectionFile } from '../findfix/types';
 import { explainSessionMismatch, readSavedSession } from '../scenario/session';
 import { openInEditor } from '../utils/openInEditor';
 import { getEntityIndex, type Entity, type EntityIndex } from './entities';
@@ -74,8 +76,8 @@ export async function handleFindFix(
     await start(req, res, deps);
     return true;
   }
-  if (url.pathname === '/api/findfix/fix' && req.method === 'POST') {
-    await fix(req, res, deps);
+  if (url.pathname === '/api/findfix/select' && req.method === 'POST') {
+    await select(req, res, deps);
     return true;
   }
   if (url.pathname === '/api/findfix/open' && req.method === 'POST') {
@@ -353,8 +355,19 @@ function loadSession(
   return { dir, request, ...(result !== undefined ? { result } : {}) };
 }
 
-async function fix(req: http.IncomingMessage, res: http.ServerResponse, deps: FindFixDeps): Promise<void> {
-  let body: { session?: unknown; issue?: unknown };
+/**
+ * Prepare one or many issues for review, and record exactly what was
+ * shown.
+ *
+ * The same endpoint serves a single "Fix with AI" click and an "Apply N
+ * selected" click - the only difference is how many ids are in `issues`.
+ * Everything is regenerated fresh here (never trusting anything the client
+ * might send back), and `findfix apply` re-derives it all AGAIN from disk
+ * before writing - this step exists to show the person what will happen
+ * and to write down the hash apply must match, not to be trusted itself.
+ */
+async function select(req: http.IncomingMessage, res: http.ServerResponse, deps: FindFixDeps): Promise<void> {
+  let body: { session?: unknown; issues?: unknown };
   try {
     body = JSON.parse(await deps.readBody(req)) as typeof body;
   } catch {
@@ -366,38 +379,87 @@ async function fix(req: http.IncomingMessage, res: http.ServerResponse, deps: Fi
     deps.sendJson(res, loaded);
     return;
   }
-  const issue = loaded.result?.issues.find((i) => i.id === body.issue);
-  if (issue === undefined) {
-    deps.sendJson(res, { error: 'That issue is not in the latest scan.' });
+  const requested = Array.isArray(body.issues) ? [...new Set(body.issues.filter((x): x is string => typeof x === 'string'))] : [];
+  if (requested.length === 0) {
+    deps.sendJson(res, { error: 'Nothing was selected.' });
     return;
   }
 
   const projectRoot = path.resolve(loaded.request.project);
-  const prepared = prepareFix(projectRoot, issue, {
-    route: loaded.request.targetRoute,
-    ...(loaded.result?.measurement !== undefined ? { measurement: loaded.result.measurement } : {}),
-  });
-  if ('error' in prepared) {
-    deps.sendJson(res, { error: prepared.error });
+  const selected: FindFixSelection[] = [];
+  const failed: Array<{ issue: string; error: string }> = [];
+  const byFile = new Map<string, { title: string; explanation: string; whyItResolves: string; risks: string[]; diff: string; issues: string[] }>();
+
+  for (const issueId of requested) {
+    const issue = loaded.result?.issues.find((i) => i.id === issueId);
+    if (issue === undefined) {
+      failed.push({ issue: issueId, error: 'That issue is not in the latest scan.' });
+      continue;
+    }
+    const prepared = prepareFix(projectRoot, issue, {
+      route: loaded.request.targetRoute,
+      ...(loaded.result?.measurement !== undefined ? { measurement: loaded.result.measurement } : {}),
+    });
+    if ('error' in prepared) {
+      failed.push({ issue: issueId, error: prepared.error });
+      continue;
+    }
+
+    selected.push({
+      issue: issueId,
+      file: prepared.preview.file,
+      title: prepared.preview.title,
+      why: prepared.preview.explanation,
+      expect: prepared.preview.expect,
+    });
+
+    const existing = byFile.get(prepared.preview.file);
+    if (existing !== undefined) {
+      existing.issues.push(issueId);
+    } else {
+      byFile.set(prepared.preview.file, {
+        title: prepared.preview.title,
+        explanation: prepared.preview.explanation,
+        whyItResolves: prepared.preview.whyItResolves,
+        risks: prepared.preview.risks,
+        diff: prepared.preview.diff,
+        issues: [issueId],
+      });
+    }
+  }
+
+  if (selected.length === 0) {
+    deps.sendJson(res, { error: failed[0]?.error ?? 'None of these could be prepared.' });
     return;
   }
+
+  const round = latestRound(loaded.dir);
+  writeJson(path.join(loaded.dir, `selection-${round}.json`), {
+    round,
+    selected,
+  } satisfies FindFixSelectionFile);
 
   /**
    * Say what else is uncommitted, without blocking on it.
    *
-   * Only the one file is written and its original is kept, so other work in
-   * the tree is never touched - but the person should know the diff in their
-   * editor will show more than this change.
+   * Only the selected files are written and each original is kept, so
+   * other work in the tree is never touched - but the person should know
+   * their editor's diff view will show more than this change.
    */
   let otherChanges = 0;
   try {
     const git = readGitState(projectRoot);
-    otherChanges = git.uncommittedFiles.filter((f) => f !== prepared.preview.file).length;
+    const changing = new Set(byFile.keys());
+    otherChanges = git.uncommittedFiles.filter((f) => !changing.has(f)).length;
   } catch {
     otherChanges = 0;
   }
 
-  deps.sendJson(res, { ...prepared.preview, issue: issue.id, otherChanges });
+  deps.sendJson(res, {
+    files: [...byFile.entries()].map(([file, f]) => ({ file, ...f })),
+    failed,
+    otherChanges,
+  });
 }
 
 async function open(req: http.IncomingMessage, res: http.ServerResponse, deps: FindFixDeps): Promise<void> {

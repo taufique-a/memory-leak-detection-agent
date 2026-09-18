@@ -362,8 +362,11 @@ describe('findfix command arguments', () => {
     expect(typeof parseFindFixArgs(['find', '--session', 'ff-abcdef123456'])).toBe('object');
   });
 
-  it('will not apply without the issue and the approved hash', () => {
-    expect(parseFindFixArgs(['apply', '--session', 'ff-abcdef123456'])).toContain('--expect');
+  it('apply takes only a session - what was reviewed is read from the selection file', () => {
+    expect(parseFindFixArgs(['apply', '--session', 'ff-abcdef123456'])).toEqual({
+      sub: 'apply',
+      session: 'ff-abcdef123456',
+    });
     expect(parseFindFixArgs(['apply', '--session', 'ff-abcdef123456', '--yes'])).toContain('Unknown option');
   });
 });
@@ -400,10 +403,11 @@ describe('undo', () => {
     const change: ChangeRecord = {
       index: 1,
       round: 1,
-      findingId: 'a1b2c3d4e5f6',
+      findingIds: ['a1b2c3d4e5f6'],
       file,
       title: 'test',
       why: 'test',
+      batch: 1,
       appliedAt: new Date().toISOString(),
       beforeHash: contentHash(original),
       afterHash: contentHash(fixed),

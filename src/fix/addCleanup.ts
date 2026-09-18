@@ -1,21 +1,33 @@
 /**
- * Releasing what a class starts, whether or not it already has an ngOnDestroy.
+ * Releasing everything a class starts and never stops, in one pass.
  *
- * addOnDestroy.ts only CREATES the hook, and refuses a class that already
- * has one. That leaves out the most common real leak: an ngOnDestroy that
- * exists, does some teardown, and forgets the subscriptions or the
- * setInterval added later. This covers both shapes, for the two resources
- * whose correct release is unambiguous:
+ * WHY ONE PASS COVERS EVERY RESOURCE KIND
+ * ----------------------------------------
+ * A class does not leak "a subscription" or "a chart" in isolation - it
+ * leaks whatever it happens to start without a matching teardown, and a
+ * class with an unmanaged interval often has an unmanaged listener right
+ * next to it. Two separate fixes, applied one after another, would either
+ * conflict (both trying to create the same ngOnDestroy) or leave the class
+ * looking "fixed" after the first one when the second issue is still
+ * sitting there. So this walks the class ONCE, for every resource kind the
+ * analyzer knows about, and produces ONE consolidated ngOnDestroy - whether
+ * that means extending an existing one or creating it from nothing.
  *
- *   subscriptions   collected into one Subscription, unsubscribed on destroy
- *   setInterval     handle kept, cleared on destroy
- *
- * The refusals are the same as addOnDestroy's and for the same reason: a
- * half-fixed class looks handled while the other half still leaks.
+ * PER-KIND, NOT ALL-OR-NOTHING
+ * -----------------------------
+ * If subscriptions can be fixed safely but an interval's handle is stored
+ * somewhere ngOnDestroy cannot reach, the subscriptions are still fixed.
+ * What is refused stays refused, kind by kind - see releaseTimers.ts and
+ * addOnDestroy.ts's collectSubscribeCalls for what "safely" means for each.
+ * `wrapped` reports exactly what was addressed, so the caller (propose.ts)
+ * can tell a finding of a kind that WAS handled from one that was not, even
+ * though both went through the same generated diff.
  */
 
 import * as ts from 'typescript';
 
+import { DEFINITION_BY_KIND } from '../analyzer/resources';
+import type { ResourceKind } from '../types/analysis';
 import {
   applyEdits,
   collectSubscribeCalls,
@@ -29,14 +41,27 @@ import {
   type AddOnDestroyFailure,
   type Edit,
 } from './addOnDestroy';
+import { collectEventListeners } from './releaseListeners';
+import { collectStoredInstances } from './releaseInstances';
+import { collectGlobalTimerCalls, type TimerCollectorResult } from './releaseTimers';
+
+/** The 15 kinds whose correct teardown is "call one method on the instance". */
+const SIMPLE_DISPOSE_KINDS: ResourceKind[] = [
+  'dom.mutationObserver', 'dom.resizeObserver', 'dom.intersectionObserver', 'dom.performanceObserver',
+  'net.webSocket', 'net.eventSource', 'thread.worker',
+  'chart.highcharts', 'chart.echarts', 'chart.amcharts', 'chart.apex', 'chart.d3Timer',
+  'map.here', 'map.leaflet',
+  'angular.dialog', 'angular.overlay',
+];
 
 export interface AddCleanupResult {
   newContent: string;
-  wrappedSubscriptions: number;
-  clearedIntervals: number;
-  /** True when an existing ngOnDestroy was extended rather than created. */
   extendedExisting: boolean;
   notes: string[];
+  /** How many acquires of each kind this pass actually addressed. */
+  wrapped: Partial<Record<ResourceKind, number>>;
+  /** Kinds this pass looked at but could not safely address, and why. */
+  skipped: Partial<Record<ResourceKind, string>>;
 }
 
 export function addCleanup(
@@ -44,9 +69,7 @@ export function addCleanup(
   fileName: string,
   className: string,
 ): AddCleanupResult | AddOnDestroyFailure {
-  const eol = (source.match(/\r\n/g) ?? []).length > (source.match(/(?<!\r)\n/g) ?? []).length
-    ? '\r\n'
-    : '\n';
+  const eol = (source.match(/\r\n/g) ?? []).length > (source.match(/(?<!\r)\n/g) ?? []).length ? '\r\n' : '\n';
 
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
   const target = findClass(sourceFile, className);
@@ -69,33 +92,26 @@ export function addCleanup(
     };
   }
 
-  const subs = collectSubscribeCalls(target, sourceFile);
-  if ('reason' in subs) return subs;
-
-  const intervals = collectIntervals(target, sourceFile);
-  if ('reason' in intervals) return intervals;
-
-  if (subs.calls.length === 0 && intervals.discarded.length === 0 && intervals.stored.length === 0) {
-    return {
-      reason:
-        `Nothing in ${className} is left running: every subscribe() is already stored or ` +
-        'managed, and every setInterval is already cleared. The leak is something else.',
-    };
-  }
-
-  const edits: Edit[] = [];
+  const classText = target.getText(sourceFile);
+  const wrapped: Partial<Record<ResourceKind, number>> = {};
+  const skipped: Partial<Record<ResourceKind, string>> = {};
   const notes: string[] = [];
-  const firstMember = target.members[0];
-  const lastMember = target.members[target.members.length - 1];
-  if (firstMember === undefined || lastMember === undefined) {
-    return { reason: 'No class members to anchor the change to.' };
-  }
-  const memberIndent = indentOf(source, firstMember.getStart(sourceFile));
-
-  /* ---- fields ---- */
+  const edits: Edit[] = [];
   const fieldLines: string[] = [];
-  const subsField = uniqueMemberName(target, 'subscriptions');
-  if (subs.calls.length > 0) {
+  const statements: string[] = [];
+  const takenNames = new Set<string>();
+  for (const member of target.members) {
+    if (member.name !== undefined && ts.isIdentifier(member.name)) takenNames.add(member.name.text);
+  }
+
+  const memberIndent = indentOf(source, (target.members[0] as ts.ClassElement).getStart(sourceFile));
+
+  /* ---- 1. subscriptions (unchanged, proven logic) ---- */
+  const subs = collectSubscribeCalls(target, sourceFile);
+  if ('reason' in subs) {
+    skipped['rxjs.subscription'] = subs.reason;
+  } else if (subs.calls.length > 0) {
+    const field = uniqueMemberName2(takenNames, 'subscriptions');
     const rxjsImport = findImport(sourceFile, 'rxjs');
     if (rxjsImport === undefined) {
       const end = angularImport.getEnd();
@@ -106,34 +122,147 @@ export function addCleanup(
     }
     fieldLines.push(
       `${memberIndent}/** Everything this class subscribes to, released in ngOnDestroy. */`,
-      `${memberIndent}private readonly ${subsField} = new Subscription();`,
+      `${memberIndent}private readonly ${field} = new Subscription();`,
     );
     for (const call of subs.calls) {
-      edits.push({ start: call.getStart(sourceFile), end: call.getStart(sourceFile), text: `this.${subsField}.add(` });
+      edits.push({ start: call.getStart(sourceFile), end: call.getStart(sourceFile), text: `this.${field}.add(` });
       edits.push({ start: call.getEnd(), end: call.getEnd(), text: ')' });
     }
+    statements.push(`this.${field}.unsubscribe();`);
+    wrapped['rxjs.subscription'] = subs.calls.length;
     if (subs.httpLike > 0) {
       notes.push(
-        `${subs.httpLike} of these look like HTTP calls, which complete on their own. ` +
+        `${subs.httpLike} of the subscriptions look like HTTP calls, which complete on their own. ` +
           'Adding them to the Subscription is harmless but unnecessary.',
       );
     }
   }
 
-  const intervalsField = uniqueMemberName(target, 'intervals');
-  if (intervals.discarded.length > 0) {
-    fieldLines.push(
-      `${memberIndent}/** Every setInterval this class starts, cleared in ngOnDestroy. */`,
-      `${memberIndent}private readonly ${intervalsField}: ReturnType<typeof setInterval>[] = [];`,
-    );
-    for (const call of intervals.discarded) {
-      edits.push({
-        start: call.getStart(sourceFile),
-        end: call.getStart(sourceFile),
-        text: `this.${intervalsField}.push(`,
-      });
-      edits.push({ start: call.getEnd(), end: call.getEnd(), text: ')' });
+  /* ---- 2. setInterval (unchanged, proven logic) ---- */
+  const intervals = collectIntervals(target, sourceFile, classText);
+  if ('reason' in intervals) {
+    skipped['timer.interval'] = intervals.reason;
+  } else if (intervals.discarded.length > 0 || intervals.stored.length > 0) {
+    if (intervals.discarded.length > 0) {
+      const field = uniqueMemberName2(takenNames, 'intervals');
+      fieldLines.push(
+        `${memberIndent}/** Every setInterval this class starts, cleared in ngOnDestroy. */`,
+        `${memberIndent}private readonly ${field}: ReturnType<typeof setInterval>[] = [];`,
+      );
+      for (const call of intervals.discarded) {
+        edits.push({ start: call.getStart(sourceFile), end: call.getStart(sourceFile), text: `this.${field}.push(` });
+        edits.push({ start: call.getEnd(), end: call.getEnd(), text: ')' });
+      }
+      statements.push(`this.${field}.forEach((id) => clearInterval(id));`);
     }
+    for (const property of intervals.stored) statements.push(`clearInterval(this.${property});`);
+    wrapped['timer.interval'] = intervals.discarded.length + intervals.stored.length;
+  }
+
+  /* ---- 3. setTimeout ---- */
+  const timeouts = collectGlobalTimerCalls(target, sourceFile, classText, 'setTimeout', 'clearTimeout');
+  if ('reason' in timeouts) {
+    skipped['timer.timeout'] = timeouts.reason;
+  } else {
+    applyTimerFixes(timeouts, 'timeouts', 'clearTimeout', memberIndent, takenNames, sourceFile, edits, fieldLines, statements);
+    if (timeouts.discarded.length > 0 || timeouts.stored.length > 0) {
+      wrapped['timer.timeout'] = timeouts.discarded.length + timeouts.stored.length;
+    }
+  }
+
+  /* ---- 4. requestAnimationFrame ---- */
+  const rafs = collectGlobalTimerCalls(target, sourceFile, classText, 'requestAnimationFrame', 'cancelAnimationFrame');
+  if ('reason' in rafs) {
+    skipped['timer.animationFrame'] = rafs.reason;
+  } else {
+    applyTimerFixes(rafs, 'animationFrames', 'cancelAnimationFrame', memberIndent, takenNames, sourceFile, edits, fieldLines, statements);
+    if (rafs.discarded.length > 0 || rafs.stored.length > 0) {
+      wrapped['timer.animationFrame'] = rafs.discarded.length + rafs.stored.length;
+    }
+  }
+
+  /* ---- 5. DOM event listeners (per-listener, never blocks the class) ---- */
+  const listeners = collectEventListeners(target, sourceFile, takenNames);
+  for (const fix of listeners) {
+    if (fix.newField !== undefined) {
+      fieldLines.push(`${memberIndent}private readonly ${fix.newField.name} = ${fix.newField.arrowText};`);
+      // Point the registration at the new field too - otherwise it keeps
+      // registering a fresh, un-removable function every time, and the
+      // removeEventListener below would remove nothing at runtime.
+      const node = fix.newField.handlerNode;
+      edits.push({ start: node.getStart(sourceFile), end: node.getEnd(), text: fix.handlerText });
+    }
+    statements.push(
+      `${fix.targetText}.removeEventListener(${quote(fix.eventName)}, ${fix.handlerText}` +
+        `${fix.optionsText !== undefined ? `, ${fix.optionsText}` : ''});`,
+    );
+  }
+  if (listeners.length > 0) wrapped['dom.eventListener'] = listeners.length;
+
+  /* ---- 6. charts, maps, sockets, workers, observers, dialogs, overlays ---- */
+  const definitions = SIMPLE_DISPOSE_KINDS.map((k) => DEFINITION_BY_KIND.get(k)).filter((d) => d !== undefined);
+  const instances = collectStoredInstances(target, sourceFile, classText, definitions);
+
+  for (const fix of instances.stored) {
+    const method = DEFINITION_BY_KIND.get(fix.kind)?.releaseMethods[0];
+    if (method === undefined) continue;
+    statements.push(`${fix.storedAs}?.${method}();`);
+    wrapped[fix.kind] = (wrapped[fix.kind] ?? 0) + 1;
+  }
+
+  const discardedByKind = new Map<ResourceKind, typeof instances.discarded>();
+  for (const fix of instances.discarded) {
+    const list = discardedByKind.get(fix.kind) ?? [];
+    list.push(fix);
+    discardedByKind.set(fix.kind, list);
+  }
+  for (const [kind, fixes] of discardedByKind) {
+    const def = DEFINITION_BY_KIND.get(kind);
+    const method = def?.releaseMethods[0];
+    if (method === undefined) continue;
+    const field = uniqueMemberName2(takenNames, `${baseFieldName(kind)}Instances`);
+    fieldLines.push(
+      `${memberIndent}/** Every ${def?.label ?? kind} this class creates, released in ngOnDestroy. */`,
+      `${memberIndent}private readonly ${field}: Array<{ ${method}: () => void }> = [];`,
+    );
+    for (const fix of fixes) {
+      if (fix.chainedStatement === undefined) {
+        edits.push({ start: fix.call.getStart(sourceFile), end: fix.call.getStart(sourceFile), text: `this.${field}.push(` });
+        edits.push({ start: fix.call.getEnd(), end: fix.call.getEnd(), text: ')' });
+      } else {
+        // `new X(cb).configure(...);` -> declare, configure, remember - see
+        // releaseInstances.ts's DiscardedInstanceFix for why this needs
+        // three edits instead of the simple wrap above.
+        const stmtIndent = indentOf(source, fix.chainedStatement.getStart(sourceFile));
+        const localName = uniqueMemberName2(takenNames, baseFieldName(kind));
+        edits.push({ start: fix.call.getStart(sourceFile), end: fix.call.getStart(sourceFile), text: `const ${localName} = ` });
+        edits.push({ start: fix.call.getEnd(), end: fix.call.getEnd(), text: `;\n${stmtIndent}${localName}` });
+        edits.push({
+          start: fix.chainedStatement.getEnd(),
+          end: fix.chainedStatement.getEnd(),
+          text: `\n${stmtIndent}this.${field}.push(${localName});`,
+        });
+      }
+    }
+    statements.push(`this.${field}.forEach((x) => x.${method}());`);
+    wrapped[kind] = (wrapped[kind] ?? 0) + fixes.length;
+  }
+
+  /* ---- assemble ---- */
+  if (statements.length === 0) {
+    const reasons = Object.values(skipped);
+    return {
+      reason:
+        reasons.length > 0
+          ? reasons[0] ?? 'Nothing safe to release was found.'
+          : `Nothing in ${className} is left running: everything it acquires is already managed.`,
+    };
+  }
+
+  const firstMember = target.members[0];
+  const lastMember = target.members[target.members.length - 1];
+  if (firstMember === undefined || lastMember === undefined) {
+    return { reason: 'No class members to anchor the change to.' };
   }
 
   if (fieldLines.length > 0) {
@@ -143,14 +272,6 @@ export function addCleanup(
       text: `\n${fieldLines.join('\n')}\n`,
     });
   }
-
-  /* ---- the teardown statements ---- */
-  const statements: string[] = [];
-  if (subs.calls.length > 0) statements.push(`this.${subsField}.unsubscribe();`);
-  if (intervals.discarded.length > 0) {
-    statements.push(`this.${intervalsField}.forEach((id) => clearInterval(id));`);
-  }
-  for (const property of intervals.stored) statements.push(`clearInterval(this.${property});`);
 
   if (existing !== undefined && ts.isMethodDeclaration(existing) && existing.body !== undefined) {
     const body = existing.body;
@@ -201,14 +322,58 @@ export function addCleanup(
     };
   }
 
-  return {
-    newContent,
-    wrappedSubscriptions: subs.calls.length,
-    clearedIntervals: intervals.discarded.length + intervals.stored.length,
-    extendedExisting: existing !== undefined,
-    notes,
-  };
+  return { newContent, extendedExisting: existing !== undefined, notes, wrapped, skipped };
 }
+
+/* ------------------------------------------------------------------ */
+/* Shared helpers                                                      */
+/* ------------------------------------------------------------------ */
+
+function uniqueMemberName2(taken: Set<string>, preferred: string): string {
+  let name = preferred;
+  for (let i = 2; taken.has(name) && i < 50; i++) name = `${preferred}${i}`;
+  taken.add(name);
+  return name;
+}
+
+function quote(text: string): string {
+  return `'${text.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+}
+
+/** 'chart.highcharts' -> 'highcharts', 'net.webSocket' -> 'webSocket'. */
+function baseFieldName(kind: ResourceKind): string {
+  return kind.split('.')[1] ?? kind;
+}
+
+function applyTimerFixes(
+  result: TimerCollectorResult,
+  fieldBase: string,
+  clearName: string,
+  memberIndent: string,
+  taken: Set<string>,
+  sourceFile: ts.SourceFile,
+  edits: Edit[],
+  fieldLines: string[],
+  statements: string[],
+): void {
+  if (result.discarded.length > 0) {
+    const field = uniqueMemberName2(taken, fieldBase);
+    fieldLines.push(
+      `${memberIndent}/** Every ${clearName === 'clearTimeout' ? 'setTimeout' : 'requestAnimationFrame'} handle this class starts, released in ngOnDestroy. */`,
+      `${memberIndent}private readonly ${field}: ReturnType<typeof ${clearName === 'clearTimeout' ? 'setTimeout' : 'requestAnimationFrame'}>[] = [];`,
+    );
+    for (const call of result.discarded) {
+      edits.push({ start: call.getStart(sourceFile), end: call.getStart(sourceFile), text: `this.${field}.push(` });
+      edits.push({ start: call.getEnd(), end: call.getEnd(), text: ')' });
+    }
+    statements.push(`this.${field}.forEach((id) => ${clearName}(id));`);
+  }
+  for (const property of result.stored) statements.push(`${clearName}(this.${property});`);
+}
+
+/* ------------------------------------------------------------------ */
+/* setInterval - unchanged from the original single-kind generator     */
+/* ------------------------------------------------------------------ */
 
 /**
  * Find the setInterval calls nothing ever clears.
@@ -223,8 +388,8 @@ export function addCleanup(
 function collectIntervals(
   target: ts.ClassDeclaration,
   sourceFile: ts.SourceFile,
+  classText: string,
 ): { discarded: ts.CallExpression[]; stored: string[] } | AddOnDestroyFailure {
-  const classText = target.getText(sourceFile);
   const discarded: ts.CallExpression[] = [];
   const stored = new Set<string>();
   let refusal: AddOnDestroyFailure | undefined;
@@ -274,8 +439,7 @@ function collectIntervals(
       }
     }
 
-    const rebinds =
-      rebindsThis || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node);
+    const rebinds = rebindsThis || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node);
     ts.forEachChild(node, (child) => walk(child, rebinds));
   };
 
