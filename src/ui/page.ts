@@ -1942,10 +1942,7 @@ async function checkServed() {
   }
 
   if (data.verdict === 'mismatch') {
-    /**
-     * The whole reason this exists. Say what to do, and offer to do it -
-     * but only ever with the folder that was chosen.
-     */
+    /** The whole reason this exists: say plainly what is wrong. */
     $('servedCheck').innerHTML =
       '<div class="danger" style="margin-top:.6rem">' +
       '<strong>This is not the project you selected.</strong><br>' +
@@ -1954,16 +1951,12 @@ async function checkServed() {
       '<br><br>Measuring this would analyse one copy of your code and time a different ' +
       'one. Every finding would name files the running app never used.' +
       '</div>' +
-      (alreadyServing
-        ? '<div class="sub" style="margin-top:.4rem">Your project is already running - see ' +
-          'below.</div>' + alreadyServingNotice()
-        : '<div class="sub" style="margin-top:.4rem">Point the address at a free port and ' +
-          'start your own project below, or stop whatever is on that one first.</div>' +
-          serveForm(data));
+      '<div class="sub" style="margin-top:.4rem">Point the address at a free port and start ' +
+      'your own project there, or stop whatever is on this one - then press check above.</div>';
   } else if (data.verdict === 'no-server') {
     $('servedCheck').innerHTML =
-      '<div class="sub" style="margin-top:.5rem">Nothing is running at that address yet.</div>' +
-      (alreadyServing ? alreadyServingNotice() : serveForm(data));
+      '<div class="sub" style="margin-top:.5rem">Nothing is running at that address yet. ' +
+      'Start it yourself, then press check above.</div>';
   } else {
     $('servedCheck').innerHTML =
       '<div class="sub" style="margin-top:.5rem">' +
