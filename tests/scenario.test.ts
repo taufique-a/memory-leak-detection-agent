@@ -9,7 +9,7 @@
 import { startFixtureServer } from '../src/runtime/fixtures/server';
 import { buildSpaFixture } from '../src/runtime/fixtures/spaFixture';
 import { isChromeAvailable } from '../src/runtime/browser';
-import { joinUrl, looksLikeTimeout, runScenario, withMoreTime } from '../src/scenario/runner';
+import { ScenarioError, joinUrl, looksLikeTimeout, runScenario, withMoreTime } from '../src/scenario/runner';
 import type { Scenario, Step } from '../src/scenario/types';
 import { describeStep, validateScenario } from '../src/scenario/validate';
 
@@ -543,5 +543,44 @@ describe('scenario engine integration', () => {
       }
     },
     240_000,
+  );
+
+  it(
+    'says where the browser actually ended up when setup fails, not just that it timed out',
+    async () => {
+      if (!chromeAvailable) return;
+
+      const server = await startFixtureServer({ leaky: true });
+      try {
+        const scenario = spaScenario(server.baseUrl, 5);
+        /**
+         * A failure that is NOT a timeout, so the setup retry (which floors
+         * at 5 real minutes - see withMoreTime) never kicks in. A timeout
+         * here would make this test as slow as the production case it is
+         * regression-testing.
+         */
+        scenario.setup = [
+          { action: 'goto', path: '/', waitUntil: 'load' },
+          { action: 'evaluate', script: 'throw new Error("boom")' },
+        ];
+
+        let thrown: Error | undefined;
+        try {
+          await runScenario(scenario, {});
+        } catch (err) {
+          thrown = err as Error;
+        }
+
+        expect(thrown).toBeInstanceOf(ScenarioError);
+        // The single fact that tells apart "genuinely stuck here" from
+        // "silently redirected somewhere our login-pattern check missed" -
+        // see the comment beside where this is thrown in runner.ts.
+        expect(thrown?.message).toContain('Currently on');
+        expect(thrown?.message).toContain(server.baseUrl);
+      } finally {
+        await server.close();
+      }
+    },
+    30_000,
   );
 });

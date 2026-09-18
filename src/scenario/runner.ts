@@ -241,8 +241,29 @@ export async function runScenario(
             );
           }
 
+          /**
+           * Say where the browser actually ended up.
+           *
+           * The single most useful fact for telling apart the two common
+           * causes of a setup timeout: still on the requested page (it is
+           * genuinely slow, or the selector guess is wrong) versus somewhere
+           * else entirely (a guard redirected client-side to a page our
+           * login-pattern check does not recognise, so detectExpiredSession
+           * above found nothing). Printing it here means the person does not
+           * have to reproduce the run by hand just to learn which one this
+           * was - see diagnoseLoginRedirect for the case this check does
+           * recognise.
+           */
+          let currentUrl = '';
+          try {
+            currentUrl = session.page.url();
+          } catch {
+            /* the page may already be gone; the rest of the message still stands */
+          }
+
           throw new ScenarioError(
             `Setup step ${i} (${result.description}) failed: ${result.error}. ` +
+              (currentUrl !== '' ? `Currently on ${currentUrl}. ` : '') +
               'Aborting - running the loop from a broken starting state would produce ' +
               'numbers that mean nothing.',
           );
