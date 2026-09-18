@@ -35,6 +35,21 @@ export interface CheckDefinition {
   purpose: string;
   /** Milliseconds before giving up. */
   timeoutMs: number;
+  /**
+   * Extra arguments handed to the script itself (after `--`), e.g. to run
+   * only the tests related to the files that changed.
+   *
+   * Each must be a plain path-like token: the command runs through a shell
+   * on Windows, so anything else could be read as more command.
+   */
+  args?: string[];
+}
+
+/** A token safe to pass through a shell unquoted: letters, digits and path punctuation. */
+const SAFE_ARG = /^[A-Za-z0-9_.\-/@]+$/;
+
+export function isSafeArg(value: string): boolean {
+  return SAFE_ARG.test(value) && !value.includes('..');
 }
 
 export interface CheckResult {
@@ -307,12 +322,13 @@ function runScript(
   env: NodeJS.ProcessEnv,
 ): Promise<CheckResult> {
   const started = Date.now();
-  const command = `npm run ${check.script}`;
+  const extra = (check.args ?? []).filter(isSafeArg);
+  const command = `npm run ${check.script}${extra.length > 0 ? ` -- ${extra.join(' ')}` : ''}`;
 
   return new Promise((resolve) => {
     execFile(
       'npm',
-      ['run', check.script],
+      ['run', check.script, ...(extra.length > 0 ? ['--', ...extra] : [])],
       {
         cwd,
         env,

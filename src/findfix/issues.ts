@@ -61,6 +61,7 @@ export function summariseHeap(heap: HeapInvestigationResult | undefined): Retain
         countDelta: f.countDelta,
         ...(f.perIteration !== undefined ? { perIteration: f.perIteration } : {}),
         bytesDelta: f.bytesDelta,
+        ...(f.retainedBytesDelta !== undefined ? { retainedBytesDelta: f.retainedBytesDelta } : {}),
         ...(path0 !== undefined ? { heldBy: explainPath(path0) } : {}),
       };
     });
@@ -141,8 +142,15 @@ function describe(cf: CorrelatedFinding, input: BuildIssuesInput, angularMajor: 
   for (const s of cf.support) if (s.kind !== 'measured-growth') evidence.push(s.detail);
   for (const r of input.retained) {
     if (r.constructorName === f.location.className || r.constructorName.includes(f.location.className)) {
+      // Both numbers, and what each one means: shallow is the objects
+      // themselves, retained is what they keep alive - the real cost.
       evidence.push(
-        `${r.constructorName}: ${r.countDelta} more instance(s) still alive after the test than before it.`,
+        `${r.constructorName}: ${r.countDelta} more instance(s) still alive after the test than before it, ` +
+          'seen again in a second, separate browser run with memory snapshots' +
+          (r.retainedBytesDelta !== undefined
+            ? ` - together they keep ${perVisit(r.retainedBytesDelta).replace('+', '')} of memory alive ` +
+              `(retained size; the objects themselves are only ${perVisit(r.bytesDelta).replace('+', '')}).`
+            : '.'),
       );
     }
   }

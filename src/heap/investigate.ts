@@ -23,7 +23,10 @@ import { loadHeapSnapshot, buildReverseEdges } from './parse';
 import {
   compareSnapshots,
   findDetachedNodes,
+  findNewNodesByName,
   findNodesByName,
+  isGenericBucket,
+  maxNodeId,
   summariseSnapshot,
   type DetachedGroup,
   type SnapshotComparison,
@@ -56,7 +59,14 @@ export interface RetainedObjectFinding {
   countAfter: number;
   countDelta: number;
   perIteration?: number;
+  /** Change in SHALLOW size: what the objects weigh by themselves. */
   bytesDelta: number;
+  /**
+   * Change in RETAINED size: what the growth keeps alive. This - not the
+   * shallow number - is what the leak costs; a tiny closure holding a large
+   * tree has an insignificant shallow size and a large retained one.
+   */
+  retainedBytesDelta?: number;
   paths: RetainingPath[];
   explanation: string;
   /** True when every path found is rooted in the debugger, not the app. */
@@ -183,11 +193,15 @@ export async function investigateHeap(
     });
 
     report('comparing');
+    report('working out retained size (what each kind of object keeps alive)');
     const comparison = compareSnapshots(
-      summariseSnapshot(snapBefore),
-      summariseSnapshot(snapAfter),
+      summariseSnapshot(snapBefore, { onProgress: (m) => report(`  before: ${m}`) }),
+      summariseSnapshot(snapAfter, { onProgress: (m) => report(`  after:  ${m}`) }),
       { iterations, minCountDelta: 2 },
     );
+    for (const note of [comparison.before.retainedNote, comparison.after.retainedNote]) {
+      if (note !== undefined && !warnings.includes(note)) warnings.push(note);
+    }
 
     const detached = findDetachedNodes(snapAfter);
 
@@ -199,7 +213,13 @@ export async function investigateHeap(
      * --trace-top 0, or when nothing grew, spends all of that to answer a
      * question nobody asked.
      */
-    const toTrace = traceTop > 0 ? comparison.grew.slice(0, traceTop) : [];
+    // Explain application classes first. Array and Object grow in every heap
+    // and their retaining chains name nothing fixable; they stay in the table
+    // but only get the trace budget when nothing more specific grew.
+    const specific = comparison.grew.filter((d) => !isGenericBucket(d.name));
+    const traceCandidates = specific.length > 0 ? specific : comparison.grew;
+    const toTrace = traceTop > 0 ? traceCandidates.slice(0, traceTop) : [];
+    const maxIdBefore = maxNodeId(snapBefore);
     const findings: RetainedObjectFinding[] = [];
 
     if (toTrace.length === 0) {
@@ -226,8 +246,9 @@ export async function investigateHeap(
 
     for (const delta of toTrace) {
       if (reverse === undefined) break;
-      const candidates = findNodesByName(snapAfter, delta.name, 1);
-      const target = candidates[0];
+      // An instance the loop created, not whichever one happens to come first.
+      const fresh = findNewNodesByName(snapAfter, delta.name, maxIdBefore, 1);
+      const target = fresh[0] ?? findNodesByName(snapAfter, delta.name, 1)[0];
       if (target === undefined) continue;
 
       const paths = findRetainingPaths(snapAfter, reverse, target, { maxPaths: 3 });
@@ -241,6 +262,7 @@ export async function investigateHeap(
         countDelta: delta.countDelta,
         ...(delta.perIteration !== undefined ? { perIteration: delta.perIteration } : {}),
         bytesDelta: delta.bytesDelta,
+        ...(delta.retainedDelta !== undefined ? { retainedBytesDelta: delta.retainedDelta } : {}),
         paths,
         explanation:
           best !== undefined

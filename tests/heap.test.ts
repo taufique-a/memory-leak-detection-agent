@@ -216,6 +216,7 @@ describe('compareSnapshots', () => {
       { name: 'Widget', type: 'object', count: 10, selfSizeBytes: 1000 },
       { name: 'Stable', type: 'object', count: 5, selfSizeBytes: 500 },
     ],
+    retainedComputed: false,
   };
 
   it('reports constructors that grew, largest byte gain first', () => {

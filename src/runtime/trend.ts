@@ -194,6 +194,46 @@ export function analyseTrend(
       'growth was observed in this scenario.';
   }
 
+  /**
+   * Has the growth stopped?
+   *
+   * A straight line through a curve that rises and then flattens still has a
+   * strong slope and a good R-squared - which is exactly what a cache filling
+   * to its bound looks like, and it would be reported as a leak. A leak keeps
+   * its slope; something that fills to a limit slows to nothing. So compare
+   * the slope of the last stretch with the whole run: if it has collapsed,
+   * this is not a steady leak, and saying so is more honest than a confident
+   * verdict that a longer run would overturn.
+   *
+   * Listeners still climbing overrides this: a registration leak does not
+   * plateau just because the heap happened to.
+   */
+  if (verdict === 'GROWING') {
+    if (analysed.length >= 8) {
+      const tailLength = Math.max(4, Math.ceil(analysed.length * 0.4));
+      const tailSamples = analysed.slice(analysed.length - tailLength);
+      const tail = fitLine(tailSamples.map((s, i): [number, number] => [i, s.jsHeapUsedBytes]));
+      const tailListeners = fitLine(tailSamples.map((s, i): [number, number] => [i, s.jsEventListeners]));
+      if (tail.slope < heap.slope * 0.25 && tail.slope < minSlope && tailListeners.slope < 0.5) {
+        verdict = 'INCONCLUSIVE';
+        explanation =
+          `Heap rose by ${formatMb(totalDeltaBytes)} over the run, but the growth stopped: the ` +
+          `last ${tailLength} measurements changed by only ${formatMb(tail.slope)} per iteration, ` +
+          `against ${formatMb(heap.slope)} over the whole run. That is what a cache or pool ` +
+          'filling up to its limit looks like, and it is not what a steady leak looks like.';
+        caveats.push(
+          'Run more iterations. If memory stays level it was filling to a bound; if it starts ' +
+            'climbing again it is a leak.',
+        );
+      }
+    } else {
+      caveats.push(
+        `Only ${analysed.length} measurements after warm-up, too few to tell whether the growth is ` +
+          'levelling off (a cache filling up) or continuing (a leak). More iterations would settle it.',
+      );
+    }
+  }
+
   /* ---- corroborating signals ---- */
   if (nodes.slope >= 10) {
     caveats.push(

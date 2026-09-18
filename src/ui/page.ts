@@ -1563,7 +1563,12 @@ function renderRound(r) {
     html += '<div class="issue"><h3>What is piling up in memory</h3>' +
       r.retained.map((o) => '<div class="sec"><p><b>' + esc(o.constructorName) + '</b> — ' +
         o.countDelta + ' more still alive after the test' +
-        (o.perIteration !== undefined ? ' (about ' + o.perIteration.toFixed(1) + ' per visit)' : '') + '</p>' +
+        (o.perIteration !== undefined ? ' (about ' + o.perIteration.toFixed(1) + ' per visit)' : '') +
+        (o.retainedBytesDelta !== undefined
+          ? '<br><span class="sub">keeps <b>' + esc(perVisitText(o.retainedBytesDelta).replace('+', '')) +
+            '</b> alive in total (retained size); the objects themselves are ' +
+            esc(perVisitText(o.bytesDelta).replace('+', '')) + ' (shallow size)</span>'
+          : '') + '</p>' +
         (o.heldBy ? '<details><summary class="sub">what is holding it</summary><p class="sub">' + esc(o.heldBy) +
           '</p></details>' : '') + '</div>').join('') +
       '</div>';
@@ -1663,8 +1668,8 @@ function renderVerify(v) {
     '<p>' + esc(v.explanation) + '</p>' +
     '<div class="facts2">' +
       fact('Changed', files.map((f) => openLink(f, 0)).join(', ')) +
-      v.checks.map((ch) => fact(ch.name === 'build' ? 'Build' : ch.name,
-        ch.skipped ? 'no build script' : ch.passed ? 'passed' : 'failed')).join('') +
+      v.checks.map((ch) => fact(ch.name === 'build' ? 'Build' : ch.name.charAt(0).toUpperCase() + ch.name.slice(1),
+        ch.skipped ? 'not run — ' + esc(ch.note || 'nothing to run') : ch.passed ? 'passed' : 'failed')).join('') +
       (c ? fact('Left behind per visit', esc(perVisitText(c.beforeBytesPerIteration)) + ' → ' +
         esc(perVisitText(c.afterBytesPerIteration))) : '') +
       fact('Flagged code resolved', v.resolvedIssues.length + ' of ' + countIssuesIn(v.changes)) +

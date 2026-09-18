@@ -55,7 +55,7 @@ import { loadScenarioFile } from '../scenario/load';
 import { runScenario, type ScenarioRun } from '../scenario/runner';
 import type { Scenario } from '../scenario/types';
 import { openInEditor } from '../utils/openInEditor';
-import { runVerification } from '../verify/checks';
+import { isSafeArg, runVerification, type CheckDefinition } from '../verify/checks';
 import { compareBeforeAfter, deriveVerificationStatus } from '../verify/compare';
 
 // The UI server starts every command with the agent folder as its working directory.
@@ -350,6 +350,36 @@ async function apply(dir: string, request: FindFixRequest, scenario: Scenario): 
   return verification.status === 'VERIFIED' ? 0 : 1;
 }
 
+function readScripts(projectRoot: string): Record<string, string> {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')) as {
+      scripts?: Record<string, string>;
+    };
+    return pkg.scripts ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Whether the project's tests can be run for just the files that changed.
+ *
+ * Only Jest, and only when its script is not a watcher: `ng test` and
+ * `jest --watch` never exit, and a verification that hangs forever is worse
+ * than one that says plainly it did not run tests.
+ */
+export function planRelatedTests(script: string | undefined, files: string[]): { run: true } | { run: false; why: string } {
+  if (script === undefined) return { run: false, why: 'the project has no test script' };
+  if (!/\bjest\b/.test(script)) {
+    return { run: false, why: 'the test script is not Jest, and other runners are not run automatically (they may watch forever)' };
+  }
+  if (/--watch/.test(script)) return { run: false, why: 'the test script watches for changes and never finishes' };
+  if (files.length === 0 || !files.every(isSafeArg)) {
+    return { run: false, why: 'a changed file path could not be passed safely to the test runner' };
+  }
+  return { run: true };
+}
+
 async function verify(
   dir: string,
   request: FindFixRequest,
@@ -370,30 +400,56 @@ async function verify(
   };
   const changedFiles = changes.map((c) => c.file);
 
-  /* ---- 1. it still builds ---- */
+  /* ---- 1. it still builds, and the tests that cover these files still pass ---- */
   stage('verify', 'start', 'Building the project with the change');
-  const build = await runVerification({
-    projectRoot,
-    checks: [{ name: 'build', script: 'build', purpose: 'The application still compiles.', timeoutMs: 1_800_000 }],
-    onProgress: say,
+  const scripts = readScripts(projectRoot);
+  const wanted: CheckDefinition[] = [
+    { name: 'build', script: 'build', purpose: 'The application still compiles.', timeoutMs: 1_800_000 },
+  ];
+  const testPlan = planRelatedTests(scripts['test'], changedFiles);
+  if (testPlan.run) {
+    wanted.push({
+      name: 'related tests',
+      script: 'test',
+      purpose: 'Existing tests that cover the changed files still pass.',
+      timeoutMs: 1_800_000,
+      args: ['--findRelatedTests', ...changedFiles, '--passWithNoTests'],
+    });
+  }
+  const build = await runVerification({ projectRoot, checks: wanted, onProgress: say });
+
+  const checks: FindFixVerification['checks'] = build.checks.map((c) => {
+    // Jest exits 0 when --passWithNoTests finds nothing. That is not "the tests
+    // passed" - nothing ran - and saying so would be a false reassurance.
+    const nothingRan = c.name === 'related tests' && c.passed && /No tests found/i.test(c.output);
+    return {
+      name: c.name,
+      passed: c.passed,
+      skipped: c.skippedReason !== undefined || nothingRan,
+      durationMs: c.durationMs,
+      ...(nothingRan ? { note: 'no existing test covers the changed files' } : {}),
+      ...(c.skippedReason !== undefined ? { note: c.skippedReason } : {}),
+      ...(c.passed ? {} : { tail: c.output.split('\n').slice(-12).join('\n') }),
+    };
   });
-  const checks = build.checks.map((c) => ({
-    name: c.name,
-    passed: c.passed,
-    skipped: c.skippedReason !== undefined,
-    durationMs: c.durationMs,
-    ...(c.passed ? {} : { tail: c.output.split('\n').slice(-12).join('\n') }),
-  }));
-  const built = build.checks.every((c) => c.passed || c.skippedReason !== undefined);
-  if (!built) {
-    stage('verify', 'fail', 'the project no longer builds with this change');
+  if (!testPlan.run) {
+    checks.push({ name: 'related tests', passed: false, skipped: true, durationMs: 0, note: testPlan.why });
+  }
+
+  const failedCheck = checks.find((c) => !c.passed && !c.skipped);
+  const anythingRan = checks.some((c) => !c.skipped);
+  if (failedCheck !== undefined || !anythingRan) {
+    const testsFailed = failedCheck?.name === 'related tests';
+    stage('verify', 'fail', testsFailed ? 'existing tests fail with this change' : 'the project no longer builds with this change');
     return {
       ...base,
       status: 'CHECKS_FAILED',
       headline: 'Fix Applied — Verification Still Shows an Issue',
-      explanation:
-        `The project does not build with ${changes.length === 1 ? 'this change' : 'these changes'}. It ` +
-        'should be undone - press Undo this fix to put every file back exactly as it was.',
+      explanation: testsFailed
+        ? `Tests that cover the changed files fail with ${changes.length === 1 ? 'this change' : 'these changes'}, so it may have ` +
+          'broken existing behaviour. It should be undone - press Undo to put every file back exactly as it was.'
+        : `The project does not build with ${changes.length === 1 ? 'this change' : 'these changes'}. It ` +
+          'should be undone - press Undo this fix to put every file back exactly as it was.',
       checks,
       checksPassed: false,
       resolvedIssues: [],

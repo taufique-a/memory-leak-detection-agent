@@ -179,7 +179,10 @@ function printReport(r: HeapInvestigationResult): void {
   if (c.grew.length > 0) {
     heading('CONSTRUCTORS THAT GREW');
     console.log(
-      colour.dim('  ' + 'constructor'.padEnd(36) + 'before'.padStart(8) + 'after'.padStart(9) + 'delta'.padStart(9) + '  per iter'),
+      colour.dim(
+        '  ' + 'constructor'.padEnd(36) + 'before'.padStart(8) + 'after'.padStart(9) + 'delta'.padStart(9) +
+          '  per iter' + 'shallow'.padStart(11) + 'retained'.padStart(11),
+      ),
     );
     for (const d of c.grew.slice(0, 12)) {
       const per = d.perIteration !== undefined ? d.perIteration.toFixed(1) : '-';
@@ -190,9 +193,19 @@ function printReport(r: HeapInvestigationResult): void {
           String(d.countAfter).padStart(9) +
           colour.yellow(`+${d.countDelta}`.padStart(9)) +
           '  ' +
-          per,
+          per.padEnd(8) +
+          mb(d.bytesDelta).padStart(11) +
+          (d.retainedDelta !== undefined ? mb(d.retainedDelta).padStart(11) : '        n/a'),
       );
     }
+    console.log('');
+    info(
+      colour.dim(
+        'shallow  = what the objects weigh by themselves.  retained = what would be freed if they ' +
+          'were released: themselves plus everything only they keep alive. The retained column is ' +
+          'what the growth actually costs.',
+      ),
+    );
   }
 
   const detached = r.detachedExcludingArtifacts;
@@ -217,7 +230,11 @@ function printReport(r: HeapInvestigationResult): void {
       const tag = f.onlyToolingArtifacts ? colour.dim('[tooling artifact]') : '';
       console.log(
         `  ${colour.bold(f.constructorName)}  ` +
-          colour.dim(`${f.countBefore} -> ${f.countAfter} (+${f.countDelta}, ${mb(f.bytesDelta)})`) +
+          colour.dim(
+            `${f.countBefore} -> ${f.countAfter} (+${f.countDelta}, shallow ${mb(f.bytesDelta)}` +
+              (f.retainedBytesDelta !== undefined ? `, retained ${mb(f.retainedBytesDelta)}` : '') +
+              ')',
+          ) +
           ` ${tag}`,
       );
       console.log(`    ${colour.dim(f.explanation)}`);

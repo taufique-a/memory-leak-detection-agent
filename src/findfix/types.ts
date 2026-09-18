@@ -83,7 +83,10 @@ export interface RetainedObject {
   constructorName: string;
   countDelta: number;
   perIteration?: number;
+  /** Shallow: what these objects weigh by themselves. */
   bytesDelta: number;
+  /** Retained: what they keep alive - the number that says what the growth costs. */
+  retainedBytesDelta?: number;
   /** Plain-language retaining chain, when one was traced. */
   heldBy?: string;
 }
@@ -172,7 +175,7 @@ export interface FindFixVerification {
   status: VerifyStatus;
   headline: string;
   explanation: string;
-  checks: Array<{ name: string; passed: boolean; skipped: boolean; durationMs: number; tail?: string }>;
+  checks: Array<{ name: string; passed: boolean; skipped: boolean; durationMs: number; tail?: string; note?: string }>;
   checksPassed: boolean;
   comparison?: VerificationComparison;
   /** Which of the ORIGINALLY SELECTED issues are no longer flagged by a fresh scan. */

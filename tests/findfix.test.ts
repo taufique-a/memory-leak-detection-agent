@@ -16,7 +16,8 @@ import * as path from 'node:path';
 
 import * as ts from 'typescript';
 
-import { runFindFix, parseFindFixArgs } from '../src/commands/findFix';
+import { runFindFix, parseFindFixArgs, planRelatedTests } from '../src/commands/findFix';
+import { isSafeArg } from '../src/verify/checks';
 import { addCleanup } from '../src/fix/addCleanup';
 import { isFailure } from '../src/fix/addOnDestroy';
 import { proposeFix } from '../src/fix/propose';
@@ -434,5 +435,40 @@ describe('undo', () => {
     fs.writeFileSync(path.join(root, file), fixed + '// someone kept working\n', 'utf8');
     expect(await runFindFix(['undo', '--session', session])).toBe(1);
     expect(fs.readFileSync(path.join(root, file), 'utf8')).toContain('someone kept working');
+  });
+});
+
+describe('verifying with the tests that cover the changed files', () => {
+  it('runs Jest, limited to the changed files', () => {
+    expect(planRelatedTests('jest --config jest.config.js --runInBand', ['src/app/a.component.ts'])).toEqual({ run: true });
+  });
+
+  it.each([
+    ['ng test', 'is not Jest'],
+    ['karma start', 'is not Jest'],
+    ['jest --watch', 'never finishes'],
+    ['jest --watchAll', 'never finishes'],
+  ])('does NOT run "%s" - it may never exit', (script, why) => {
+    const plan = planRelatedTests(script, ['src/app/a.ts']);
+    expect(plan.run).toBe(false);
+    expect('why' in plan && plan.why).toContain(why);
+  });
+
+  it('says so when there is no test script at all', () => {
+    const plan = planRelatedTests(undefined, ['src/app/a.ts']);
+    expect(plan.run).toBe(false);
+    expect('why' in plan && plan.why).toContain('no test script');
+  });
+
+  it('refuses a file path that could be read as more command', () => {
+    for (const bad of ['src/a b.ts', 'src/a;rm.ts', 'src/$(id).ts', '../x.ts', 'src/a&b.ts']) {
+      expect(planRelatedTests('jest', [bad]).run).toBe(false);
+      expect(isSafeArg(bad)).toBe(false);
+    }
+    expect(isSafeArg('src/app/io-matrix/io-cell.component.ts')).toBe(true);
+  });
+
+  it('never runs every test by accident when there are no files to narrow to', () => {
+    expect(planRelatedTests('jest', []).run).toBe(false);
   });
 });
