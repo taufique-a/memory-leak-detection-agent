@@ -80,7 +80,7 @@ export async function runUi(args: string[]): Promise<number> {
     ),
   );
   console.log('');
-  warn('The UI never modifies your source. Applying a fix is done from a terminal.');
+  warn('Only "Apply Fix" on the Find & fix page changes your source - one reviewed change at a time, with Undo.');
   console.log('');
   info(colour.dim('Press Ctrl+C to stop the server.'));
   console.log('');

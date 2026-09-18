@@ -123,6 +123,9 @@ describe('planRouteSweepTargets', () => {
       builtAt: 0,
       durationMs: 0,
       controlCandidates: [],
+      routes: [],
+      modules: [],
+      relations: new Map(),
       entities: [
         entity({ name: 'Home', routes: ['/'] }),
         entity({ name: 'Devices', routes: ['/devices'] }),
@@ -279,6 +282,9 @@ describe('runRouteSweep', () => {
     builtAt: 0,
     durationMs: 0,
     controlCandidates: [home, devices],
+    routes: [],
+    modules: [],
+    relations: new Map(),
     entities: [home, devices, admin, broken],
   };
 

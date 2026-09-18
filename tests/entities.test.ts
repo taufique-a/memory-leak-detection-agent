@@ -23,7 +23,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { getEntityIndex, searchEntities } from '../src/ui/entities';
-import { generateScenario, writeGeneratedScenario } from '../src/ui/generateScenario';
+import { generateScenario } from '../src/ui/generateScenario';
 
 let fixtureRoot: string;
 
@@ -362,42 +362,35 @@ describe('generated scenarios', () => {
     });
   });
 
-  it('writes the file, and rewrites its own output happily', () => {
+  it('can navigate inside the app when the page has no nav link to the route', () => {
     const { target, control } = pair();
-    const generated = generateScenario({ target, control, baseUrl: 'http://x.test' });
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-agent-gen-'));
-    try {
-      expect(writeGeneratedScenario(dir, generated)).toEqual({ file: generated.file });
-      expect(writeGeneratedScenario(dir, generated)).toEqual({ file: generated.file });
-      const written = JSON.parse(fs.readFileSync(path.join(dir, generated.file), 'utf8')) as {
-        description: string;
-      };
-      expect(written.description.startsWith('Generated.')).toBe(true);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+    const { scenario } = generateScenario({
+      target,
+      control,
+      baseUrl: 'http://x.test',
+      inAppNavigation: true,
+    });
+    const scripts = scenario.steps.filter((s) => s.action === 'evaluate');
+    expect(scripts).toHaveLength(2);
+    // A visible link first, the router's history listener otherwise - and
+    // never a page load, which would wipe memory and hide the leak.
+    for (const s of scripts) {
+      const script = (s as { script: string }).script;
+      expect(script).toContain('link.click()');
+      expect(script).toContain('popstate');
+      expect(script).not.toMatch(/location\.(href|assign|reload)/);
     }
+    expect(scenario.steps.some((s) => s.action === 'goto')).toBe(false);
   });
 
-  it('REFUSES to overwrite a hand-written scenario', () => {
-    // Silently replacing a scenario somebody tuned by hand is the kind of
-    // data loss that destroys trust in a tool that also edits code.
+  it('uses the route it was given, not only the first one the component has', () => {
     const { target, control } = pair();
-    const generated = generateScenario({ target, control, baseUrl: 'http://x.test' });
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-agent-gen-'));
-    try {
-      const target_ = path.join(dir, generated.file);
-      fs.mkdirSync(path.dirname(target_), { recursive: true });
-      fs.writeFileSync(
-        target_,
-        JSON.stringify({ description: 'Carefully tuned by a human.' }),
-        'utf8',
-      );
-
-      const result = writeGeneratedScenario(dir, generated);
-      expect('error' in result && result.error).toContain('Refusing to overwrite');
-      expect(fs.readFileSync(target_, 'utf8')).toContain('Carefully tuned');
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
+    const { scenario } = generateScenario({
+      target: { ...target, routes: ['/energy', '/energy/alt'] },
+      control,
+      baseUrl: 'http://x.test',
+      targetRoute: '/energy/alt',
+    });
+    expect(JSON.stringify(scenario.steps)).toContain('/energy/alt');
   });
 });

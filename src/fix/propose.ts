@@ -26,6 +26,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { addCleanup } from './addCleanup';
 import { addOnDestroyWithUnsubscribe, isFailure } from './addOnDestroy';
 import type { CorrelatedFinding } from '../types/correlation';
 import type { Finding } from '../types/finding';
@@ -117,13 +118,22 @@ export function proposeFix(
    * addOnDestroy.ts for what it refuses to touch.
    */
   const missingOnDestroy = finding.lifecycleIssues?.find((i) => i.code === 'ONDESTROY_MISSING');
+  let createRefusal: string | undefined;
   if (missingOnDestroy !== undefined) {
     const created = createOnDestroy(finding, source, absolute);
-    if (created !== undefined) return created;
+    if (created !== undefined && created.safety !== 'manual-only') return created;
+    createRefusal = created?.rationale;
   }
 
+  /**
+   * The general case: subscriptions or intervals nothing releases, in a
+   * class that may already have an ngOnDestroy doing other teardown.
+   */
+  const cleanup = CLEANUP_KINDS.has(finding.kind) ? createCleanup(finding, source, absolute) : undefined;
+  if (cleanup !== undefined && 'newContent' in cleanup) return cleanup;
+
   const emptyOnDestroy = finding.lifecycleIssues?.find((i) => i.code === 'ONDESTROY_EMPTY');
-  if (emptyOnDestroy !== undefined) {
+  if (emptyOnDestroy !== undefined && cleanup === undefined) {
     return describeManualFix(
       finding,
       'ngOnDestroy exists but is empty. What belongs in it depends on what this ' +
@@ -133,8 +143,53 @@ export function proposeFix(
 
   return describeManualFix(
     finding,
-    'No unambiguous automatic fix exists for this pattern.',
+    (cleanup !== undefined && 'reason' in cleanup ? cleanup.reason : undefined) ?? createRefusal ?? 'No unambiguous automatic fix exists for this pattern.',
   );
+}
+
+const CLEANUP_KINDS: ReadonlySet<string> = new Set(['rxjs.subscription', 'timer.interval']);
+
+function createCleanup(
+  finding: Finding,
+  source: string,
+  absolutePath: string,
+): ProposedFix | { reason: string } {
+  const className =
+    finding.operations.find((o) => o.className !== undefined)?.className ?? finding.location.className;
+  const result = addCleanup(source, path.basename(absolutePath), className);
+  if ('reason' in result) return { reason: result.reason };
+
+  const parts: string[] = [];
+  if (result.wrappedSubscriptions > 0) parts.push(`${result.wrappedSubscriptions} subscription(s)`);
+  if (result.clearedIntervals > 0) parts.push(`${result.clearedIntervals} interval timer(s)`);
+  const what = parts.join(' and ');
+
+  return {
+    findingId: finding.id,
+    file: finding.location.file,
+    title: result.extendedExisting
+      ? `Release ${what} in ${className}.ngOnDestroy`
+      : `Add ngOnDestroy to ${className} and release ${what}`,
+    rationale:
+      `${className} starts ${what} and never stops them, so each visit to this page leaves ` +
+      'the previous ones running and everything they reference stays in memory. ' +
+      (result.extendedExisting
+        ? 'Its existing ngOnDestroy is kept as it is; the release is added at the top of it.'
+        : 'This adds an ngOnDestroy that releases them when the component is destroyed.'),
+    safety: 'behavioural',
+    newContent: result.newContent,
+    diff: buildUnifiedDiff(finding.location.file, source, result.newContent),
+    functionalRisks: [
+      'Anything relying on one of these outliving the component will now stop when the ' +
+        'component does. That is usually the bug being fixed and occasionally the behaviour ' +
+        'somebody wanted.',
+      ...result.notes,
+    ],
+    verificationPlan: [
+      'Build and run the application; the page should behave exactly as before.',
+      'Open and leave this page several times and re-measure - the growth should be gone.',
+    ],
+  };
 }
 
 /**

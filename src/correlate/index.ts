@@ -256,6 +256,10 @@ function collectRoutePaths(scenario: Scenario | undefined): string[] {
       const match = /href\s*[*^$]?=\s*["']([^"']+)["']/.exec(step.selector);
       const href = match?.[1];
       if (href !== undefined && href.startsWith('/')) paths.push(href);
+    } else if (step.action === 'evaluate') {
+      // In-app navigation from generateScenario: const want = "/devices";
+      const match = /const want = "([^"]+)"/.exec(step.script);
+      if (match?.[1] !== undefined && match[1].startsWith('/')) paths.push(match[1]);
     }
   }
   return [...new Set(paths)];

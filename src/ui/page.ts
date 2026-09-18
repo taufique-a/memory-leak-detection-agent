@@ -37,14 +37,9 @@ function esc(text: string): string {
 const STEP_TITLES: Record<number, string> = {
   0: 'See how it works',
   1: 'Is everything ready?',
-  2: 'Look at your code',
+  2: 'Find & fix',
   3: 'Connect to your app',
-  4: 'Watch the memory',
-  5: 'Find what is holding it',
-  6: 'Put the evidence together',
-  7: 'Fix it',
   8: 'Write it up',
-  9: 'Check every route',
 };
 
 /**
@@ -60,25 +55,14 @@ const STEP_PAGE: Record<number, 'setup' | 'fix' | 'report'> = {
   1: 'setup',
   2: 'fix',
   3: 'setup',
-  4: 'fix',
-  5: 'fix',
-  6: 'fix',
-  7: 'fix',
   8: 'report',
-  9: 'fix',
 };
 
 const STEP_NOTES: Record<number, string> = {
   0: 'Uses a built-in page that leaks on purpose. Nothing to install, no app, no login. Good place to start.',
   1: 'Two quick checks. The second one matters far more than it sounds - read its note.',
-  2: 'Reads your source files and nothing else. No browser, no login, and it never changes a thing.',
   3: 'Your app needs to be running. A real browser opens and you sign in yourself - the tool never sees your password.',
-  4: 'Opens your app and repeats a journey, watching how much memory survives each time.',
-  5: 'Takes snapshots of the memory itself. Slower, but this is the part that names the actual object.',
-  6: 'Checks whether the code you were worried about is the code the browser actually struggled with.',
-  7: 'Shows you what would change first. Actually changing it is a separate button and asks about every edit.',
   8: 'A document you can send to someone who was not here.',
-  9: 'Optional. Walks every route the router can reach automatically, instead of the one page you picked above, and reports which ones did not clean up after themselves.',
 };
 
 export function renderPage(options: PageOptions): string {
@@ -96,8 +80,8 @@ export function renderPage(options: PageOptions): string {
       params: a.params,
       interactive: a.interactive === true,
       interactiveHint: a.interactiveHint ?? '',
-      requiresConfirmation: a.requiresConfirmation === true,
-      confirmWord: a.confirmWord ?? '',
+      writes: a.writes === true,
+      driven: a.driven === true,
     })),
   );
 
@@ -398,6 +382,66 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 .crow .cdt{flex:1;min-width:0}
 .crow .cfx{color:var(--muted);font-size:.78rem;display:block;margin-top:.1rem}
 
+/* ---- find & fix ---- */
+.modes{display:flex;gap:.4rem;margin:0 0 .8rem;flex-wrap:wrap}
+.mode{flex:1 1 12rem;background:var(--card);color:var(--fg);border:1px solid var(--line);
+  border-radius:7px;padding:.6rem .8rem;text-align:left;font-size:.9rem;line-height:1.35}
+.mode small{display:block;color:var(--muted);font-size:.75rem;font-weight:400}
+.mode.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);font-weight:600}
+.ffform{display:flex;flex-direction:column;gap:.7rem}
+.ffform label{max-width:none}
+.ffform select,.ffform input[type=text]{max-width:none}
+.navpair{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:.5rem;align-items:end}
+.navpair .arrow{padding-bottom:.45rem;color:var(--muted);font-size:1.1rem}
+@media (max-width:620px){.navpair{grid-template-columns:1fr}.navpair .arrow{display:none}}
+.times{display:flex;gap:.35rem;align-items:center;flex-wrap:wrap}
+.times button{background:transparent;color:var(--fg);border:1px solid var(--line);padding:.3rem .75rem}
+.times button.on{border-color:var(--accent);color:var(--accent);font-weight:600}
+.times input{width:6rem}
+.golive{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+.stepper{list-style:none;margin:0;padding:.5rem 1rem .8rem}
+.stage{display:flex;gap:.65rem;padding:.4rem 0;align-items:flex-start;color:var(--muted)}
+.stage .dot{flex:0 0 1.35rem;height:1.35rem;border-radius:50%;border:2px solid var(--line);
+  display:grid;place-items:center;font-size:.7rem;font-weight:700;margin-top:.05rem}
+.stage .txt{flex:1;min-width:0;font-size:.86rem}
+.stage .txt b{font-weight:600}
+.stage .det{display:block;font-size:.76rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stage .el{font-size:.72rem;white-space:nowrap}
+.stage.active{color:var(--fg)}
+.stage.active .dot{border-color:var(--accent);border-top-color:transparent;animation:spin .9s linear infinite}
+.stage.done{color:var(--fg)}
+.stage.done .dot{border-color:var(--ok);color:var(--ok)}
+.stage.skip .dot{border-style:dashed}
+.stage.fail{color:var(--fg)}
+.stage.fail .dot{border-color:var(--bad);color:var(--bad)}
+.verdict{border:1px solid var(--line);border-left-width:5px;border-radius:8px;padding:.85rem 1rem;
+  margin:0 0 1rem;background:var(--card)}
+.verdict.ok{border-left-color:var(--ok)}
+.verdict.warn{border-left-color:var(--warn)}
+.verdict.bad{border-left-color:var(--bad)}
+.verdict h3{margin:0 0 .3rem;font-size:1.02rem}
+.facts2{display:flex;flex-wrap:wrap;gap:.4rem 1.2rem;margin-top:.5rem;font-size:.82rem;color:var(--muted)}
+.facts2 b{color:var(--fg)}
+.issue{border:1px solid var(--line);border-radius:8px;background:var(--card);margin:0 0 1rem;overflow:hidden}
+.issue > h3{margin:0;padding:.75rem 1rem;font-size:.98rem;border-bottom:1px solid var(--line);
+  display:flex;gap:.5rem;align-items:baseline;flex-wrap:wrap}
+.issue .sec{padding:.6rem 1rem;border-bottom:1px solid var(--line)}
+.issue .sec:last-child{border-bottom:0}
+.issue .lbl2{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:.2rem}
+.issue ul{margin:.1rem 0 0;padding-left:1.1rem;font-size:.86rem}
+.issue p{margin:0;font-size:.88rem}
+.snip{font:12px/1.5 ui-monospace,Consolas,"Courier New",monospace;background:var(--code);
+  border-radius:5px;padding:.4rem .6rem;margin-top:.35rem;white-space:pre-wrap;word-break:break-word}
+.fixrow{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+.linkish{background:none;border:0;color:var(--accent);padding:0;font-size:inherit;cursor:pointer;
+  text-decoration:underline;text-underline-offset:2px}
+.fixsec{padding:.7rem 1.1rem;border-bottom:1px solid var(--line);font-size:.88rem}
+.fixsec .lbl2{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:.2rem}
+.fixsec ul{margin:.1rem 0 0;padding-left:1.1rem}
+.splithead{display:flex;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
+  border-bottom:1px solid var(--line)}
+.splithead span{flex:1 1 50%;padding:.35rem .7rem}
+
 /* ---- motion ---- */
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
@@ -415,7 +459,7 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 button{transition:opacity .15s,background .15s}
 .action button:not(:disabled):hover{opacity:.88}
 @media (prefers-reduced-motion:reduce){
-  .spinner,.running #running,.bar span,#reply.on{animation:none}
+  .spinner,.running #running,.bar span,#reply.on,.stage.active .dot{animation:none}
 }
 ul.state{list-style:none;padding:0;margin:.4rem 0 0;font-size:.83rem}
 ul.state li{padding:.15rem 0;color:var(--muted)}
@@ -501,11 +545,11 @@ a{color:var(--accent)}
       <div id="steps-setup"></div>
 
       <div class="banner warn">
-        <strong>Only one button in this whole tool changes your code.</strong> It is on
-        the <em>Find &amp; fix</em> page, it makes you type a confirmation first, and then
-        it shows you every single change and asks about each one on its own. It also
-        refuses to run if you have unsaved work, puts its changes on a separate branch,
-        and tells you how to undo them.
+        <strong>Only one button in this whole tool changes your code: Apply Fix.</strong>
+        It is in the review window on the <em>Find &amp; fix</em> page, which first shows
+        you the file, the existing code and the proposed code side by side. It writes
+        exactly that one change, keeps a copy of the original so Undo puts it back as it
+        was, and never commits or pushes anything.
       </div>
     </div>
 
@@ -513,13 +557,53 @@ a{color:var(--accent)}
     <div class="page" id="page-fix">
       <div class="pagehead">
         <h2>Find &amp; fix</h2>
-        <p>Search for a page, measure it, and see what to do about it.</p>
+        <p>Choose what to check. The agent finds the leak, explains it, prepares the fix,
+          and proves the fix worked.</p>
       </div>
 
-      <div class="banner" id="findBanner">
-        <strong>What do you want to check?</strong>
+      <div class="modes" role="tablist">
+        <button class="mode on" data-mode="route" role="tab">1. Find by route / navigation
+          <small>A page or lazy-loaded module, and how to move around it</small></button>
+        <button class="mode" data-mode="component" role="tab">2. Find by component
+          <small>One component, wherever it is rendered</small></button>
+      </div>
+
+      <!-- 1. by route / navigation -->
+      <div class="banner" id="routeForm">
+        <div class="ffform">
+          <label>Route or lazy-loaded module
+            <select id="ffModule"><option value="">Loading routes&hellip;</option></select>
+          </label>
+          <div class="navpair">
+            <label>Navigation A &mdash; the page to test
+              <select id="ffNavA"></select>
+            </label>
+            <span class="arrow" aria-hidden="true">&#8646;</span>
+            <label>Navigation B &mdash; where to go in between (checked before use)
+              <select id="ffNavB"></select>
+            </label>
+          </div>
+          <label>Navigation times
+            <span class="times" id="ffTimesRoute">
+              <button type="button" data-times="5">5 times</button>
+              <button type="button" data-times="10" class="on">10 times</button>
+              <button type="button" data-times="20">20 times</button>
+              <input type="number" min="5" max="100" value="10" aria-label="Navigation times">
+            </span>
+          </label>
+          <div class="sub" id="ffRouteHint"></div>
+          <div class="golive">
+            <button id="ffRouteGo">Find memory leaks</button>
+            <span class="expect">several minutes on a large project &mdash; progress shows below</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. by component -->
+      <div class="banner" id="componentForm" style="display:none">
+        <strong>Which component?</strong>
         <div class="row" style="margin-top:.5rem">
-          <input type="text" id="entitySearch" placeholder="Type a page or component name — try energy, oee, report">
+          <input type="text" id="entitySearch" placeholder="Type a component name — try energy, oee, report">
           <button class="ghost" id="entityRefresh" title="Read the project files again">rescan</button>
         </div>
         <div class="sortbar">
@@ -530,22 +614,22 @@ a{color:var(--accent)}
           <button data-sort="route">page address</button>
         </div>
         <div class="sub" id="entityStatus" style="margin-top:.4rem">
-          Search every page and component in your project. Pick one and everything else is
-          set up for you.
+          Search every component in your project. Components that are not pages of their own
+          are tested on the page that renders them.
         </div>
         <div id="entityResults"></div>
         <div id="entityPick" style="display:none;margin-top:.6rem"></div>
       </div>
 
-      <div class="panel" id="sweepPanel" style="display:none">
-        <h2><span>Route sweep results</span> <span id="sweepProgress" class="sub"></span></h2>
-        <div id="sweepResults"></div>
+      <!-- progress -->
+      <div class="panel" id="ffProgress" style="display:none;margin-bottom:1rem">
+        <h2><span id="ffProgressTitle">Working</span> <span class="sub" id="ffElapsed"></span></h2>
+        <ol class="stepper" id="ffStages"></ol>
       </div>
 
-      <div class="sub" style="margin:0 0 .6rem">
-        Or work through it step by step:
-      </div>
-      <div id="steps-fix"></div>
+      <!-- 3. issue result -->
+      <div id="ffVerify"></div>
+      <div id="ffResult"></div>
     </div>
 
     <!-- ============ 3. REPORT ============ -->
@@ -573,21 +657,30 @@ a{color:var(--accent)}
 
   </section>
 
-  <div class="modalback" id="approveBack">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="approveTitle" id="approveModal">
-      <h3 id="approveTitle">Apply this change?</h3>
-      <div class="diffToggle" id="diffToggle" style="display:none">
-        <button id="viewUnified">unified</button>
-        <button id="viewSplit">side by side (old | new)</button>
-      </div>
+  <div class="modalback" id="fixBack">
+    <div class="modal split" role="dialog" aria-modal="true" aria-labelledby="fixTitle" id="fixModal">
+      <h3 id="fixTitle">Review the fix</h3>
       <div class="body">
-        <pre id="approveBody"></pre>
-        <div id="approveSplit" style="display:none"></div>
+        <div class="fixsec">
+          <div class="lbl2">File being changed</div>
+          <code id="fixFile"></code>
+          <button class="linkish" id="fixOpen" type="button">open in VS Code</button>
+        </div>
+        <div class="diffToggle" id="diffToggle">
+          <button id="viewSplit" type="button">side by side (existing | proposed)</button>
+          <button id="viewUnified" type="button">unified</button>
+        </div>
+        <div class="splithead" id="fixSplitHead"><span>Existing code</span><span>Proposed code</span></div>
+        <div id="fixSplit"></div>
+        <pre id="fixUnified" style="display:none"></pre>
+        <div class="fixsec"><div class="lbl2">What this changes</div><div id="fixExplain"></div></div>
+        <div class="fixsec"><div class="lbl2">Why this should resolve the issue</div><div id="fixWhy"></div></div>
+        <div class="fixsec"><div class="lbl2">What could be affected</div><ul id="fixRisks"></ul></div>
       </div>
       <div class="foot">
-        <span class="sub" id="approveNote">Nothing is written until you say yes.</span>
-        <button class="ghost" id="approveNo">no, skip it</button>
-        <button id="approveYes">yes, apply it</button>
+        <span class="sub" id="fixNote">Nothing is written until you press Apply Fix.</span>
+        <button class="ghost" id="fixCancel" type="button">cancel</button>
+        <button id="fixApply" type="button">Apply Fix</button>
       </div>
     </div>
   </div>
@@ -853,25 +946,18 @@ function render() {
   const html = { setup: '', fix: '', report: '' };
 
   for (const step of STEPS) {
-    const actions = ACTIONS.filter((a) => a.step === step);
+    const actions = ACTIONS.filter((a) => a.step === step && !isHidden(a));
     if (!actions.length) continue;
     const page = STEP_PAGE[step] || 'fix';
     html[page] += '<div class="step"><h2>' + step + '. ' + esc(STEP_TITLES[step] || '') + '</h2>';
     if (STEP_NOTES[step]) html[page] += '<div class="note">' + esc(STEP_NOTES[step]) + '</div>';
     for (const a of actions) {
-      if (isHidden(a)) continue;
       const blocked = blockedReason(a);
-      html[page] += '<div class="action' + (a.requiresConfirmation ? ' writes' : '') + '">' +
+      html[page] += '<div class="action">' +
         '<h3>' + esc(a.title) + '</h3>' +
         '<div class="summary">' + esc(a.summary) + '</div>' +
         '<details><summary>what is this for?</summary><div class="why">' + esc(a.why) + '</div></details>' +
         '<div class="params">' + a.params.map((p) => paramField(a, p)).join('') + '</div>' +
-        (a.requiresConfirmation
-          ? '<div class="danger">This one edits files in your project. Type <code>' +
-            esc(a.confirmWord) + '</code> below to unlock it.</div>' +
-            '<div class="params"><label>Confirmation' +
-            '<input type="text" id="' + a.id + '_confirm" placeholder="' + esc(a.confirmWord) + '"></label></div>'
-          : '') +
         '<button data-action="' + a.id + '"' + (blocked ? ' disabled' : '') + '>' +
           (blocked ? 'not ready' : 'run this') + '</button>' +
         '<span class="expect">' + esc(a.expect) + '</span>' +
@@ -897,7 +983,6 @@ function render() {
     '</div></div>';
 
   $('steps-setup').innerHTML = html.setup;
-  $('steps-fix').innerHTML = html.fix;
   $('steps-report').innerHTML = html.report;
 
   for (const btn of document.querySelectorAll('button[data-action]')) {
@@ -930,17 +1015,6 @@ async function run(actionId) {
   if (currentRun) return;
   const action = ACTIONS.find((a) => a.id === actionId);
   if (!action) return;
-
-  /* A writing action needs the confirmation word typed exactly. */
-  if (action.requiresConfirmation) {
-    const field = $(action.id + '_confirm');
-    if (!field || field.value.trim() !== action.confirmWord) {
-      $('out').textContent =
-        'Not started.\\n\\nThis action modifies files in your project, so it needs the ' +
-        'word ' + action.confirmWord + ' typed into the confirmation box first.';
-      return;
-    }
-  }
 
   $('out').textContent = '';
   $('status').textContent = '';
@@ -982,24 +1056,12 @@ function attachRun(result, action) {
     $('reply').classList.add('on');
   }
 
-  /* A route sweep gets its own live results table, reset for this run. */
-  if (action.id === 'routeSweep') {
-    sweepRows = [];
-    $('sweepResults').innerHTML = '';
-    $('sweepProgress').textContent = '';
-    $('sweepPanel').style.display = 'block';
-  } else {
-    $('sweepPanel').style.display = 'none';
-  }
-
   $('out').textContent += '$ memory-agent ' + result.args.join(' ') + '\\n\\n';
 
-  proposalLines = [];
   source = new EventSource('/api/stream?id=' + result.id + '&token=' + TOKEN);
   source.onmessage = (event) => {
     const data = JSON.parse(event.data);
     if (data.done) {
-      closeApproval();
       finish(data.exitCode);
       return;
     }
@@ -1007,13 +1069,13 @@ function attachRun(result, action) {
     const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
     out.textContent += data.line + '\\n';
     if (atBottom) out.scrollTop = out.scrollHeight;
-    watchForApproval(data.line);
-    if (currentActionId === 'routeSweep') watchForSweepLine(data.line);
+    if (currentActionId.indexOf('findfix') === 0) watchFindFixLine(data.line);
   };
   source.onerror = () => finish(null);
 }
 
-function finish(exitCode) {
+async function finish(exitCode) {
+  const finishedAction = currentActionId;
   if (source) { source.close(); source = null; }
   currentRun = null;
   $('running').textContent = 'nothing running';
@@ -1040,129 +1102,627 @@ function finish(exitCode) {
     void checkAlreadyServing();
     void checkServed();
   }
+
+  if (finishedAction.indexOf('findfix') === 0) await findFixFinished(finishedAction, exitCode);
 }
 
 /* ------------------------------------------------------------------ */
-/* The approval dialog                                                 */
+/* Find & fix                                                          */
 /* ------------------------------------------------------------------ */
 
 /**
- * Everything printed since the last decision.
- *
- * The command writes the proposal - title, rationale, diff, risks - and
- * then asks on stdin. The console has all of it, but a diff that has
- * already scrolled past is not something anybody re-reads before typing y.
- * So it is buffered and shown in a dialog that stops everything else.
+ * The stages a scan and a fix go through, in the order they are shown.
+ * The keys match the "@@FF stage <key> <state> <text>" lines that
+ * "memory-agent findfix" prints - see src/findfix/session.ts.
  */
-let proposalLines = [];
+const FF_STAGES = [
+  ['analyze', 'Analyzing project'],
+  ['route', 'Finding route'],
+  ['navigate', 'Running navigation test'],
+  ['memory', 'Analyzing memory'],
+  ['rootcause', 'Finding root cause'],
+  ['prepare', 'Preparing fix'],
+  ['apply', 'Applying fix'],
+  ['verify', 'Verifying'],
+];
+const FF_LINE = /^@@FF (stage|result|opened) (\\S+)(?: (\\S+))?(?: (.*))?$/;
 
-/** Matches the question the fix command asks for each change. */
-const APPROVAL = /^\\s*Apply "(.+)" to (.+)\\? \\[y\\/N\\]/;
+/** The scan in progress, remembered across reloads: a run takes minutes. */
+let ff = readFF();
+let ffStages = {};
+let ffActive = '';
+let ffTimer = null;
+let ffPending = [];
+let ffOptions = null;
+let ffFix = null;
+let diffView = 'split';
 
-function watchForApproval(line) {
-  const match = APPROVAL.exec(line);
-  if (match === null) {
-    proposalLines.push(line);
-    // Only the current proposal is interesting; older ones would make the
-    // dialog a transcript.
-    if (proposalLines.length > 400) proposalLines.shift();
+function readFF() {
+  try { return JSON.parse(localStorage.getItem('memoryAgentFF') || 'null') || {}; } catch { return {}; }
+}
+function saveFF() {
+  try { localStorage.setItem('memoryAgentFF', JSON.stringify(ff)); } catch { /* private window */ }
+}
+
+/* ---- the two ways in ---- */
+
+function setMode(mode) {
+  for (const b of document.querySelectorAll('.mode')) {
+    b.classList.toggle('on', b.getAttribute('data-mode') === mode);
+  }
+  $('routeForm').style.display = mode === 'route' ? 'block' : 'none';
+  $('componentForm').style.display = mode === 'component' ? 'block' : 'none';
+  if (mode === 'component' && !entityResults.length) searchEntities(false);
+}
+for (const b of document.querySelectorAll('.mode')) {
+  b.addEventListener('click', () => setMode(b.getAttribute('data-mode')));
+}
+
+/**
+ * The routes and lazy modules, read from the project's route files.
+ *
+ * Asked for from two places - opening this page, and the project check
+ * finishing - so it loads once per project, drops a reply that arrives for
+ * a project no longer chosen, and keeps whatever was already picked.
+ */
+let ffOptionsFor = '';
+let ffOptionsLoading = null;
+
+async function loadRouteOptions(refresh) {
+  if (!sourcePath) {
+    $('ffModule').innerHTML = '<option value="">Choose your project on the Set up page first</option>';
     return;
   }
-  openApproval(match[1], match[2]);
+  if (!refresh && ffOptionsLoading && ffOptionsFor === sourcePath) return ffOptionsLoading;
+  const project = sourcePath;
+  ffOptionsFor = project;
+  ffOptionsLoading = (async () => {
+    $('ffRouteHint').innerHTML = '<span class="spinner"></span>Reading the routes in your project...';
+    let data;
+    try {
+      data = await api('/api/findfix/options?project=' + encodeURIComponent(project) + (refresh ? '&refresh=1' : ''));
+    } catch {
+      data = { error: 'Could not reach the server.' };
+    }
+    if (project !== sourcePath) return;
+    if (data.error) {
+      $('ffRouteHint').textContent = data.error;
+      return;
+    }
+    applyRouteOptions(data);
+  })();
+  try {
+    await ffOptionsLoading;
+  } finally {
+    ffOptionsLoading = null;
+  }
 }
 
-/* ------------------------------------------------------------------ */
-/* Route sweep results                                                 */
-/* ------------------------------------------------------------------ */
-
-/**
- * One printed line per route from "memory-agent routes sweep" - see the
- * format contract next to formatRouteSweepLine in src/sweep/routeSweep.ts.
- * Parsed the same way the approval dialog is: watch the plain stdout the
- * command already prints, rather than adding a second, structured channel.
- */
-const SWEEP_LINE = /^ROUTE (\\d+)\\/(\\d+) (\\S+) (\\S+) (GROWING|STABLE|SHRINKING|INCONCLUSIVE|SKIPPED)\\b(.*)$/;
-
-let sweepRows = [];
-
-function watchForSweepLine(line) {
-  const match = SWEEP_LINE.exec(line);
-  if (match === null) return;
-  sweepRows.push({
-    index: match[1],
-    total: match[2],
-    route: match[3],
-    component: match[4],
-    verdict: match[5],
-    detail: (match[6] || '').trim(),
-  });
-  renderSweepResults();
+function applyRouteOptions(data) {
+  const keep = { module: $('ffModule').value || ff.moduleId || '', a: $('ffNavA').value, b: $('ffNavB').value };
+  const pick = (id, value) => {
+    if (value && Array.from($(id).options).some((o) => o.value === value)) $(id).value = value;
+  };
+  ffOptions = data;
+  $('ffModule').innerHTML =
+    '<option value="">Any page in the app (' + data.routes.length + ' pages)</option>' +
+    data.modules.map((m) =>
+      '<option value="' + esc(m.id) + '">' + esc(m.name) + ' — ' + esc(m.path) + ' (lazy-loaded, ' +
+      m.routes.length + (m.routes.length === 1 ? ' page)' : ' pages)') + '</option>').join('');
+  pick('ffModule', keep.module);
+  fillNavA();
+  pick('ffNavA', keep.a);
+  fillNavB('ffNavB', $('ffNavA').value, selectedModule());
+  pick('ffNavB', keep.b);
+  $('ffRouteHint').innerHTML = data.routes.length
+    ? signInHint()
+    : 'No pages that can be opened and measured were found in this project.';
+  if (selectedEntity) fillNavB('ffCompNavB', '', null);
 }
 
-function renderSweepResults() {
-  const last = sweepRows[sweepRows.length - 1];
-  $('sweepProgress').textContent = last ? (last.index + ' / ' + last.total) : '';
+function routeLabel(path) {
+  const r = ffOptions && ffOptions.routes.find((x) => x.path === path);
+  return r ? path + ' — ' + r.component : path;
+}
 
-  $('sweepResults').innerHTML = sweepRows.map((r) => {
-    const cls = r.verdict === 'GROWING' ? 'bad'
-      : (r.verdict === 'INCONCLUSIVE' || r.verdict === 'SKIPPED') ? 'warn' : 'ok';
-    return '<div class="erow">' +
-      '<div class="ename">' + esc(r.component) + '</div>' +
-      '<div class="eroute">' + esc(r.route) + '</div>' +
-      '<span class="etag ' + cls + '">' + esc(r.verdict) +
-        (r.detail ? ' — ' + esc(r.detail) : '') + '</span>' +
-      '</div>';
-  }).join('');
+function selectedModule() {
+  return ffOptions ? ffOptions.modules.find((m) => m.id === $('ffModule').value) : undefined;
+}
+
+function fillNavA() {
+  if (!ffOptions) return;
+  const mod = selectedModule();
+  const list = mod ? ffOptions.routes.filter((r) => mod.routes.indexOf(r.path) !== -1) : ffOptions.routes;
+  $('ffNavA').innerHTML = list
+    .map((r) => '<option value="' + esc(r.path) + '">' + esc(routeLabel(r.path)) + '</option>')
+    .join('');
+  fillNavB('ffNavB', $('ffNavA').value, mod);
 }
 
 /**
- * Which view the approval dialog shows: the raw unified diff, or a
- * side-by-side old-versus-new layout like an editor's diff view.
- *
- * Kept across proposals on purpose - picking "side by side" once should
- * not need repeating for the next fix in the same session.
+ * Where to go in between. A light, shallow page outside the module is the
+ * best choice, so those come first and "let the agent choose" is the default.
  */
-let diffView = 'unified';
+function fillNavB(id, avoid, mod) {
+  const el = $(id);
+  if (!el || !ffOptions) return;
+  const inside = (p) => !!mod && (p === mod.path || p.indexOf(mod.path + '/') === 0);
+  const preferred = ffOptions.controls.filter((p) => p !== avoid && !inside(p));
+  const rest = ffOptions.routes.map((r) => r.path).filter((p) => p !== avoid && preferred.indexOf(p) === -1);
+  el.innerHTML = '<option value="">Let the agent choose a light page</option>' +
+    preferred.concat(rest).map((p) => '<option value="' + esc(p) + '">' + esc(routeLabel(p)) + '</option>').join('');
+}
 
-/**
- * Pull just the diff out of everything printed for this proposal.
- *
- * printProposals (fix.ts) writes title, rationale, the diff, then risks,
- * all through the same channel the unified view already reads. The diff
- * itself always starts with its "--- a/<file>" header - that is the one
- * line nothing else printed could produce - and ends where the risks
- * section begins. Returns undefined when no such header is found, e.g. a
- * manual-only fix that has no diff to show at all.
- */
-function extractDiffBlock(lines) {
-  const start = lines.findIndex((l) => /^ {0,6}---\\s+a\\//.test(l));
-  if (start === -1) return undefined;
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i++) {
-    if (/risks if this is wrong:/i.test(lines[i])) {
-      end = i;
-      break;
+$('ffModule').addEventListener('change', fillNavA);
+$('ffNavA').addEventListener('change', () => fillNavB('ffNavB', $('ffNavA').value, selectedModule()));
+
+/* ---- navigation times ---- */
+
+function wireTimes(id) {
+  const box = $(id);
+  const input = box.querySelector('input');
+  const sync = () => {
+    for (const b of box.querySelectorAll('button')) b.classList.toggle('on', b.getAttribute('data-times') === input.value);
+  };
+  for (const b of box.querySelectorAll('button')) {
+    b.addEventListener('click', () => { input.value = b.getAttribute('data-times'); sync(); });
+  }
+  input.addEventListener('input', sync);
+}
+function timesOf(id) {
+  return Number($(id).querySelector('input').value);
+}
+wireTimes('ffTimesRoute');
+
+/* ---- starting a scan ---- */
+
+function signInHint() {
+  const wanted = originOfUrl(appUrl);
+  if ((state.sessions || []).some((s) => matchesOrigin(s, wanted))) return '';
+  return 'No saved sign-in for ' + esc(appUrl || 'your app') + '. If your app has a login, sign in on ' +
+    'the Set up page first, or the test will stop at the login page.';
+}
+
+function scanBlocked() {
+  if (currentRun) return 'Something is already running. Wait for it to finish.';
+  if (!sourcePath) return 'Choose your project folder on the Set up page first.';
+  if (!appUrl) return 'Set the address your app runs at on the Set up page first.';
+  if (!appUp) return 'Your app is not answering at ' + appUrl + '. Start it, then press check on the Set up page.';
+  return null;
+}
+
+async function startScan(payload, button, hintId) {
+  const blocked = scanBlocked();
+  if (blocked) {
+    $(hintId).innerHTML = '<span class="danger">' + esc(blocked) + '</span>';
+    return;
+  }
+  if (!(payload.iterations >= 5 && payload.iterations <= 100)) {
+    $(hintId).innerHTML = '<span class="danger">Navigation times must be a number from 5 to 100.</span>';
+    return;
+  }
+
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = 'checking routes...';
+  resetStages('find');
+  $('ffProgressTitle').innerHTML = '<span class="spinner"></span>checking routes...';
+  $(hintId).textContent =
+    'Opening both pages with your sign-in first. A route guard can refuse a page however good ' +
+    'your session is, and finding that out now costs seconds instead of minutes.';
+
+  let data;
+  try {
+    data = await api('/api/findfix/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(Object.assign({ project: sourcePath, baseUrl: appUrl }, payload)),
+    });
+  } catch {
+    data = { error: 'Could not reach the server.' };
+  }
+  button.disabled = false;
+  button.textContent = label;
+
+  if (data.error) {
+    $('ffProgress').style.display = 'none';
+    stopTicker();
+    $(hintId).innerHTML = '<div class="danger">' + esc(data.error) + '</div>';
+    return;
+  }
+
+  $(hintId).textContent = '';
+  ff = {
+    session: data.session,
+    mode: payload.mode,
+    moduleId: payload.moduleId || '',
+    targetRoute: data.targetRoute,
+    controlRoute: data.controlRoute,
+    changes: [],
+  };
+  saveFF();
+  $('ffVerify').innerHTML = '';
+  $('ffResult').innerHTML = '';
+  await startFind();
+}
+
+async function startFind() {
+  resetStages('find');
+  $('ffProgressTitle').textContent = 'Finding memory leaks: ' + ff.targetRoute + ' ⇄ ' + ff.controlRoute;
+  const ok = await startAction('findfixFind', { session: ff.session });
+  if (!ok) setStage('analyze', 'fail', 'could not start - see the console');
+}
+
+$('ffRouteGo').addEventListener('click', () => {
+  startScan({
+    mode: 'route',
+    moduleId: $('ffModule').value,
+    targetRoute: $('ffNavA').value,
+    controlRoute: $('ffNavB').value,
+    iterations: timesOf('ffTimesRoute'),
+  }, $('ffRouteGo'), 'ffRouteHint');
+});
+
+/* ---- progress ---- */
+
+function resetStages(kind) {
+  ffStages = {};
+  for (const s of FF_STAGES) ffStages[s[0]] = { state: 'pending', text: '', detail: '' };
+  if (kind === 'fix') {
+    for (const key of ['analyze', 'route', 'navigate', 'memory', 'rootcause', 'prepare']) {
+      ffStages[key].state = 'done';
     }
   }
-  return lines.slice(start, end);
+  ffActive = '';
+  $('ffProgress').style.display = 'block';
+  if (ffTimer) clearInterval(ffTimer);
+  ffTimer = setInterval(() => { if (ffActive) renderStages(); }, 1000);
+  renderStages();
+}
+
+function stopTicker() {
+  if (ffTimer) clearInterval(ffTimer);
+  ffTimer = null;
+}
+
+function setStage(key, stateName, text) {
+  const s = ffStages[key];
+  if (!s) return;
+  const next = stateName === 'start' ? 'active' : stateName;
+  if (next === 'active') {
+    s.startedAt = Date.now();
+    s.endedAt = undefined;
+    s.detail = '';
+    ffActive = key;
+  } else {
+    s.endedAt = Date.now();
+    if (ffActive === key) ffActive = '';
+  }
+  s.state = next;
+  if (text) s.text = text;
+  renderStages();
+}
+
+function renderStages() {
+  $('ffStages').innerHTML = FF_STAGES.map((entry, i) => {
+    const s = ffStages[entry[0]] || { state: 'pending' };
+    const mark = s.state === 'done' ? '&#10003;' : s.state === 'fail' ? '!' : s.state === 'skip' ? '&ndash;'
+      : s.state === 'active' ? '' : String(i + 1);
+    const took = s.startedAt ? humanDuration((s.endedAt || Date.now()) - s.startedAt) : '';
+    return '<li class="stage ' + s.state + '"><span class="dot">' + mark + '</span>' +
+      '<span class="txt"><b>' + esc(entry[1]) + '</b>' + (s.text ? ' — ' + esc(s.text) : '') +
+      (s.state === 'active' && s.detail ? '<span class="det">' + esc(s.detail) + '</span>' : '') +
+      '</span><span class="el">' + took + '</span></li>';
+  }).join('');
+  const started = FF_STAGES.map((e) => ffStages[e[0]] && ffStages[e[0]].startedAt).filter(Boolean);
+  $('ffElapsed').textContent = started.length && ffActive
+    ? humanDuration(Date.now() - Math.min.apply(null, started)) + ' so far'
+    : '';
+}
+
+function humanDuration(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ' + String(s % 60).padStart(2, '0') + 's';
+  return Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm';
+}
+
+function watchFindFixLine(line) {
+  const m = FF_LINE.exec(line);
+  if (m === null) {
+    // The command's own progress, indented under the stage it belongs to.
+    if (ffActive && /^ {4}\\S/.test(line)) {
+      ffStages[ffActive].detail = line.trim();
+      renderStages();
+    }
+    return;
+  }
+  if (m[1] === 'stage') setStage(m[2], m[3] || 'start', m[4] || '');
+  else if (m[1] === 'result') ffPending.push(loadFindFixFile(m[2]));
+}
+
+/** A result file the command wrote: a scan round, or a verification. */
+async function loadFindFixFile(path) {
+  let data;
+  try {
+    const res = await fetch('/api/download?path=' + encodeURIComponent(path) + '&token=' + TOKEN);
+    if (!res.ok) return undefined;
+    data = await res.json();
+  } catch {
+    return undefined;
+  }
+  if (/\\/round-\\d+\\.json$/.test(path)) {
+    ff.lastResult = path;
+    saveFF();
+    renderRound(data);
+  } else if (/\\/verify-\\d+\\.json$/.test(path)) {
+    ff.lastVerify = path;
+    saveFF();
+    renderVerify(data);
+  }
+  return data;
+}
+
+async function findFixFinished(actionId, exitCode) {
+  const results = (await Promise.all(ffPending)).filter(Boolean);
+  ffPending = [];
+  if (ffActive) setStage(ffActive, 'fail', exitCode === null ? 'stopped' : '');
+  stopTicker();
+  const failedKey = FF_STAGES.map((e) => e[0]).find((k) => ffStages[k] && ffStages[k].state === 'fail');
+  const failedText = failedKey ? ffStages[failedKey].text : '';
+
+  if (actionId === 'findfixFind') {
+    $('ffProgressTitle').textContent = results.length ? 'Scan finished' : 'The scan stopped';
+    if (!results.length) {
+      $('ffResult').innerHTML = '<div class="verdict bad"><h3>The scan could not finish</h3><p>' +
+        esc(failedText || 'It stopped before writing a result.') +
+        '</p><div class="sub">The console on the right has the full details.</div></div>';
+    }
+    $('ffResult').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  if (actionId === 'findfixApply') {
+    const v = results.find((r) => r.status);
+    $('ffProgressTitle').textContent = v ? v.headline : 'The fix was not applied';
+    if (!v) {
+      $('ffVerify').innerHTML = '<div class="verdict bad"><h3>The fix was not applied</h3><p>' +
+        esc(failedText || 'It stopped before finishing.') + '</p></div>';
+      return;
+    }
+    $('ffVerify').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    /**
+     * Still leaking, but the change built and the page works: keep going.
+     * The next round leaves out what was already fixed and looks for what
+     * else is holding on, rather than handing the problem back.
+     */
+    if (v.next === 'next-round') await startFind();
+    return;
+  }
+
+  if (actionId === 'findfixUndo') {
+    const done = ffStages.apply && ffStages.apply.state === 'done';
+    $('ffProgressTitle').textContent = done ? 'Fix undone' : 'Could not undo';
+    if (done) {
+      const last = (ff.changes || []).filter((c) => !c.undoneAt).pop();
+      if (last) last.undoneAt = new Date().toISOString();
+      saveFF();
+      if (ffRound) renderRound(ffRound);
+    }
+    $('ffVerify').innerHTML = '<div class="verdict ' + (done ? 'warn' : 'bad') + '"><h3>' +
+      (done ? 'Fix undone' : 'Could not undo the fix') + '</h3><p>' + esc(ffStages.apply.text || '') + '</p></div>' +
+      changesList();
+  }
+}
+
+/* ---- the issue result ---- */
+
+const MB = 1048576;
+function perVisitText(bytes) {
+  const abs = Math.abs(bytes);
+  const sign = bytes < 0 ? '-' : '+';
+  return abs >= MB ? sign + (abs / MB).toFixed(2) + ' MB' : sign + Math.round(abs / 1024) + ' KB';
+}
+
+function fact(label, valueHtml) {
+  return '<span>' + esc(label) + ': <b>' + valueHtml + '</b></span>';
+}
+
+function section(label, bodyHtml) {
+  return '<div class="sec"><div class="lbl2">' + esc(label) + '</div>' + bodyHtml + '</div>';
+}
+
+function openLink(file, line) {
+  return '<button class="linkish" data-open="' + esc(file) + '" data-line="' + (line || 1) + '">' +
+    esc(file) + (line ? ':' + line : '') + '</button>';
+}
+
+let ffRound = null;
+
+function renderRound(r) {
+  ffRound = r;
+  const m = r.measurement;
+  const tone = !m ? 'warn' : m.verdict === 'GROWING' ? 'bad' : m.verdict === 'INCONCLUSIVE' ? 'warn' : 'ok';
+  let html = '<div class="verdict ' + tone + '"><h3>' + esc(r.headline) + '</h3>';
+  if (m) {
+    html += '<div class="facts2">' +
+      fact('Left behind per visit', esc(perVisitText(m.bytesPerIteration))) +
+      fact('Navigation rounds', m.iterationsCompleted + ' of ' + m.iterationsRequested) +
+      (Math.abs(m.listenersPerIteration) >= 0.5
+        ? fact('Event listeners per visit', '+' + m.listenersPerIteration.toFixed(1)) : '') +
+      (Math.abs(m.nodesPerIteration) >= 1
+        ? fact('Page elements per visit', '+' + Math.round(m.nodesPerIteration)) : '') +
+      (r.round > 1 ? fact('Scan', String(r.round)) : '') +
+      '</div>';
+  }
+  html += '<details style="margin-top:.5rem"><summary class="sub">What was checked</summary><ul class="state">' +
+    r.scopeSummary.map((s) => '<li>' + esc(s) + '</li>').join('') + '</ul></details>';
+  if (r.warnings.length) html += '<div class="sub" style="margin-top:.4rem">' + r.warnings.map(esc).join('<br>') + '</div>';
+  html += '</div>';
+
+  if (r.retained.length) {
+    html += '<div class="issue"><h3>What is piling up in memory</h3>' +
+      r.retained.map((o) => '<div class="sec"><p><b>' + esc(o.constructorName) + '</b> — ' +
+        o.countDelta + ' more still alive after the test' +
+        (o.perIteration !== undefined ? ' (about ' + o.perIteration.toFixed(1) + ' per visit)' : '') + '</p>' +
+        (o.heldBy ? '<details><summary class="sub">what is holding it</summary><p class="sub">' + esc(o.heldBy) +
+          '</p></details>' : '') + '</div>').join('') +
+      '</div>';
+  }
+
+  html += r.issues.map(issueCard).join('');
+
+  if (!r.issues.length && m && m.verdict === 'GROWING') {
+    html += '<div class="banner">Memory grows, but none of the code connected to this page could be tied ' +
+      'to it. Scanning the whole lazy-loaded module, or more navigation times, gives the agent more to ' +
+      'go on.<div class="golive" style="margin-top:.5rem"><button class="ghost" id="ffRescan">scan again</button></div></div>';
+  }
+  if (!r.issues.length && m && m.verdict === 'INCONCLUSIVE') {
+    html += '<div class="banner">Try again with 20 navigation times.' +
+      '<div class="golive" style="margin-top:.5rem"><button class="ghost" id="ffRescan">scan again</button></div></div>';
+  }
+
+  if (r.watchList.length) {
+    html += '<details class="banner"><summary>Also worth a look: ' + r.watchList.length +
+      ' place(s) that start something without stopping it, which this measurement did not implicate</summary>' +
+      '<ul class="state">' + r.watchList.map((w) => '<li>' + esc(w.issue) + ' — ' + openLink(w.file, w.line) + '</li>').join('') +
+      '</ul></details>';
+  }
+
+  $('ffResult').innerHTML = html;
+}
+
+/** The change applied for this issue in this scan, if it is still in place. */
+function appliedChange(id) {
+  return (ff.changes || []).filter((c) => c.findingId === id && !c.undoneAt).pop();
+}
+
+function issueCard(issue) {
+  const sure = issue.confidence === 'PROVEN'
+    ? '<span class="pill bad">confirmed</span>'
+    : '<span class="pill warn">likely</span>';
+  return '<div class="issue">' +
+    '<h3>' + esc(issue.issue) + sure + '</h3>' +
+    section('Why it may be happening', '<p>' + esc(issue.why) + '</p>') +
+    section('Affected file / component', '<p>' + openLink(issue.file, issue.line) + ' &middot; ' +
+      esc(issue.className) + (issue.angularKind ? ' (' + esc(issue.angularKind.toLowerCase()) + ')' : '') + '</p>') +
+    section('Evidence', '<ul>' + issue.evidence.map((e) => '<li>' + esc(e) + '</li>').join('') + '</ul>' +
+      (issue.code.length
+        ? '<details><summary class="sub">the code that starts it</summary><div class="snip">' +
+          issue.code.map((c) => esc('line ' + c.line + ':  ' + c.snippet)).join('\\n') + '</div></details>'
+        : '')) +
+    section('Suggested change', '<p>' + esc(issue.suggestedChange) + '</p>') +
+    '<div class="sec fixrow">' +
+    (appliedChange(issue.id)
+      ? '<span class="pill ok">fix applied</span><span class="sub">' +
+        esc(appliedChange(issue.id).title) + ' — see the result above.</span>'
+      : issue.canFix
+      ? '<button data-fix="' + esc(issue.id) + '">Fix with AI</button>' +
+        '<span class="sub">You see the exact change before anything is written.</span>'
+      : '<button disabled>Fix with AI</button><span class="sub">The agent will not change this one on its own: ' +
+        esc(issue.blockedReason || '') + '</span>') +
+    '</div></div>';
+}
+
+function renderVerify(v) {
+  ff.changes = (ff.changes || []).filter((c) => c.index !== v.change.index).concat([v.change]);
+  saveFF();
+  if (ffRound) renderRound(ffRound);
+  const tone = v.status === 'VERIFIED' ? 'ok' : v.status === 'CHECKS_FAILED' ? 'bad' : 'warn';
+  const c = v.comparison;
+  const failed = v.checks.find((ch) => !ch.passed && !ch.skipped && ch.tail);
+  $('ffVerify').innerHTML = '<div class="verdict ' + tone + '"><h3>' + esc(v.headline) + '</h3>' +
+    '<p>' + esc(v.explanation) + '</p>' +
+    '<div class="facts2">' +
+      fact('Changed', openLink(v.change.file, 0)) +
+      v.checks.map((ch) => fact(ch.name === 'build' ? 'Build' : ch.name,
+        ch.skipped ? 'no build script' : ch.passed ? 'passed' : 'failed')).join('') +
+      (c ? fact('Left behind per visit', esc(perVisitText(c.beforeBytesPerIteration)) + ' → ' +
+        esc(perVisitText(c.afterBytesPerIteration))) : '') +
+      fact('The flagged code', v.findingGone ? 'no longer flagged' : 'still flagged') +
+    '</div>' +
+    (failed ? '<details><summary class="sub">build output</summary><div class="snip">' + esc(failed.tail) +
+      '</div></details>' : '') +
+    '<div class="golive" style="margin-top:.6rem">' +
+      '<button class="ghost" data-open="' + esc(v.change.file) + '" data-line="1">Open in VS Code</button>' +
+      '<button' + (v.next === 'undo' ? '' : ' class="ghost"') + ' id="ffUndo">Undo this fix</button>' +
+    '</div>' +
+    (v.next === 'next-round'
+      ? '<div class="sub" style="margin-top:.5rem">Memory is still being held, so the agent is scanning ' +
+        'again for the next cause.</div>'
+      : '') +
+    '</div>' + changesList();
+}
+
+/** Every change made in this scan, and why - the record the brief asks for. */
+function changesList() {
+  const list = ff.changes || [];
+  if (!list.length) return '';
+  return '<details class="banner"><summary>Changes made in this scan (' + list.length + ')</summary><ul class="state">' +
+    list.map((ch) => '<li>' + (ch.undoneAt ? '<s>' : '') + esc(ch.file) + ' — ' + esc(ch.title) +
+      (ch.undoneAt ? '</s> (undone)' : '') + '<br><span class="sub">' + esc(ch.why) + '</span></li>').join('') +
+    '</ul></details>';
+}
+
+/* ---- Fix with AI, and the review window ---- */
+
+async function prepareFixUI(issueId, button) {
+  if (currentRun || !ff.session) return;
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span>Preparing fix...';
+  if (!ffStages.prepare) resetStages('fix');
+  $('ffProgress').style.display = 'block';
+  setStage('prepare', 'start', 'looking at the issue again, against the file as it is now');
+
+  let data;
+  try {
+    data = await api('/api/findfix/fix', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session: ff.session, issue: issueId }),
+    });
+  } catch {
+    data = { error: 'Could not reach the server.' };
+  }
+  button.disabled = false;
+  button.textContent = 'Fix with AI';
+  if (data.error) {
+    setStage('prepare', 'fail', data.error);
+    return;
+  }
+  setStage('prepare', 'done', data.title);
+  openFixModal(data);
+}
+
+function openFixModal(p) {
+  ffFix = p;
+  $('fixTitle').textContent = 'Review the fix — ' + p.title;
+  $('fixFile').textContent = p.file;
+  $('fixExplain').textContent = p.explanation;
+  $('fixWhy').textContent = p.whyItResolves;
+  $('fixRisks').innerHTML = p.risks.map((r) => '<li>' + esc(r) + '</li>').join('');
+  $('fixNote').textContent =
+    'Nothing is written until you press Apply Fix. A copy of the original is kept, so Undo puts it back exactly.' +
+    (p.otherChanges ? ' Your project has ' + p.otherChanges + ' other uncommitted change(s); they are not touched.' : '');
+  renderFixDiff();
+  $('fixBack').classList.add('on');
+  $('fixApply').focus();
+}
+
+function closeFixModal() {
+  $('fixBack').classList.remove('on');
 }
 
 /**
- * Turn unified-diff lines into aligned old/new rows.
+ * Turn unified-diff lines into aligned existing/proposed rows.
  *
  * Consecutive removals and additions between two context lines are one
- * "block" - filled to the same row count so the shorter side gets blank
- * filler rows, the same trick an editor's diff view uses to keep both
- * columns lined up. The fixes this tool generates are close to pure
- * insertions, so most blocks here are all-addition: old stays blank,
- * new shows the line, and the two columns stay in step regardless.
- *
- * The five-character strip matches fix.ts's own '     ' + line indent
- * exactly - a diff line's own marker (its leading +, - or context space)
- * must survive untouched, or context lines become unrecognisable.
+ * block, filled to the same row count so the shorter side gets blank
+ * filler rows - the trick an editor's diff view uses to keep both columns
+ * lined up. The first two lines are the ---/+++ header.
  */
 function buildSplitRows(diffLines) {
-  const body = diffLines.slice(2).map((l) => l.replace(/^ {5}/, ''));
   const rows = [];
   let dels = [];
   let adds = [];
@@ -1172,18 +1732,18 @@ function buildSplitRows(diffLines) {
     dels = [];
     adds = [];
   };
-  for (const raw of body) {
+  for (const raw of diffLines.slice(2)) {
     if (raw.indexOf('@@') === 0) {
       flush();
       rows.push({ hunk: raw });
-    } else if (raw.indexOf(' ') === 0) {
-      flush();
-      const text = raw.slice(1);
-      rows.push({ old: text, new: text, ctx: true });
     } else if (raw.indexOf('-') === 0) {
       dels.push(raw.slice(1));
     } else if (raw.indexOf('+') === 0) {
       adds.push(raw.slice(1));
+    } else {
+      flush();
+      const text = raw.slice(1);
+      rows.push({ old: text, new: text, ctx: true });
     }
   }
   flush();
@@ -1192,97 +1752,104 @@ function buildSplitRows(diffLines) {
 
 function renderSplitHtml(rows) {
   const cell = (text, cls) =>
-    '<span class="cell ' + cls + '">' +
-    (text === undefined || text === '' ? '&nbsp;' : esc(text)) +
-    '</span>';
-  return rows
-    .map((r) => {
-      if (r.hunk !== undefined) return '<div class="split-hunk">' + esc(r.hunk) + '</div>';
-      const oldCls = r.ctx === true ? '' : r.old === undefined ? 'filler' : 'del';
-      const newCls = r.ctx === true ? '' : r.new === undefined ? 'filler' : 'add';
-      return '<div class="split-row">' + cell(r.old, oldCls) + cell(r.new, newCls) + '</div>';
-    })
-    .join('');
+    '<span class="cell ' + cls + '">' + (text === undefined || text === '' ? '&nbsp;' : esc(text)) + '</span>';
+  return rows.map((r) => {
+    if (r.hunk !== undefined) return '<div class="split-hunk">' + esc(r.hunk) + '</div>';
+    const oldCls = r.ctx === true ? '' : r.old === undefined ? 'filler' : 'del';
+    const newCls = r.ctx === true ? '' : r.new === undefined ? 'filler' : 'add';
+    return '<div class="split-row">' + cell(r.old, oldCls) + cell(r.new, newCls) + '</div>';
+  }).join('');
 }
 
-function renderApproveBody() {
-  const diffLines = extractDiffBlock(proposalLines);
-  const canSplit = diffLines !== undefined;
-
-  $('diffToggle').style.display = canSplit ? 'flex' : 'none';
-  $('viewUnified').classList.toggle('on', diffView !== 'split');
-  $('viewSplit').classList.toggle('on', diffView === 'split');
-
-  const useSplit = diffView === 'split' && canSplit;
-  $('approveModal').classList.toggle('split', useSplit);
-  $('approveBody').style.display = useSplit ? 'none' : 'block';
-  $('approveSplit').style.display = useSplit ? 'block' : 'none';
-
-  if (useSplit) {
-    $('approveSplit').innerHTML = renderSplitHtml(buildSplitRows(diffLines));
+function renderFixDiff() {
+  const lines = ffFix.diff.split('\\n');
+  const split = diffView === 'split';
+  $('viewSplit').classList.toggle('on', split);
+  $('viewUnified').classList.toggle('on', !split);
+  $('fixSplitHead').style.display = split ? 'flex' : 'none';
+  $('fixSplit').style.display = split ? 'block' : 'none';
+  $('fixUnified').style.display = split ? 'none' : 'block';
+  if (split) {
+    $('fixSplit').innerHTML = renderSplitHtml(buildSplitRows(lines));
     return;
   }
-
-  // Colour the diff so additions and removals are distinguishable at a
-  // glance - the whole reason for showing it rather than summarising it.
-  $('approveBody').innerHTML = proposalLines
-    .map((line) => {
-      const trimmed = line.replace(/^\\s{0,4}/, '');
-      let cls = '';
-      if (/^\\+/.test(trimmed) && !/^\\+\\+\\+/.test(trimmed)) cls = 'add';
-      else if (/^-/.test(trimmed) && !/^---/.test(trimmed)) cls = 'del';
-      else if (/^@@/.test(trimmed)) cls = 'hunk';
-      return '<span class="dline ' + cls + '">' + esc(line) + '</span>';
-    })
-    .join('\\n');
+  // Coloured, so additions and removals are distinguishable at a glance.
+  $('fixUnified').innerHTML = lines.map((line) => {
+    let cls = '';
+    if (/^\\+/.test(line) && !/^\\+\\+\\+/.test(line)) cls = 'add';
+    else if (/^-/.test(line) && !/^---/.test(line)) cls = 'del';
+    else if (/^@@/.test(line)) cls = 'hunk';
+    return '<span class="dline ' + cls + '">' + esc(line) + '</span>';
+  }).join('\\n');
 }
 
-function openApproval(title, file) {
-  $('approveTitle').textContent = 'Apply this change to ' + file + '?';
-  $('approveNote').textContent = title;
-  renderApproveBody();
-
-  $('approveBack').classList.add('on');
-  $('approveYes').focus();
+async function applyFix() {
+  const p = ffFix;
+  closeFixModal();
+  if (!p || currentRun) return;
+  resetStages('fix');
+  ffStages.prepare.text = p.title;
+  renderStages();
+  $('ffProgressTitle').textContent = 'Applying and verifying: ' + p.title;
+  $('ffVerify').innerHTML = '';
+  $('ffProgress').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const ok = await startAction('findfixApply', { session: ff.session, issue: p.issue, expect: p.expect });
+  if (!ok) setStage('apply', 'fail', 'could not start - see the console');
 }
 
-function closeApproval() {
-  $('approveBack').classList.remove('on');
-  proposalLines = [];
+async function undoFix() {
+  if (currentRun || !ff.session) return;
+  resetStages('fix');
+  $('ffProgressTitle').textContent = 'Undoing the last fix';
+  await startAction('findfixUndo', { session: ff.session });
 }
 
-async function answerApproval(yes) {
-  closeApproval();
-  await reply(yes ? 'y' : 'n');
+async function openFile(file, line) {
+  if (!ff.session) return;
+  const r = await api('/api/findfix/open', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ session: ff.session, file: file, line: Number(line) || 1 }),
+  });
+  if (r.error) say(r.error + '\\n');
 }
 
-// Exposed so the dialog can be exercised without a five-minute fix run.
-window.watchForApproval = watchForApproval;
-window.attachRun = attachRun;
-window.ACTIONS = ACTIONS;
+$('fixApply').addEventListener('click', applyFix);
+$('fixCancel').addEventListener('click', closeFixModal);
+$('fixOpen').addEventListener('click', () => { if (ffFix) openFile(ffFix.file, 1); });
+$('viewSplit').addEventListener('click', () => { diffView = 'split'; renderFixDiff(); });
+$('viewUnified').addEventListener('click', () => { diffView = 'unified'; renderFixDiff(); });
 
-$('approveYes').addEventListener('click', () => answerApproval(true));
-$('approveNo').addEventListener('click', () => answerApproval(false));
-$('viewUnified').addEventListener('click', () => {
-  diffView = 'unified';
-  renderApproveBody();
-});
-$('viewSplit').addEventListener('click', () => {
-  diffView = 'split';
-  renderApproveBody();
-});
-
-/* Escape means no. The safe answer is the easy one. */
+/* Escape and the backdrop both mean cancel. The safe answer is the easy one. */
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && $('approveBack').classList.contains('on')) {
-    answerApproval(false);
-  }
+  if (e.key === 'Escape' && $('fixBack').classList.contains('on')) closeFixModal();
+});
+$('fixBack').addEventListener('click', (e) => {
+  if (e.target === $('fixBack')) closeFixModal();
 });
 
-/* Clicking the backdrop also means no, never yes. */
-$('approveBack').addEventListener('click', (e) => {
-  if (e.target === $('approveBack')) answerApproval(false);
+/* One listener for every button the results draw. */
+$('page-fix').addEventListener('click', (e) => {
+  const t = e.target.closest('[data-open],[data-fix],#ffUndo,#ffRescan');
+  if (!t) return;
+  if (t.hasAttribute('data-open')) openFile(t.getAttribute('data-open'), t.getAttribute('data-line'));
+  else if (t.hasAttribute('data-fix')) prepareFixUI(t.getAttribute('data-fix'), t);
+  else if (t.id === 'ffUndo') undoFix();
+  else if (t.id === 'ffRescan' && ff.session && !currentRun) startFind();
 });
+
+/* Put back what the last scan showed, after a reload. */
+async function restoreFindFix() {
+  if (!ff.session) return;
+  if (ff.lastResult) await loadFindFixFile(ff.lastResult);
+  if (ff.lastVerify) await loadFindFixFile(ff.lastVerify);
+}
+
+// Exposed so the result views can be exercised without a ten-minute run.
+window.renderRound = renderRound;
+window.renderVerify = renderVerify;
+window.openFixModal = openFixModal;
+window.watchFindFixLine = watchFindFixLine;
 
 /* ---- answering a prompt ---- */
 async function reply(text) {
@@ -1557,15 +2124,14 @@ let selectedEntity = null;
 let searchTimer = null;
 
 function projectPath() {
-  const el = $('risk_project') || $('scan_project');
-  return (el && el.value) || DEFAULT_PROJECT;
+  return sourcePath || DEFAULT_PROJECT;
 }
 
 async function searchEntities(refresh) {
   const q = $('entitySearch').value.trim();
   const project = projectPath();
   if (!project) {
-    $('entityStatus').textContent = 'Set your project folder in step 2 first.';
+    $('entityStatus').textContent = 'Choose your project folder on the Set up page first.';
     return;
   }
 
@@ -1618,7 +2184,7 @@ function renderEntityResults() {
 
   $('entityResults').innerHTML = results.map((r, i) => {
     const tags = [];
-    if (!r.investigable) tags.push('<span class="etag bad">cannot open in a browser</span>');
+    if (!r.investigable) tags.push('<span class="etag">not a page - tested where it is rendered</span>');
     else if (r.ambiguousName) tags.push('<span class="etag warn">page may be wrong</span>');
     if (!r.hasOnDestroy) tags.push('<span class="etag warn">no cleanup code</span>');
     if (r.resourceCount > 0) {
@@ -1692,88 +2258,55 @@ for (const btn of document.querySelectorAll('.sortbar button')) {
   });
 }
 
+/**
+ * A component was picked: say how it will be reached, and offer the scan.
+ *
+ * A component that is not a page of its own is still testable - the agent
+ * finds the routed page that renders it - so nothing here is refused
+ * up front. The server says why when it truly cannot be reached.
+ */
 function pickEntity(entity) {
   selectedEntity = entity;
   const box = $('entityPick');
   box.style.display = 'block';
 
-  if (!entity.investigable) {
-    box.innerHTML =
-      '<div class="danger">' + esc(entity.blockedReason || 'Cannot be driven in a browser.') + '</div>' +
-      '<div class="sub">You can still read its code: put <code>' +
-      esc(entity.file.split('/').slice(-1)[0].replace('.ts','')) +
-      '</code> into "Look closely at one component" in step 2.</div>';
-    return;
-  }
+  const where = entity.kind === 'Injectable'
+    ? 'It is a service. The agent tests it through a page that uses it.'
+    : entity.investigable && !entity.ambiguousName
+      ? 'It is a page of its own at <code>' + esc(entity.routes[0]) + '</code>.'
+      : 'It is not a page of its own, so the agent finds the page that renders it and tests that.';
 
-  const controls = entityControls.filter((c) => c.name !== entity.name);
   box.innerHTML =
-    '<div class="sub">Will open <strong>' + esc(entity.name) + '</strong> at <code>' +
-      esc(entity.routes[0]) + '</code> and wait until <code>&lt;' + esc(entity.selector) +
-      '&gt;</code> appears on the page.</div>' +
+    '<div class="sub"><strong>' + esc(entity.name) + '</strong> — ' + esc(entity.file) + '. ' + where + '</div>' +
     (entity.ambiguousName
       ? '<div class="danger" style="margin-top:.3rem">' + esc(entity.blockedReason || '') + '</div>'
       : '') +
-    '<div class="params" style="margin-top:.5rem">' +
-      '<label>Navigate away to (checked before use)<select id="pickControl">' +
-        controls.map((c) => '<option value="' + esc(c.name) + '">' + esc(c.name) +
-          ' — ' + esc(c.route) + '</option>').join('') +
-      '</select></label>' +
-      '<label>How many times to repeat<input type="number" id="pickIterations" value="12" min="5" max="60"></label>' +
-      '<label>Sign in as' + sessionOptions() + '</label>' +
-    '</div>' +
-    sessionWarning() +
-    '<button id="pickGo">find and fix ' + esc(entity.name) + '</button>' +
-    '<button class="ghost" id="pickMeasure">just measure it, do not go further</button>' +
-    '<span class="expect">about 30 seconds to check the routes, then 3 to 5 minutes — ' +
-      'static, runtime, heap, correlation, proposed fixes, report</span>';
+    '<div class="ffform" style="margin-top:.6rem">' +
+      '<label>Navigation B — where to go in between (checked before use)<select id="ffCompNavB"></select></label>' +
+      '<label>Navigation times<span class="times" id="ffTimesComp">' +
+        '<button type="button" data-times="5">5 times</button>' +
+        '<button type="button" data-times="10" class="on">10 times</button>' +
+        '<button type="button" data-times="20">20 times</button>' +
+        '<input type="number" min="5" max="100" value="10" aria-label="Navigation times">' +
+      '</span></label>' +
+      '<div class="sub" id="ffCompHint">' + signInHint() + '</div>' +
+      '<div class="golive"><button id="pickGo">Find memory leaks in ' + esc(entity.name) + '</button>' +
+      '<span class="expect">several minutes on a large project — progress shows below</span></div>' +
+    '</div>';
 
-  $('pickGo').addEventListener('click', () => createAndRun('auto'));
-  $('pickMeasure').addEventListener('click', () => createAndRun('scenarioRun'));
-}
-
-/**
- * The saved sessions, with the ones that fit the current app URL first.
- *
- * A session is tied to an ORIGIN, and an origin includes the port. One
- * captured while serving on a different port restores no localStorage at
- * all, so the app redirects to /login - which reads as "expired" to someone
- * who just signed in. So the choice is shown, not guessed at.
- */
-function sessionOptions() {
-  const wanted = originOfUrl(appUrl);
-  const list = (state.sessions || []).slice().sort((a, b) => {
-    const fit = Number(matchesOrigin(b, wanted)) - Number(matchesOrigin(a, wanted));
-    return fit !== 0 ? fit : a.ageMinutes - b.ageMinutes;
+  if (ffOptions) fillNavB('ffCompNavB', entity.routes[0] || '', null);
+  else void loadRouteOptions(false);
+  wireTimes('ffTimesComp');
+  $('pickGo').addEventListener('click', () => {
+    startScan({
+      mode: 'component',
+      component: { name: entity.name, file: entity.file },
+      controlRoute: $('ffCompNavB').value,
+      iterations: timesOf('ffTimesComp'),
+    }, $('pickGo'), 'ffCompHint');
   });
-
-  if (!list.length) {
-    return '<select id="pickAuth"><option value="">no saved session - run step 3</option></select>';
-  }
-
-  return '<select id="pickAuth">' + list.map((sess) => {
-    const fits = matchesOrigin(sess, wanted);
-    const where = (sess.origins && sess.origins.length) ? sess.origins[0] : 'cookies only';
-    return '<option value="' + esc(sess.file) + '">' + esc(sess.file) +
-      ' - ' + esc(where) + ' - ' + humanAge(sess.ageMinutes) +
-      (fits ? '' : '  (wrong origin)') + '</option>';
-  }).join('') + '</select>';
 }
 
-/** Say so plainly when no saved session can work at this URL. */
-function sessionWarning() {
-  const wanted = originOfUrl(appUrl);
-  const list = state.sessions || [];
-  if (!list.length) {
-    return '<div class="danger" style="margin-top:.3rem">No saved session. ' +
-      'Run step 3 first, or the run will stop at the login page.</div>';
-  }
-  if (list.some((sess) => matchesOrigin(sess, wanted))) return '';
-  return '<div class="danger" style="margin-top:.3rem">Every saved session was captured ' +
-    'at a different origin than <code>' + esc(appUrl) + '</code>. A session is tied to ' +
-    'the port, so none of them will be restored and the app will redirect to its login ' +
-    'page. Sign in again at this URL in step 3.</div>';
-}
 function matchesOrigin(sess, wanted) {
   // No localStorage at all means cookie-only auth, which ignores the port.
   if (!sess.origins || !sess.origins.length) return true;
@@ -1783,60 +2316,6 @@ function matchesOrigin(sess, wanted) {
 
 function originOfUrl(value) {
   try { return new URL(value).origin; } catch { return ''; }
-}
-async function createAndRun(actionId) {
-  if (!selectedEntity) return;
-  if (!appUrl) {
-    $('entityStatus').textContent = 'Set your app URL at the top first.';
-    return;
-  }
-
-  const project = projectPath();
-  $('pickGo').disabled = true;
-  $('pickMeasure').disabled = true;
-  $('pickGo').textContent = 'checking routes...';
-  // The server opens a browser and tries both routes with the saved
-  // session. Slow enough that it has to be said out loud.
-  $('out').textContent =
-    'Checking which of these routes your account can actually open.\\n' +
-    'A route guard can refuse a page however good your session is, and finding\\n' +
-    'that out now costs seconds instead of minutes.\\n\\n';
-
-  const payload = {
-    project: project,
-    target: selectedEntity.name,
-    control: $('pickControl').value,
-    baseUrl: appUrl,
-    authFile: $('pickAuth').value,
-    iterations: Number($('pickIterations').value) || 12,
-  };
-
-  const result = await api('/api/scenario/generate', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-
-  $('pickGo').disabled = false;
-  $('pickMeasure').disabled = false;
-  $('pickGo').textContent = 'find and fix ' + selectedEntity.name;
-
-  if (result.error) {
-    $('out').textContent = 'Could not generate a scenario:\\n\\n' + result.error;
-    return;
-  }
-
-  // Show what was generated, and why it might need a human eye, BEFORE the
-  // run starts - a guessed selector is worth reading about up front.
-  $('out').textContent +=
-    'Generated ' + result.file + '\\n' +
-    '  target : ' + result.target + '\\n' +
-    '  control: ' + result.control + '\\n\\n' +
-    (result.notes || []).map((n) => '  - ' + n).join('\\n') + '\\n\\n' +
-    'Starting...\\n\\n';
-
-  await refreshState();
-  await runWithScenario(actionId, result.file, project);
 }
 
 /**
@@ -1865,29 +2344,15 @@ async function startAction(actionId, params) {
   return true;
 }
 
-/** Start an action with an explicit scenario file, bypassing the dropdown. */
-async function runWithScenario(actionId, scenarioFile, project) {
-  const action = ACTIONS.find((a) => a.id === actionId);
-  if (!action || currentRun) return;
-
-  const params = { scenario: scenarioFile, project: project };
-  if (appUrl) params.__baseUrl = appUrl;
-
-  const result = await api('/api/run', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ action: actionId, params: params }),
-  });
-  if (result.error) { $('out').textContent += result.error; return; }
-  attachRun(result, action);
-}
-
 $('entitySearch').addEventListener('input', () => {
   // Debounced: a scan is cached, but a request per keystroke is still waste.
   if (searchTimer) clearTimeout(searchTimer);
   searchTimer = setTimeout(() => searchEntities(false), 250);
 });
-$('entityRefresh').addEventListener('click', () => searchEntities(true));
+$('entityRefresh').addEventListener('click', async () => {
+  await searchEntities(true);
+  void loadRouteOptions(false);
+});
 
 /* ------------------------------------------------------------------ */
 /* Is the running app the code we chose?                               */
@@ -2246,6 +2711,11 @@ async function checkSource() {
 
   renderReady();
   render();
+  // The routes belong to the project, so a different project means new ones.
+  if (ffOptionsFor !== sourcePath) {
+    ffOptions = null;
+    if (sourceValid && page === 'fix') void loadRouteOptions(false);
+  }
   // Both halves are now known, so the pair can be reconciled.
   void checkServed();
 }
@@ -2282,6 +2752,7 @@ function showPage(name) {
   }
   // A page switch is a new view, so start it at the top.
   window.scrollTo({ top: 0, behavior: 'instant' });
+  if (name === 'fix' && !ffOptions) void loadRouteOptions(false);
 }
 
 for (const btn of document.querySelectorAll('.navitem')) {
@@ -2305,6 +2776,7 @@ $('appUrl').addEventListener('keydown', (e) => {
   if (appUrl) checkApp();
   refreshFiles();
   showPage(page);
+  void restoreFindFix();
 })();
 
 setInterval(() => { if (!currentRun) { refreshState(); refreshFiles(); } }, 15000);

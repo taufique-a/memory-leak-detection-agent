@@ -30,10 +30,9 @@ import * as path from 'node:path';
 
 import { ACTIONS, buildArgs, findAction } from './actions';
 import { getEntityIndex, searchEntities } from './entities';
-import { generateScenario, writeGeneratedScenario } from './generateScenario';
 import { renderPage } from './page';
-import { explainSessionMismatch, readSavedSession } from '../scenario/session';
-import { verifyScenarioRoutes } from './routeProbe';
+import { readSavedSession } from '../scenario/session';
+import { handleFindFix } from './findfixEndpoints';
 import { browseFolder, findProjectsUnder } from '../project/browse';
 import { checkServedProject, heapUsedByRunningServers } from '../project/served';
 import { validateSource } from '../project/validate';
@@ -128,212 +127,6 @@ interface Context {
   servingProjects: Map<string, { port: number; startedAt: number }>;
 }
 
-/** Generate a scenario for a chosen component. */
-async function generateScenarioEndpoint(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  ctx: Context,
-): Promise<void> {
-  const body = await readBody(req);
-  let payload: {
-    project?: string;
-    target?: string;
-    control?: string;
-    baseUrl?: string;
-    authFile?: string;
-    iterations?: number;
-  };
-  try {
-    payload = JSON.parse(body) as typeof payload;
-  } catch {
-    sendJson(res, { error: 'invalid JSON' });
-    return;
-  }
-
-  const project = payload.project ?? ctx.options.defaultProject ?? '';
-  if (project === '' || project.includes('..')) {
-    sendJson(res, { error: 'Invalid project path.' });
-    return;
-  }
-  if (payload.baseUrl === undefined || payload.baseUrl === '') {
-    sendJson(res, { error: 'Set your app URL at the top first.' });
-    return;
-  }
-  try {
-    const parsedUrl = new URL(payload.baseUrl);
-    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
-      sendJson(res, { error: 'App URL must be http or https.' });
-      return;
-    }
-  } catch {
-    sendJson(res, { error: 'App URL is not a valid URL.' });
-    return;
-  }
-
-  /**
-   * Refuse a session that cannot possibly work here.
-   *
-   * Generating a scenario that points at a session captured on another port
-   * produces a run that dies at the first navigation with a message about
-   * expiry - to someone who signed in a minute ago. Catch it while there is
-   * still something useful to say.
-   */
-  if (payload.authFile !== undefined && payload.authFile !== '') {
-    const saved = readSavedSession(path.resolve(ctx.options.agentRoot, payload.authFile));
-    if (saved === undefined) {
-      sendJson(res, {
-        error:
-          `No readable session at "${payload.authFile}". Run "Sign in and save the session" ` +
-          'in step 3 first.',
-      });
-      return;
-    }
-    const mismatch = explainSessionMismatch({ ...saved, file: payload.authFile }, payload.baseUrl);
-    if (mismatch !== undefined) {
-      sendJson(res, { error: mismatch });
-      return;
-    }
-  }
-
-  const index = getEntityIndex(project);
-  const target = index.entities.find((e) => e.name === payload.target);
-  const control = index.entities.find((e) => e.name === payload.control);
-
-  if (target === undefined) {
-    sendJson(res, { error: 'Unknown component.' });
-    return;
-  }
-  if (!target.investigable) {
-    sendJson(res, { error: target.blockedReason ?? 'That component cannot be driven.' });
-    return;
-  }
-  if (control === undefined || !control.investigable) {
-    sendJson(res, {
-      error: 'Pick a second route to navigate away to - without one nothing unmounts.',
-    });
-    return;
-  }
-  if (control.name === target.name) {
-    sendJson(res, { error: 'The control route must be different from the component.' });
-    return;
-  }
-
-  const iterations =
-    typeof payload.iterations === 'number' && payload.iterations >= 5 && payload.iterations <= 100
-      ? payload.iterations
-      : 12;
-
-  /**
-   * ASK THE APPLICATION which of these routes this account can open.
-   *
-   * The control route is chosen by static rules - shallow path, short name -
-   * because that is all the code can see. It picked /rfids for an account
-   * with no permission for /rfids, twice, and both runs died at the first
-   * navigation minutes in.
-   *
-   * No amount of static analysis can predict a route guard. One browser
-   * session and a few seconds per route can. The target must pass, because
-   * there is nothing to measure otherwise; the control is only somewhere to
-   * navigate away to, so a refusal just moves us down the list.
-   */
-  const extraNotes: string[] = [];
-  let effectiveControl = control;
-
-  const controlOrder = [
-    control,
-    ...index.controlCandidates.filter((c) => c.name !== control.name && c.name !== target.name),
-  ];
-
-  try {
-    const check = await verifyScenarioRoutes(
-      target.routes[0] ?? '/',
-      controlOrder.map((c) => c.routes[0] ?? '/'),
-      {
-        baseUrl: payload.baseUrl,
-        ...(payload.authFile !== undefined && payload.authFile !== ''
-          ? { storageStateFile: path.resolve(ctx.options.agentRoot, payload.authFile) }
-          : {}),
-        max: 6,
-      },
-    );
-
-    if (!check.targetOk) {
-      const where = check.targetResult?.finalUrl ?? '';
-      sendJson(res, {
-        error:
-          `This account cannot open ${target.routes[0]}` +
-          (where !== '' ? ` - it redirected to ${where}` : '') +
-          '.\n\n' +
-          '  Nothing is wrong with your session; other pages load fine. A route guard or a\n' +
-          '  missing permission is refusing this one, so there is no page to measure.\n\n' +
-          '  Open it yourself in the browser first. If you cannot, pick a different component.',
-      });
-      return;
-    }
-
-    if (check.control === undefined) {
-      sendJson(res, {
-        error:
-          'None of the candidate routes to navigate away to could be opened by this account.\n\n' +
-          '  A measurement loop has to leave the page and come back, or nothing unmounts and\n' +
-          '  nothing accumulates.\n\n  Tried: ' +
-          check.tried
-            .slice(1)
-            .map((t) => `${t.route} (${t.verdict})`)
-            .join(', '),
-      });
-      return;
-    }
-
-    const chosen = index.controlCandidates.find((c) => (c.routes[0] ?? '/') === check.control);
-    if (chosen !== undefined && chosen.name !== control.name) {
-      extraNotes.push(
-        `${control.name} (${control.routes[0]}) was refused by the application for this ` +
-          `account, so ${chosen.name} (${chosen.routes[0]}) is the control instead. Both ` +
-          'pages were opened with your saved session before this scenario was written.',
-      );
-      effectiveControl = chosen;
-    } else {
-      extraNotes.push(
-        'Both routes were opened successfully with your saved session before this scenario ' +
-          'was written.',
-      );
-    }
-  } catch (err) {
-    // A probe failure must not block generation - it is a check, not the
-    // point. Say it was skipped rather than pretending it passed.
-    extraNotes.push(
-      `Could not verify the routes in a browser (${(err as Error).message.split('\n')[0]}). ` +
-        'The run may still fail if this account cannot open one of them.',
-    );
-  }
-
-  const generated = generateScenario({
-    target,
-    control: effectiveControl,
-    baseUrl: payload.baseUrl,
-    ...(payload.authFile !== undefined && payload.authFile !== ''
-      ? { authFile: payload.authFile }
-      : {}),
-    iterations,
-  });
-  generated.notes.unshift(...extraNotes);
-
-  const written = writeGeneratedScenario(ctx.options.agentRoot, generated);
-  if ('error' in written) {
-    sendJson(res, { error: written.error });
-    return;
-  }
-
-  sendJson(res, {
-    file: written.file,
-    name: generated.scenario.name,
-    notes: generated.notes,
-    target: target.name,
-    control: effectiveControl.name,
-  });
-}
-
 async function handle(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -384,6 +177,13 @@ async function handle(
       res.end(JSON.stringify({ error: 'bad token' }));
       return;
     }
+  }
+
+  if (
+    url.pathname.startsWith('/api/findfix/') &&
+    (await handleFindFix(url, req, res, { agentRoot: ctx.options.agentRoot, readBody, sendJson }))
+  ) {
+    return;
   }
 
   if (url.pathname === '/api/state' && req.method === 'GET') {
@@ -546,11 +346,6 @@ async function handle(
     } catch (err) {
       sendJson(res, { error: `Could not index the project: ${(err as Error).message}` });
     }
-    return;
-  }
-
-  if (url.pathname === '/api/scenario/generate' && req.method === 'POST') {
-    await generateScenarioEndpoint(req, res, ctx);
     return;
   }
 

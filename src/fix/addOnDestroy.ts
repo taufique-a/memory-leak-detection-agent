@@ -54,13 +54,11 @@ export interface AddOnDestroyFailure {
   reason: string;
 }
 
-export function isFailure(
-  value: AddOnDestroyResult | AddOnDestroyFailure,
-): value is AddOnDestroyFailure {
+export function isFailure<T extends object>(value: T | AddOnDestroyFailure): value is AddOnDestroyFailure {
   return 'reason' in value;
 }
 
-interface Edit {
+export interface Edit {
   start: number;
   end: number;
   text: string;
@@ -226,7 +224,7 @@ export function addOnDestroyWithUnsubscribe(
 /* Finding things                                                      */
 /* ------------------------------------------------------------------ */
 
-function findClass(sourceFile: ts.SourceFile, className: string): ts.ClassDeclaration | undefined {
+export function findClass(sourceFile: ts.SourceFile, className: string): ts.ClassDeclaration | undefined {
   let found: ts.ClassDeclaration | undefined;
   const visit = (node: ts.Node): void => {
     if (ts.isClassDeclaration(node) && node.name?.text === className) found = node;
@@ -236,7 +234,7 @@ function findClass(sourceFile: ts.SourceFile, className: string): ts.ClassDeclar
   return found;
 }
 
-function isOnDestroyMethod(member: ts.ClassElement): boolean {
+export function isOnDestroyMethod(member: ts.ClassElement): boolean {
   return (
     (ts.isMethodDeclaration(member) || ts.isPropertyDeclaration(member)) &&
     member.name !== undefined &&
@@ -245,7 +243,7 @@ function isOnDestroyMethod(member: ts.ClassElement): boolean {
   );
 }
 
-function findImport(sourceFile: ts.SourceFile, moduleName: string): ts.ImportDeclaration | undefined {
+export function findImport(sourceFile: ts.SourceFile, moduleName: string): ts.ImportDeclaration | undefined {
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement)) continue;
     if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
@@ -261,7 +259,7 @@ function findImport(sourceFile: ts.SourceFile, moduleName: string): ts.ImportDec
  * cannot reason about - half-fixing a component is worse than not touching
  * it, because the remaining half still leaks and now looks handled.
  */
-function collectSubscribeCalls(
+export function collectSubscribeCalls(
   target: ts.ClassDeclaration,
   sourceFile: ts.SourceFile,
 ): { calls: ts.CallExpression[]; httpLike: number } | AddOnDestroyFailure {
@@ -347,7 +345,7 @@ function collectSubscribeCalls(
 /* ------------------------------------------------------------------ */
 
 /** Add a name to an existing named import, or nothing if already there. */
-function ensureNamedImport(declaration: ts.ImportDeclaration, name: string): Edit | undefined {
+export function ensureNamedImport(declaration: ts.ImportDeclaration, name: string): Edit | undefined {
   const bindings = declaration.importClause?.namedBindings;
   if (bindings === undefined || !ts.isNamedImports(bindings)) return undefined;
 
@@ -361,7 +359,7 @@ function ensureNamedImport(declaration: ts.ImportDeclaration, name: string): Edi
 }
 
 /** Add `implements OnDestroy`, or extend an existing implements clause. */
-function ensureImplements(
+export function ensureImplements(
   target: ts.ClassDeclaration,
   sourceFile: ts.SourceFile,
 ): Edit | undefined {
@@ -383,7 +381,7 @@ function ensureImplements(
 }
 
 /** A member name not already taken, so we cannot shadow anything. */
-function uniqueMemberName(target: ts.ClassDeclaration, preferred: string): string {
+export function uniqueMemberName(target: ts.ClassDeclaration, preferred: string): string {
   const taken = new Set<string>();
   for (const member of target.members) {
     if (member.name !== undefined && ts.isIdentifier(member.name)) taken.add(member.name.text);
@@ -397,7 +395,7 @@ function uniqueMemberName(target: ts.ClassDeclaration, preferred: string): strin
 }
 
 /** The leading whitespace of the line an offset sits on. */
-function indentOf(source: string, offset: number): string {
+export function indentOf(source: string, offset: number): string {
   const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
   const match = /^[ \t]*/.exec(source.slice(lineStart, offset));
   return match?.[0] ?? '  ';
@@ -409,7 +407,7 @@ function indentOf(source: string, offset: number): string {
  * Every offset was computed against the ORIGINAL text, so applying from the
  * end means earlier ones are still valid when their turn comes.
  */
-function applyEdits(source: string, edits: Edit[]): string {
+export function applyEdits(source: string, edits: Edit[]): string {
   const ordered = [...edits].sort((a, b) => b.start - a.start || b.end - a.end);
   let out = source;
   for (const edit of ordered) {

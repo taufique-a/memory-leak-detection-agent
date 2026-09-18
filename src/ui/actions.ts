@@ -14,18 +14,18 @@
  * An allowlist removes the entire class of problem rather than trying to
  * sanitise it.
  *
- * ABOUT THE ONE ACTION THAT WRITES
- * --------------------------------
- * `fixApply` is the only entry here that can modify the target repository,
- * and it keeps every safety property the CLI has: it refuses a dirty working
- * tree, works only on a dedicated branch, records a rollback baseline, and
- * asks for approval on EACH change separately. The approval is answered
- * through the UI's stdin channel rather than a terminal - the gate is in the
- * same place, the person is just reading the diff in a browser.
+ * ABOUT THE ACTIONS THAT WRITE
+ * ----------------------------
+ * `findfixApply` and `findfixUndo` are the only entries that can modify the
+ * target project, and both are marked `writes`. Apply writes ONE change,
+ * and only the exact content the person reviewed: `expect` is the hash of
+ * the proposed file, and the command regenerates the fix and refuses unless
+ * it matches. It keeps a copy of the original, which undo restores - and
+ * undo refuses if the file was edited after the fix.
  *
- * It carries `requiresConfirmation`, which makes the page demand a typed
- * confirmation before the run can even start. Nothing else in this list can
- * write anything.
+ * Both are `driven`: started by the page itself (the Apply Fix button in
+ * the review window, the Undo button on the result), never shown as a
+ * free-standing card.
  */
 
 export type ParamType =
@@ -40,7 +40,13 @@ export type ParamType =
    * e.g. "overview" or "modules/io-lens". Validated more loosely than a
    * path because it is a substring match, but still no shell characters.
    */
-  | 'filter';
+  | 'filter'
+  /** A Find & Fix session id, e.g. ff-lq2x9k3a1b2c3. */
+  | 'session'
+  /** A static finding id: 12 hex characters. */
+  | 'findingId'
+  /** The hash of an approved change: 16 hex characters. */
+  | 'hash';
 
 export interface ActionParam {
   name: string;
@@ -75,10 +81,10 @@ export interface ActionDefinition {
   interactive?: boolean;
   /** Shown above the reply box while the run is waiting. */
   interactiveHint?: string;
-  /** True when the page must demand a typed confirmation before starting. */
-  requiresConfirmation?: boolean;
-  /** What the user must type to confirm. */
-  confirmWord?: string;
+  /** True when this can modify the target project. */
+  writes?: boolean;
+  /** True when the page starts it itself; it is never rendered as a card. */
+  driven?: boolean;
 }
 
 /** Every action the UI may start. */
@@ -209,79 +215,6 @@ export const ACTIONS: readonly ActionDefinition[] = [
     needsApp: false,
   },
   {
-    id: 'scan',
-    step: 2,
-    title: 'Take stock of the project',
-    summary: 'Counts your components, services, pages and risky libraries',
-    why:
-      'Builds the map everything later relies on. It only reads your files - no browser, ' +
-      'no login, nothing changed.',
-    expect: 'about 6 seconds',
-    params: [{ name: 'project', type: 'project', required: true, label: 'Project folder' }],
-    build: (v) => ['scan', v['project'] ?? ''],
-    needsApp: false,
-  },
-  {
-    id: 'analyzeOne',
-    step: 2,
-    title: 'Look closely at one component',
-    summary: 'Line by line: what it opens, and whether it closes it',
-    why:
-      'When you already suspect something, this shows exactly what that one file starts ' +
-      '(subscriptions, timers, listeners) and whether it ever stops them - without the ' +
-      'noise of the other few thousand files. Type the same name into "Rank what looks ' +
-      'risky" to see how serious those are.',
-    expect: 'about 6 seconds',
-    params: [
-      { name: 'project', type: 'project', required: true, label: 'Project folder' },
-      {
-        name: 'filter',
-        type: 'filter',
-        required: true,
-        label: 'Which component or folder? e.g. overview',
-      },
-      { name: 'limit', type: 'number', required: false, label: 'How many lines to show', default: 20 },
-    ],
-    build: (v) => [
-      'analyze',
-      v['project'] ?? '',
-      '--filter',
-      v['filter'] ?? '',
-      '--limit',
-      v['limit'] ?? '20',
-    ],
-    needsApp: false,
-  },
-  {
-    id: 'risk',
-    step: 2,
-    title: 'Rank what looks risky',
-    summary: 'A shortlist, worst first, with the reasoning shown',
-    why:
-      'Turns thousands of observations into a list worth reading. Every score shows the ' +
-      'reasons behind it, so you can look at one and disagree with it. Remember these ' +
-      'are suspicions from reading code - not proof that anything leaks.',
-    expect: 'about 8 seconds, or 20 with the slower option ticked',
-    params: [
-      { name: 'project', type: 'project', required: true, label: 'Project folder' },
-      {
-        name: 'filter',
-        type: 'filter',
-        required: false,
-        label: 'Only this component or folder (optional)',
-      },
-      { name: 'detail', type: 'number', required: false, label: 'How many to explain in full', default: 5 },
-      { name: 'types', type: 'flag', required: false, label: 'Work out exact types (slower, fewer false alarms)' },
-    ],
-    build: (v) => {
-      const args = ['risk', v['project'] ?? '', '--detail', v['detail'] ?? '5'];
-      if (v['filter'] !== undefined && v['filter'] !== '') args.push('--filter', v['filter']);
-      if (v['types'] === 'true') args.push('--types');
-      return args;
-    },
-    needsApp: false,
-  },
-  {
     id: 'login',
     step: 3,
     title: 'Sign in once, so runs can reuse it',
@@ -316,140 +249,6 @@ export const ACTIONS: readonly ActionDefinition[] = [
       v['authFile'] ?? '.auth/app.auth.json',
     ],
     needsApp: true,
-  },
-  {
-    id: 'validate',
-    step: 4,
-    title: 'Check the journey makes sense',
-    summary: 'Catches setups that would give you a confident wrong answer',
-    why:
-      'Some mistakes do not fail - they quietly produce a believable number that is ' +
-      'wrong. Reloading the whole page inside the loop wipes memory every time and hides ' +
-      'the leak completely. Not waiting for the page to finish measures a half-built one. ' +
-      'This looks for those before you spend five minutes.',
-    expect: 'instant — always worth doing',
-    params: [{ name: 'scenario', type: 'scenario', required: true, label: 'Which journey?' }],
-    build: (v) => ['scenario', 'validate', v['scenario'] ?? ''],
-    needsApp: false,
-  },
-  {
-    id: 'scenarioRun',
-    step: 4,
-    title: 'Measure the memory',
-    summary: 'Repeats the journey and watches what memory never comes back',
-    why:
-      'Walks the same path over and over. Before every reading it forces the browser to ' +
-      'clean up, so what you see is memory that refused to be freed - not rubbish waiting ' +
-      'to be collected. That distinction is the whole point.',
-    expect: 'about a minute',
-    params: [{ name: 'scenario', type: 'scenario', required: true, label: 'Scenario' }],
-    build: (v) => ['scenario', 'run', v['scenario'] ?? '', '--json', 'artifacts/ui-run.json'],
-    needsApp: true,
-  },
-  {
-    id: 'heap',
-    step: 5,
-    title: 'Find out what is holding on',
-    summary: 'Names the objects piling up, and what is keeping them',
-    why:
-      'Photographs the memory before and after, then works out which objects piled up and ' +
-      'follows the chain of references keeping each one alive. This is the step that turns ' +
-      '"memory is growing" into "here is the line".',
-    expect: 'one to two minutes',
-    params: [
-      { name: 'scenario', type: 'scenario', required: true, label: 'Which journey?' },
-      { name: 'traceTop', type: 'number', required: false, label: 'How many chains to follow', default: 3 },
-    ],
-    build: (v) => ['heap', v['scenario'] ?? '', '--trace-top', v['traceTop'] ?? '3'],
-    needsApp: true,
-  },
-  {
-    id: 'correlate',
-    step: 6,
-    title: 'Match the code to what happened',
-    summary: 'Checks whether the suspicious code is the code that misbehaved',
-    why:
-      'A worry from reading the code, in a component the browser then showed growing, is a ' +
-      'far stronger case than either on its own. It also flags the opposite: memory that ' +
-      'grew with no suspicious code to explain it, which is where the surprises live.',
-    expect: 'two to three minutes',
-    params: [
-      { name: 'project', type: 'project', required: true, label: 'Project folder' },
-      { name: 'scenario', type: 'scenario', required: true, label: 'Which journey?' },
-    ],
-    build: (v) => ['correlate', v['project'] ?? '', '--scenario', v['scenario'] ?? '', '--detail', '8'],
-    needsApp: true,
-  },
-  {
-    id: 'fixDryRun',
-    step: 7,
-    title: 'See what it would change',
-    summary: 'The exact edits, and what each one could break. Nothing is written.',
-    why:
-      'Shows you every line it would add or remove and what the risk of each one is. ' +
-      'Nothing touches your files. Read this first, every time.',
-    expect: 'two to three minutes',
-    params: [
-      { name: 'project', type: 'project', required: true, label: 'Project folder' },
-      { name: 'scenario', type: 'scenario', required: true, label: 'Which journey?' },
-    ],
-    build: (v) => ['fix', v['project'] ?? '', '--scenario', v['scenario'] ?? ''],
-    needsApp: true,
-  },
-  {
-    id: 'fixApply',
-    step: 7,
-    title: 'Actually change the code',
-    summary: 'The only button here that writes. Every edit shown and confirmed one at a time.',
-    why:
-      'It refuses to start if you have unsaved work, so nothing of yours can be lost. It ' +
-      'remembers where you started so you can undo everything. It shows you each change in ' +
-      'a window and waits for a yes or no. Then it runs your own build, lint and tests, and ' +
-      'prints the commands to undo it all.\n\n' +
-      'By default the change lands in your working tree, on the branch you are already on, ' +
-      'and is NOT committed - so you can read it with git diff, run the app, and commit and ' +
-      'push it yourself when you are happy. Undo is git checkout -- .\n\n' +
-      'Tick "separate branch" if you would rather it went somewhere else entirely; that mode ' +
-      'always commits, because an uncommitted change on a branch you then leave follows you ' +
-      'onto your own.',
-    expect: 'three to six minutes, and it will ask you about each change',
-    params: [
-      { name: 'project', type: 'project', required: true, label: 'Project folder' },
-      { name: 'scenario', type: 'scenario', required: true, label: 'Which journey?' },
-      {
-        name: 'newBranch',
-        type: 'flag',
-        required: false,
-        label: 'Put it on a separate branch instead of mine',
-      },
-      {
-        name: 'commit',
-        type: 'flag',
-        required: false,
-        label: 'Commit it for me (otherwise it waits in your working tree)',
-      },
-    ],
-    /**
-     * The default writes into your branch and leaves it uncommitted.
-     *
-     * --commit is ignored alongside --branch, because a new branch always
-     * commits: an uncommitted change there is the bug this code used to
-     * have, where git carried it across the checkout in the rollback
-     * instructions and it landed on the branch it was protecting.
-     */
-    build: (v) => {
-      const args = ['fix', v['project'] ?? '', '--scenario', v['scenario'] ?? '', '--apply'];
-      if (v['newBranch'] === 'true') args.push('--branch');
-      else if (v['commit'] === 'true') args.push('--commit');
-      return args;
-    },
-    needsApp: true,
-    interactive: true,
-    interactiveHint:
-      'The run will show a diff and ask "Apply ... ? [y/N]". Answer each one. Anything ' +
-      'other than y is treated as no.',
-    requiresConfirmation: true,
-    confirmWord: 'APPLY',
   },
   {
     id: 'investigate',
@@ -494,52 +293,61 @@ export const ACTIONS: readonly ActionDefinition[] = [
     needsApp: true,
   },
   {
-    id: 'routeSweep',
-    step: 9,
-    title: 'Check every route, not just one',
-    summary: 'Repeats the same measurement across every route the app can reach',
+    id: 'findfixFind',
+    step: 2,
+    title: 'Find memory leaks',
+    summary: 'Analyses the route, runs the navigation, traces what is retained',
     why:
-      'Everything else here checks one page you picked. This walks the whole route graph ' +
-      'automatically - navigate in, navigate out, measure - and tells you which routes ' +
-      'actually released what they used and which did not.',
-    expect:
-      'minutes to hours depending on how many routes your app has - roughly a minute per ' +
-      'route measured, seconds per route the reachability check skips. Tick "just check ' +
-      'what is reachable" first to see the count before committing to a full run.',
-    params: [
-      { name: 'project', type: 'project', required: true, label: 'Project folder' },
-      { name: 'authFile', type: 'authFile', required: false, label: 'Sign in as (optional)' },
-      {
-        name: 'iterations',
-        type: 'number',
-        required: false,
-        label: 'Repeats per route',
-        default: 6,
-      },
-      {
-        name: 'maxRoutes',
-        type: 'number',
-        required: false,
-        label: 'Stop after this many routes (blank = all)',
-      },
-      {
-        name: 'probeOnly',
-        type: 'flag',
-        required: false,
-        label: 'Just check what is reachable (fast, no measuring)',
-      },
-    ],
-    build: (v) => {
-      const args = ['routes', 'sweep', v['project'] ?? ''];
-      if (v['authFile'] !== undefined && v['authFile'] !== '') args.push('--auth', v['authFile']);
-      args.push('--iterations', v['iterations'] || '6');
-      if (v['maxRoutes'] !== undefined && v['maxRoutes'] !== '') {
-        args.push('--max-routes', v['maxRoutes']);
-      }
-      if (v['probeOnly'] === 'true') args.push('--probe-only');
-      return args;
-    },
+      'Reads the code of everything connected to the page, repeats the navigation you chose ' +
+      'with a forced clean-up before every reading, photographs the memory, and ties what ' +
+      'was retained back to the code that holds it.',
+    expect: 'several minutes on a large project',
+    params: [{ name: 'session', type: 'session', required: true, label: 'Scan' }],
+    build: (v) => ['findfix', 'find', '--session', v['session'] ?? ''],
     needsApp: true,
+    driven: true,
+  },
+  {
+    id: 'findfixApply',
+    step: 2,
+    title: 'Apply the fix and verify it',
+    summary: 'Writes the one change you approved, then builds and re-measures',
+    why:
+      'Writes exactly the change shown in the review window - nothing else - keeps a copy of ' +
+      'the original, opens the file in VS Code, then builds the project and repeats the same ' +
+      'navigation to check the leak is gone and the page still works.',
+    expect: 'as long as your build takes, plus a few minutes of navigation',
+    params: [
+      { name: 'session', type: 'session', required: true, label: 'Scan' },
+      { name: 'issue', type: 'findingId', required: true, label: 'Issue' },
+      { name: 'expect', type: 'hash', required: true, label: 'Approved change' },
+    ],
+    build: (v) => [
+      'findfix',
+      'apply',
+      '--session',
+      v['session'] ?? '',
+      '--issue',
+      v['issue'] ?? '',
+      '--expect',
+      v['expect'] ?? '',
+    ],
+    needsApp: true,
+    driven: true,
+    writes: true,
+  },
+  {
+    id: 'findfixUndo',
+    step: 2,
+    title: 'Undo the last fix',
+    summary: 'Puts the file back exactly as it was',
+    why: 'Restores the copy kept before the fix was written, only if nobody has edited it since.',
+    expect: 'a second',
+    params: [{ name: 'session', type: 'session', required: true, label: 'Scan' }],
+    build: (v) => ['findfix', 'undo', '--session', v['session'] ?? ''],
+    needsApp: false,
+    driven: true,
+    writes: true,
   },
   {
     id: 'demo',
@@ -570,17 +378,7 @@ export function findAction(id: string): ActionDefinition | undefined {
  * app URL bar, which re-points the scenario for that run only. The file on
  * disk is never rewritten.
  */
-const FOLLOWS_APP_URL: ReadonlySet<string> = new Set([
-  'scenarioRun',
-  'heap',
-  'correlate',
-  'fixDryRun',
-  'fixApply',
-  'investigate',
-  'auto',
-  'validate',
-  'routeSweep',
-]);
+const FOLLOWS_APP_URL: ReadonlySet<string> = new Set(['investigate', 'auto']);
 
 export function followsAppUrl(actionId: string): boolean {
   return FOLLOWS_APP_URL.has(actionId);
@@ -667,6 +465,15 @@ function validate(type: ParamType, value: string): string | undefined {
       if (!/^[A-Za-z0-9 _.\-\\/]+$/.test(value)) return undefined;
       return value;
     }
+
+    case 'session':
+      return /^ff-[a-z0-9]{8,32}$/.test(value) ? value : undefined;
+
+    case 'findingId':
+      return /^[0-9a-f]{12}$/.test(value) ? value : undefined;
+
+    case 'hash':
+      return /^[0-9a-f]{16}$/.test(value) ? value : undefined;
 
     case 'project':
     case 'scenario':

@@ -21,11 +21,17 @@
  * explicitly refreshed.
  */
 
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { classifyAngularClasses } from '../scanner/classify';
 import { isParseFailure, parseSourceFile } from '../scanner/parse';
-import { extractRouteArrays, linkRouteGraph, type RouteArrayDeclaration } from '../scanner/routes';
+import {
+  extractRouteArrays,
+  linkRouteGraph,
+  type RouteArrayDeclaration,
+  type RouteNode,
+} from '../scanner/routes';
 import { isTestFile, toRelativePosix, walkDirectory } from '../scanner/walk';
 import { readWorkspace } from '../scanner/workspace';
 
@@ -85,12 +91,48 @@ export interface Entity {
   ambiguousName?: boolean;
 }
 
+/** A route the app can navigate to and measure. */
+export interface RouteOption {
+  path: string;
+  /** The component it mounts. */
+  component: string;
+  file: string;
+  /** Innermost lazy-loaded module this route sits behind, by id. */
+  moduleId?: string;
+}
+
+/** A lazy-loaded module (loadChildren) and the routes behind it. */
+export interface LazyModule {
+  /** The route path it is mounted at, which is unique; used as the id. */
+  id: string;
+  /** e.g. "IoMatrixModule". */
+  name: string;
+  path: string;
+  /** Project-relative directory holding its route file, e.g. src/app/io-matrix. */
+  directory: string;
+  /** Measurable route paths behind this boundary, nested modules included. */
+  routes: string[];
+}
+
+/** What one source file depends on, read from its text. */
+export interface FileRelations {
+  /** Class names injected through the constructor or inject(). */
+  injects: string[];
+  /** Element names used in its template(s), inline or templateUrl. */
+  usesTags: string[];
+}
+
 export interface EntityIndex {
   projectRoot: string;
   builtAt: number;
   entities: Entity[];
   /** Routed components with a selector, usable as a control route. */
   controlCandidates: Entity[];
+  /** Every route that can be measured, shallowest first. */
+  routes: RouteOption[];
+  modules: LazyModule[];
+  /** Keyed by project-relative source file. */
+  relations: Map<string, FileRelations>;
   durationMs: number;
 }
 
@@ -116,6 +158,7 @@ function buildEntityIndex(projectRoot: string): EntityIndex {
   const walk = walkDirectory(scanRoot, { extensions: ['.ts'] });
 
   const routeDeclarations: RouteArrayDeclaration[] = [];
+  const relations = new Map<string, FileRelations>();
   const classes: Array<{
     name: string;
     selector?: string;
@@ -138,6 +181,7 @@ function buildEntityIndex(projectRoot: string): EntityIndex {
     // Counted from the text once per file, not per class - a file with two
     // components is rare and the number is a hint, not a measurement.
     const resourceCount = countResources(parsed.sourceFile.text);
+    relations.set(relative, readRelations(parsed.sourceFile.text, absolute));
 
     for (const cls of classifyAngularClasses(parsed.sourceFile, relative)) {
       // NgModules and pipes are not things you navigate to.
@@ -228,13 +272,111 @@ function buildEntityIndex(projectRoot: string): EntityIndex {
     })
     .slice(0, 40);
 
+  const { routes, modules } = collectRoutesAndModules(graph.roots, entities);
+
   return {
     projectRoot,
     builtAt: Date.now(),
     entities,
     controlCandidates,
+    routes,
+    modules,
+    relations,
     durationMs: Date.now() - started,
   };
+}
+
+/**
+ * The routes a person can pick, grouped by the lazy module they sit behind.
+ *
+ * Only routes whose component can actually be driven are offered - the same
+ * rule as `investigable`, plus no ambiguous class names, because the page
+ * marker we wait for comes from the class and a wrong class means waiting
+ * for an element that never appears.
+ */
+function collectRoutesAndModules(
+  roots: RouteNode[],
+  entities: Entity[],
+): { routes: RouteOption[]; modules: LazyModule[] } {
+  const drivable = new Map<string, Entity>();
+  for (const e of entities) {
+    if (e.investigable && e.ambiguousName !== true) drivable.set(e.name, e);
+  }
+
+  const routes = new Map<string, RouteOption>();
+  const modules: LazyModule[] = [];
+
+  const visit = (node: RouteNode, moduleStack: LazyModule[]): void => {
+    let stack = moduleStack;
+    if (node.lazyModuleSpecifier !== undefined && node.children.length > 0) {
+      const child = node.children[0];
+      const lazy: LazyModule = {
+        id: node.fullPath,
+        name: node.lazyModuleExport ?? node.lazyModuleSpecifier.split('/').pop() ?? node.fullPath,
+        path: node.fullPath,
+        directory: child !== undefined ? path.posix.dirname(child.file) : '',
+        routes: [],
+      };
+      modules.push(lazy);
+      stack = [...moduleStack, lazy];
+    }
+
+    const componentName = node.componentName ?? node.lazyComponentName;
+    const entity = componentName !== undefined ? drivable.get(componentName) : undefined;
+    if (entity !== undefined && !node.fullPath.includes(':') && !routes.has(node.fullPath)) {
+      const innermost = stack[stack.length - 1];
+      routes.set(node.fullPath, {
+        path: node.fullPath,
+        component: entity.name,
+        file: entity.file,
+        ...(innermost !== undefined ? { moduleId: innermost.id } : {}),
+      });
+      for (const m of stack) m.routes.push(node.fullPath);
+    }
+
+    for (const child of node.children) visit(child, stack);
+  };
+  for (const root of roots) visit(root, []);
+
+  const depth = (p: string): number => p.split('/').length;
+  return {
+    routes: [...routes.values()].sort((a, b) => depth(a.path) - depth(b.path) || a.path.localeCompare(b.path)),
+    modules: modules
+      .filter((m) => m.routes.length > 0)
+      .sort((a, b) => a.path.localeCompare(b.path)),
+  };
+}
+
+/**
+ * What a file injects and which elements its templates use.
+ *
+ * Text matching, like countResources: this index parses but does not
+ * analyse. Good enough to follow "this page uses that child, which injects
+ * this service" - the dependency chain a route scan has to cover.
+ */
+function readRelations(text: string, absoluteFile: string): FileRelations {
+  const injects = new Set<string>();
+  const ctor = /constructor\s*\(([\s\S]*?)\)\s*\{/.exec(text);
+  if (ctor?.[1] !== undefined) {
+    for (const m of ctor[1].matchAll(/:\s*([A-Z][\w]*)/g)) if (m[1] !== undefined) injects.add(m[1]);
+  }
+  for (const m of text.matchAll(/\binject\(\s*([A-Z][\w]*)/g)) if (m[1] !== undefined) injects.add(m[1]);
+
+  let templates = '';
+  const inline = /\btemplate\s*:\s*`([\s\S]*?)`/.exec(text);
+  if (inline?.[1] !== undefined) templates += inline[1];
+  for (const m of text.matchAll(/\btemplateUrl\s*:\s*['"]([^'"]+)['"]/g)) {
+    if (m[1] === undefined) continue;
+    try {
+      templates += '\n' + fs.readFileSync(path.join(path.dirname(absoluteFile), m[1]), 'utf8');
+    } catch {
+      /* a missing template is the build's problem, not ours */
+    }
+  }
+  const usesTags = new Set<string>();
+  for (const m of templates.matchAll(/<([a-z][a-z0-9]*-[a-z0-9-]*)/g)) if (m[1] !== undefined) usesTags.add(m[1]);
+
+  return { injects: [...injects], usesTags: [...usesTags] };
 }
 
 /**

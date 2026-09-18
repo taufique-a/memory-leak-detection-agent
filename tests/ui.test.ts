@@ -25,31 +25,50 @@ describe('action allowlist', () => {
 
   it('NEVER lets the client supply a command line', () => {
     // The whole security model. The client sends an id; argv is built here.
-    const action = findAction('scan');
-    if (action === undefined) throw new Error('scan missing');
+    const action = findAction('compile');
+    if (action === undefined) throw new Error('compile missing');
     const built = buildArgs(action, { project: 'C:/apps/thing' });
-    expect('args' in built && built.args[0]).toBe('scan');
+    expect('args' in built && built.args[0]).toBe('compile');
   });
 
-  it('EXACTLY ONE action can write, and it demands a typed confirmation', () => {
-    const writers = ACTIONS.filter((action) => {
+  it('ONLY apply and undo can write, and both are started by the page, never as a card', () => {
+    const writers = ACTIONS.filter((a) => a.writes === true).map((a) => a.id).sort();
+    expect(writers).toEqual(['findfixApply', 'findfixUndo']);
+    for (const id of writers) expect(findAction(id)?.driven).toBe(true);
+
+    // Nothing else can reach the code-changing commands at all.
+    for (const action of ACTIONS) {
+      if (action.writes === true) continue;
       const built = buildArgs(action, {
         project: 'C:/p',
         scenario: 'scenarios/x.json',
         url: 'http://localhost:1',
+        session: 'ff-abcdef123456',
       });
-      return 'args' in built && built.args.includes('--apply');
-    });
-
-    expect(writers).toHaveLength(1);
-    expect(writers[0]?.id).toBe('fixApply');
-    expect(writers[0]?.requiresConfirmation).toBe(true);
-    expect(writers[0]?.confirmWord).toBe('APPLY');
+      if ('args' in built) {
+        expect(built.args).not.toContain('--apply');
+        expect(built.args.slice(0, 2)).not.toEqual(['findfix', 'apply']);
+        expect(built.args.slice(0, 2)).not.toEqual(['findfix', 'undo']);
+      }
+    }
   });
 
-  it('NOTHING can pass --yes, so per-change approval can never be skipped', () => {
-    // --yes answers every prompt automatically. Exposing it through a web
-    // page would turn "approve each change" into "approve nothing".
+  it('apply cannot start without the hash of the change that was reviewed', () => {
+    const apply = findAction('findfixApply');
+    if (apply === undefined) throw new Error('findfixApply missing');
+    expect('error' in buildArgs(apply, { session: 'ff-abcdef123456', issue: 'a1b2c3d4e5f6' })).toBe(true);
+    const built = buildArgs(apply, {
+      session: 'ff-abcdef123456',
+      issue: 'a1b2c3d4e5f6',
+      expect: '0123456789abcdef',
+    });
+    if (!('args' in built)) throw new Error(built.error);
+    expect(built.args).toEqual([
+      'findfix', 'apply', '--session', 'ff-abcdef123456', '--issue', 'a1b2c3d4e5f6', '--expect', '0123456789abcdef',
+    ]);
+  });
+
+  it('NOTHING can pass --yes, so approval can never be skipped', () => {
     for (const action of ACTIONS) {
       const built = buildArgs(action, {
         project: 'C:/p',
@@ -62,8 +81,8 @@ describe('action allowlist', () => {
 });
 
 describe('parameter validation', () => {
-  const scan = findAction('scan');
-  if (scan === undefined) throw new Error('scan missing');
+  const compile = findAction('compile');
+  if (compile === undefined) throw new Error('compile missing');
 
   it.each([
     ['shell metacharacter', 'C:/p; rm -rf /'],
@@ -76,16 +95,17 @@ describe('parameter validation', () => {
     ['newline', 'C:/p\nrm'],
     ['parent traversal', '../../etc'],
   ])('rejects a project path with %s', (_label, value) => {
-    const built = buildArgs(scan, { project: value });
+    const built = buildArgs(compile, { project: value });
     expect('error' in built).toBe(true);
   });
 
   it('passes the app URL through as --base-url for scenario actions', () => {
     // The port is the user's choice; a scenario file that hardcodes one
     // must not decide where the run points.
-    const run = findAction('scenarioRun');
-    if (run === undefined) throw new Error('scenarioRun missing');
-    const built = buildArgs(run, {
+    const auto = findAction('auto');
+    if (auto === undefined) throw new Error('auto missing');
+    const built = buildArgs(auto, {
+      project: 'C:/p',
       scenario: 'scenarios/x.json',
       __baseUrl: 'http://localhost:7500',
     });
@@ -103,39 +123,50 @@ describe('parameter validation', () => {
   });
 
   it('rejects an app URL that is not http(s)', () => {
-    const run = findAction('scenarioRun');
-    if (run === undefined) throw new Error('scenarioRun missing');
-    const built = buildArgs(run, {
+    const auto = findAction('auto');
+    if (auto === undefined) throw new Error('auto missing');
+    const built = buildArgs(auto, {
+      project: 'C:/p',
       scenario: 'scenarios/x.json',
       __baseUrl: 'file:///etc/passwd',
     });
     expect('error' in built).toBe(true);
   });
 
-  it('accepts a component filter but rejects shell characters in it', () => {
-    const one = findAction('analyzeOne');
-    if (one === undefined) throw new Error('analyzeOne missing');
-    expect('args' in buildArgs(one, { project: 'C:/p', filter: 'overview' })).toBe(true);
-    expect('args' in buildArgs(one, { project: 'C:/p', filter: 'modules/io-lens' })).toBe(true);
-    expect('error' in buildArgs(one, { project: 'C:/p', filter: 'x; rm -rf /' })).toBe(true);
-    expect('error' in buildArgs(one, { project: 'C:/p', filter: '$(id)' })).toBe(true);
+  it.each([
+    ['session', 'ff-abc; rm -rf /'],
+    ['session', '../ff-abcdef123456'],
+    ['issue', 'a1b2c3d4e5f6 --yes'],
+    ['issue', 'A1B2C3D4E5F6'],
+    ['expect', '0123456789abcdeg'],
+    ['expect', '$(id)'],
+  ])('rejects a malformed %s for Find & Fix (%s)', (name, value) => {
+    const apply = findAction('findfixApply');
+    if (apply === undefined) throw new Error('findfixApply missing');
+    const params: Record<string, string> = {
+      session: 'ff-abcdef123456',
+      issue: 'a1b2c3d4e5f6',
+      expect: '0123456789abcdef',
+    };
+    params[name] = value;
+    expect('error' in buildArgs(apply, params)).toBe(true);
   });
 
   it('accepts an ordinary Windows path', () => {
-    const built = buildArgs(scan, { project: 'E:\\taufique\\io-sense\\IOSense' });
+    const built = buildArgs(compile, { project: 'E:\\taufique\\io-sense\\IOSense' });
     expect('args' in built).toBe(true);
   });
 
   it('accepts an ordinary posix path', () => {
-    expect('args' in buildArgs(scan, { project: '/home/me/app' })).toBe(true);
+    expect('args' in buildArgs(compile, { project: '/home/me/app' })).toBe(true);
   });
 
   it('rejects an over-long value', () => {
-    expect('error' in buildArgs(scan, { project: 'a'.repeat(500) })).toBe(true);
+    expect('error' in buildArgs(compile, { project: 'a'.repeat(500) })).toBe(true);
   });
 
   it('requires a required parameter', () => {
-    const built = buildArgs(scan, {});
+    const built = buildArgs(compile, {});
     expect('error' in built && built.error).toContain('required');
   });
 
@@ -257,9 +288,20 @@ describe('page', () => {
     expect(page).toContain('days ago');
   });
 
-  it('lets the user target one component', () => {
-    expect(page).toContain('Look closely at one component');
-    expect(page).toContain('Only this component or folder');
+  it('offers exactly the Find & fix parts: by route, by component, and the result', () => {
+    const fix = page.slice(page.indexOf('id="page-fix"'), page.indexOf('id="page-report"'));
+    expect(fix).toContain('data-mode="route"');
+    expect(fix).toContain('data-mode="component"');
+    for (const id of ['ffModule', 'ffNavA', 'ffNavB', 'ffTimesRoute', 'entitySearch', 'ffProgress', 'ffResult']) {
+      expect(fix).toContain('id="' + id + '"');
+    }
+    expect(fix).toContain('Route or lazy-loaded module');
+    expect(fix).toContain('Navigation A');
+    expect(fix).toContain('Navigation B');
+    expect(fix).toContain('Navigation times');
+    // No step-by-step cards, and no manual fix path, on this page.
+    expect(fix).not.toContain('steps-fix');
+    expect(page.toLowerCase()).not.toContain('manual fix');
   });
 
   it('has balanced markup', () => {
@@ -288,24 +330,30 @@ describe('page', () => {
     expect(page).toContain('setTimeout(() => searchEntities(false), 250)');
   });
 
-  it('runs the whole find-and-fix pipeline on the picked component', () => {
-    expect(page).toContain("createAndRun('auto')");
-    expect(page).toContain('/api/scenario/generate');
+  it('starts a scan through the Find & Fix endpoint, then the allowlisted action', () => {
+    expect(page).toContain('/api/findfix/start');
+    expect(page).toContain("startAction('findfixFind'");
   });
 
-  it('shows the generated scenario notes BEFORE starting the run', () => {
-    // The link selector is a guess. The user needs to read that while there
-    // is still a reason to, not after a timeout.
-    const script = page.slice(page.indexOf('<script>'));
-    const notes = script.indexOf('result.notes');
-    const start = script.indexOf('runWithScenario(actionId');
-    expect(notes).toBeGreaterThan(-1);
-    expect(notes).toBeLessThan(start);
+  it('shows every stage of the work as it happens', () => {
+    for (const label of [
+      'Analyzing project',
+      'Finding route',
+      'Running navigation test',
+      'Analyzing memory',
+      'Finding root cause',
+      'Preparing fix',
+      'Applying fix',
+      'Verifying',
+    ]) {
+      expect(page).toContain("'" + label + "'");
+    }
+    expect(page).toContain('watchFindFixLine');
   });
 
-  it('explains why a component cannot be driven instead of offering it anyway', () => {
+  it('tests a component that is not a page on the page that renders it', () => {
     expect(page).toContain('blockedReason');
-    expect(page).toContain('cannot open in a browser');
+    expect(page).toContain('not a page - tested where it is rendered');
   });
 
   it('warns in the UI when a class name is ambiguous', () => {
@@ -363,7 +411,7 @@ describe('page', () => {
     for (const id of ['page-setup', 'page-fix', 'page-report']) {
       expect(page).toContain('id="' + id + '"');
     }
-    for (const id of ['steps-setup', 'steps-fix', 'steps-report']) {
+    for (const id of ['steps-setup', 'steps-report']) {
       expect(page).toContain('id="' + id + '"');
     }
     expect(page).toContain('class="side"');
@@ -642,26 +690,31 @@ describe('page', () => {
     expect(page).toContain('Nothing is running there');
     expect(page).toContain('Not answering, though a saved journey is');
   });
-  /* ---- the approval dialog ---- */
+  /* ---- the review window ---- */
 
-  it("shows each change in a dialog rather than a scrolling log", () => {
-    /**
-     * The command asks about every change on stdin and the console has
-     * the diff - but a diff that has already scrolled past is not
-     * something anybody re-reads before typing y.
-     */
-    expect(page).toContain('id="approveBack"');
-    expect(page).toContain('id="approveBody"');
-    expect(page).toContain('yes, apply it');
-    expect(page).toContain('no, skip it');
-    expect(page).toContain('function watchForApproval');
+  it("shows the fix in a review window before anything is written", () => {
+    const modal = page.slice(page.indexOf('id="fixBack"'), page.indexOf('<div class="rail">'));
+    expect(modal).toContain('File being changed');
+    expect(modal).toContain('Existing code');
+    expect(modal).toContain('Proposed code');
+    expect(modal).toContain('What this changes');
+    expect(modal).toContain('Why this should resolve the issue');
+    expect(modal).toContain('>Apply Fix<');
+    expect(page).toContain('/api/findfix/fix');
   });
 
   it("makes the safe answer the easy one", () => {
-    // Escape and clicking the backdrop both mean no. Neither means yes.
-    const script = page.slice(page.indexOf('function closeApproval'));
-    const escape = script.slice(script.indexOf("e.key === 'Escape'"), script.indexOf("e.key === 'Escape'") + 200);
-    expect(escape).toContain('answerApproval(false)');
+    // Escape and clicking the backdrop both cancel. Neither applies.
+    const script = page.slice(page.indexOf('Escape and the backdrop both mean cancel'));
+    const escape = script.slice(script.indexOf("e.key === 'Escape'"), script.indexOf("e.key === 'Escape'") + 120);
+    expect(escape).toContain('closeFixModal()');
+    expect(escape).not.toContain('applyFix');
+  });
+
+  it("applies exactly the change that was reviewed, by its hash", () => {
+    const fn = page.slice(page.indexOf('async function applyFix'), page.indexOf('async function undoFix'));
+    expect(fn).toContain("startAction('findfixApply'");
+    expect(fn).toContain('expect: p.expect');
   });
 
   it("colours the diff so additions and removals are distinguishable", () => {
@@ -669,77 +722,54 @@ describe('page', () => {
     expect(page).toContain('.dline.del');
   });
 
-  it("offers a side-by-side old/new view alongside the unified diff", () => {
-    /**
-     * A unified diff is one column of +/- lines; the side-by-side view
-     * lines up what the file said against what it will say, in two
-     * columns, the way an editor's diff view does.
-     */
+  it("offers a side-by-side existing/proposed view alongside the unified diff", () => {
     expect(page).toContain('id="diffToggle"');
     expect(page).toContain('id="viewUnified"');
     expect(page).toContain('id="viewSplit"');
-    expect(page).toContain('id="approveSplit"');
+    expect(page).toContain('id="fixSplit"');
     expect(page).toContain('function buildSplitRows');
-    expect(page).toContain('function extractDiffBlock');
-  });
-
-  it("hides the side-by-side toggle when a proposal has no diff to compare", () => {
-    // A manual-only fix (no newContent) has rationale and risks but no
-    // diff, so there is nothing to line up - offering the toggle anyway
-    // would be a button that does nothing.
-    const fn = page.slice(page.indexOf('function renderApproveBody'));
-    const body = fn.slice(0, fn.indexOf('function openApproval'));
-    expect(body).toContain("extractDiffBlock(proposalLines)");
-    expect(body).toContain("canSplit ? 'flex' : 'none'");
   });
 
   it("keeps a side-by-side block's old and new columns the same length", () => {
-    /**
-     * Consecutive removals and additions between two context lines get
-     * padded to the same row count with blank filler cells - otherwise a
-     * block with more additions than removals (the common case: these
-     * fixes are close to pure insertions) would drift the two columns
-     * out of alignment from that point on.
-     */
     const fn = page.slice(page.indexOf('function buildSplitRows'), page.indexOf('function renderSplitHtml'));
     expect(fn).toContain('Math.max(dels.length, adds.length)');
   });
 
-  /* ---- where the change lands ---- */
-
-  it("offers a separate branch and a commit, both off by default", () => {
-    const apply = ACTIONS.find((a) => a.id === "fixApply");
-    const names = (apply?.params ?? []).map((x) => x.name);
-    expect(names).toContain("newBranch");
-    expect(names).toContain("commit");
+  it("lays out a real diff as aligned existing and proposed rows", () => {
+    const fn = page.slice(page.indexOf('function buildSplitRows'), page.indexOf('function renderSplitHtml'));
+    const build = new vm.Script('(' + fn.replace('function buildSplitRows', 'function') + ')').runInNewContext() as (
+      lines: string[],
+    ) => Array<{ old?: string; new?: string; ctx?: boolean; hunk?: string }>;
+    const rows = build([
+      '--- a/x.ts',
+      '+++ b/x.ts',
+      '@@ -1,2 +1,3 @@',
+      '     indented context',
+      '-old line',
+      '+new line',
+      '+added line',
+    ]);
+    expect(rows[0]?.hunk).toBe('@@ -1,2 +1,3 @@');
+    // Indentation in context lines survives - it is code, not diff padding.
+    expect(rows[1]).toEqual({ old: '    indented context', new: '    indented context', ctx: true });
+    expect(rows[2]).toEqual({ old: 'old line', new: 'new line' });
+    expect(rows[3]).toEqual({ old: undefined, new: 'added line' });
   });
 
-  it("defaults to your branch, uncommitted, with no flags at all", () => {
-    /**
-     * The default has to be the quiet one. Anything that commits on
-     * somebody's behalf should have been asked for out loud.
-     */
-    const apply = findAction("fixApply");
-    if (apply === undefined) throw new Error("fixApply missing");
-    const base = { project: "C:/p", scenario: "scenarios/x.json" };
-
-    const plain = buildArgs(apply, base);
-    if (!("args" in plain)) throw new Error(plain.error);
-    expect(plain.args).not.toContain("--branch");
-    expect(plain.args).not.toContain("--commit");
-
-    // Asking for a commit adds exactly that.
-    const committed = buildArgs(apply, { ...base, commit: "true" });
-    if (!("args" in committed)) throw new Error(committed.error);
-    expect(committed.args).toContain("--commit");
-    expect(committed.args).not.toContain("--branch");
-
-    // Asking for a separate branch adds that, and never both.
-    const branched = buildArgs(apply, { ...base, newBranch: "true", commit: "true" });
-    if (!("args" in branched)) throw new Error(branched.error);
-    expect(branched.args).toContain("--branch");
-    expect(branched.args).not.toContain("--commit");
+  it("verifies after applying and reports the outcome in plain words", () => {
+    expect(page).toContain('function renderVerify');
+    expect(page).toContain('id="ffUndo"');
+    // Still leaking but working: the agent keeps looking instead of stopping.
+    const fn = page.slice(page.indexOf('async function findFixFinished'), page.indexOf('/* ---- the issue result'));
+    expect(fn).toContain("v.next === 'next-round'");
+    expect(fn).toContain('startFind()');
   });
+
+  it("offers to open the changed file in VS Code", () => {
+    expect(page).toContain('/api/findfix/open');
+    expect(page).toContain('Open in VS Code');
+  });
+
   /* ---- deleting ---- */
 
   it("offers a delete for each file and for a whole group", () => {
@@ -768,17 +798,10 @@ describe('page', () => {
   });
   /* ---- saved sessions ---- */
 
-  it('offers the sessions that exist instead of a hardcoded filename', () => {
-    // A run was pointed at .auth/iosense.auth.json - a stale file from
-    // another port - while the session the user had just captured sat in
-    // .auth/app.auth.json. The page hardcoded the wrong name.
-    expect(page).toContain('sessionOptions()');
+  it('never hardcodes a sign-in file', () => {
+    // A run was once pointed at a stale session from another port. The
+    // server now picks the newest one saved for this address.
     expect(page).not.toContain('.auth/iosense.auth.json');
-  });
-
-  it('marks a session captured at the wrong origin', () => {
-    expect(page).toContain('wrong origin');
-    expect(page).toContain('matchesOrigin');
   });
 
   it('treats a cookie-only session as valid on any port', () => {
@@ -788,9 +811,9 @@ describe('page', () => {
     expect(script.slice(0, 400)).toContain('return true');
   });
 
-  it('warns when no saved session can work at the current URL', () => {
-    expect(page).toContain('sessionWarning()');
-    expect(page).toContain('tied to');
+  it('says so when no saved sign-in fits the app address', () => {
+    expect(page).toContain('function signInHint');
+    expect(page).toContain('No saved sign-in for');
   });
 
   /* ---- generated files ---- */
@@ -1311,49 +1334,83 @@ describe('server security', () => {
     expect(body.error !== undefined || Array.isArray(body.results)).toBe(true);
   }, 20_000);
 
-  it('REFUSES to generate a scenario without the token', async () => {
-    const res = await fetch(`http://127.0.0.1:${server.port}/api/scenario/generate`, {
+  /* ---- Find & Fix endpoints ---- */
+
+  const post = (path: string, body: unknown, withToken = true): Promise<Response> =>
+    fetch(`http://127.0.0.1:${server.port}${path}${withToken ? `?token=${server.token}` : ''}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ target: 'X', control: 'Y', baseUrl: 'http://localhost:1' }),
+      body: JSON.stringify(body),
     });
+
+  it('REFUSES every Find & Fix endpoint without the token', async () => {
+    for (const path of ['/api/findfix/start', '/api/findfix/fix', '/api/findfix/open']) {
+      const res = await post(path, { session: 'ff-abcdef123456' }, false);
+      expect(res.status).toBe(403);
+    }
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/findfix/options?project=x`);
     expect(res.status).toBe(403);
   });
 
-  it('REFUSES to generate a scenario pointed at a non-http URL', async () => {
-    const res = await fetch(
-      `http://127.0.0.1:${server.port}/api/scenario/generate?token=${server.token}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          project: process.cwd(),
-          target: 'X',
-          control: 'Y',
-          baseUrl: 'file:///etc/passwd',
-        }),
-      },
-    );
+  it('REFUSES to start a scan pointed at a non-http address', async () => {
+    const res = await post('/api/findfix/start', {
+      mode: 'route',
+      project: process.cwd(),
+      baseUrl: 'file:///etc/passwd',
+      iterations: 10,
+      targetRoute: '/x',
+    });
     const body = (await res.json()) as { error?: string };
-    expect(body.error).toContain('http');
+    expect(body.error).toContain('address');
   });
 
-  it('refuses to generate a scenario for an unknown component', async () => {
+  it('REFUSES a project path with traversal or shell characters', async () => {
+    for (const bad of ['../../etc', 'C:/p && calc', 'C:/p`id`']) {
+      const res = await post('/api/findfix/start', {
+        mode: 'route', project: bad, baseUrl: 'http://localhost:1', iterations: 10, targetRoute: '/x',
+      });
+      expect(((await res.json()) as { error?: string }).error).toBeDefined();
+    }
+  });
+
+  it('REFUSES navigation times outside 5 to 100', async () => {
+    for (const iterations of [0, 4, 101, 7.5, '10']) {
+      const res = await post('/api/findfix/start', {
+        mode: 'route', project: process.cwd(), baseUrl: 'http://localhost:1', iterations, targetRoute: '/x',
+      });
+      expect(((await res.json()) as { error?: string }).error).toContain('Navigation times');
+    }
+  });
+
+  it('refuses a route or component the project does not have', async () => {
+    const route = await post('/api/findfix/start', {
+      mode: 'route', project: process.cwd(), baseUrl: 'http://localhost:1', iterations: 10, targetRoute: '/nope',
+    });
+    expect(((await route.json()) as { error?: string }).error).toBeDefined();
+    const component = await post('/api/findfix/start', {
+      mode: 'component', project: process.cwd(), baseUrl: 'http://localhost:1', iterations: 10,
+      component: { name: 'NoSuchComponent', file: 'src/x.ts' },
+    });
+    expect(((await component.json()) as { error?: string }).error).toBeDefined();
+  }, 30_000);
+
+  it('refuses to prepare or open anything for a session that is not real', async () => {
+    for (const session of ['ff-doesnotexist99', '../../etc', 'ff-a;calc']) {
+      const fix = await post('/api/findfix/fix', { session, issue: 'a1b2c3d4e5f6' });
+      expect(((await fix.json()) as { error?: string }).error).toBeDefined();
+      const open = await post('/api/findfix/open', { session, file: 'x.ts' });
+      expect(((await open.json()) as { error?: string }).error).toBeDefined();
+    }
+  });
+
+  it('lists routes and lazy modules for the dropdowns', async () => {
     const res = await fetch(
-      `http://127.0.0.1:${server.port}/api/scenario/generate?token=${server.token}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          project: process.cwd(),
-          target: 'NoSuchComponent',
-          control: 'AlsoMissing',
-          baseUrl: 'http://localhost:1234',
-        }),
-      },
+      `http://127.0.0.1:${server.port}/api/findfix/options?token=${server.token}&project=${encodeURIComponent(process.cwd())}`,
     );
-    const body = (await res.json()) as { error?: string };
-    expect(body.error).toBeDefined();
+    const body = (await res.json()) as { routes?: unknown; modules?: unknown; controls?: unknown };
+    expect(Array.isArray(body.routes)).toBe(true);
+    expect(Array.isArray(body.modules)).toBe(true);
+    expect(Array.isArray(body.controls)).toBe(true);
   }, 30_000);
 
   it('reports the ORIGIN each saved session was captured at', async () => {
@@ -1363,44 +1420,6 @@ describe('server security', () => {
     const body = (await res.json()) as { sessions?: Array<{ origins?: unknown }> };
     for (const sess of body.sessions ?? []) expect(Array.isArray(sess.origins)).toBe(true);
   }, 20_000);
-
-  it('REFUSES to generate a scenario against a session from another port', async () => {
-    const fsMod = await import('node:fs');
-    const pathMod = await import('node:path');
-    const authDir = pathMod.join(process.cwd(), '.auth');
-    fsMod.mkdirSync(authDir, { recursive: true });
-    const name = `ui-origin-test-${Date.now()}.auth.json`;
-    fsMod.writeFileSync(
-      pathMod.join(authDir, name),
-      JSON.stringify({
-        cookies: [],
-        origins: [{ origin: 'http://localhost:7400', localStorage: [{ name: 'urid', value: 'x' }] }],
-      }),
-      'utf8',
-    );
-
-    try {
-      const res = await fetch(
-        `http://127.0.0.1:${server.port}/api/scenario/generate?token=${server.token}`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            project: process.cwd(),
-            target: 'Whatever',
-            control: 'Something',
-            baseUrl: 'http://localhost:7500',
-            authFile: `.auth/${name}`,
-          }),
-        },
-      );
-      const body = (await res.json()) as { error?: string };
-      expect(body.error).toContain('7400');
-      expect(body.error).toContain('not expired');
-    } finally {
-      fsMod.rmSync(pathMod.join(authDir, name), { force: true });
-    }
-  }, 30_000);
 
   it('reports state the UI needs to guide the next step', async () => {
     const res = await fetch(`http://127.0.0.1:${server.port}/api/state?token=${server.token}`);

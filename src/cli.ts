@@ -10,6 +10,7 @@
 
 import { runAnalyze } from './commands/analyze';
 import { runAuto } from './commands/autoInvestigate';
+import { runFindFix } from './commands/findFix';
 import { runCorrelate } from './commands/correlate';
 import { runDoctor } from './commands/doctor';
 import { runFix } from './commands/fix';
@@ -269,6 +270,10 @@ export function run(argv: string[]): number | Promise<number> {
 
   if (first === 'auto') {
     return runAuto(args.slice(1));
+  }
+
+  if (first === 'findfix') {
+    return runFindFix(args.slice(1));
   }
 
   if (first === 'ui') {
