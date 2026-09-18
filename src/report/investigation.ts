@@ -24,6 +24,7 @@ import type {
   RuntimeObservations,
   ScenarioDefinition,
 } from '../types/investigation';
+import type { RouteSweepResult } from '../types/routeSweep';
 import { gathered, notGathered } from '../types/investigation';
 import { AGENT_VERSION } from '../version';
 import { describeReproducibility, readGitContext } from './gitInfo';
@@ -40,6 +41,8 @@ export interface BuildInvestigationOptions {
   scenarioRun?: ScenarioRun;
   /** The scenario definition that produced the run, for the report. */
   scenario?: Scenario;
+  /** A completed sweep of every route, rather than the one journey above. */
+  routeSweep?: RouteSweepResult;
 }
 
 /**
@@ -128,6 +131,10 @@ export function buildInvestigation(
       'Phase 10 - heap and retention analysis',
       'No heap snapshots have been captured.',
     ),
+    routeSweep:
+      options.routeSweep !== undefined
+        ? gathered(options.routeSweep)
+        : notGathered('Route sweep', 'No route sweep has been run for this project.'),
     rootCause: notGathered(
       'Phase 12 - AI root cause analysis',
       'Root cause analysis requires runtime evidence to reason over.',

@@ -23,6 +23,7 @@
 
 import type { Confidence, EvidenceLevel, InvestigationStatus, Risk } from './index';
 import type { Finding } from './finding';
+import type { RouteSweepResult } from './routeSweep';
 
 /** Why a section has no content yet. */
 export interface NotGathered {
@@ -253,6 +254,8 @@ export interface Investigation {
   runtimeFindings: Section<RuntimeObservations>;
   memoryEvidence: Section<MemoryEvidence>;
   heapEvidence: Section<HeapEvidence>;
+  /** Every route swept in one pass, rather than the one journey above. */
+  routeSweep: Section<RouteSweepResult>;
   rootCause: Section<RootCauseAnalysis>;
   proposedFixes: Section<FixRecord[]>;
   appliedChanges: Section<FixRecord[]>;

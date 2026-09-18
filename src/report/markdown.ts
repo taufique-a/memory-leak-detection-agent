@@ -8,6 +8,7 @@
 
 import type { Finding } from '../types/finding';
 import type { Investigation, MemoryEvidence, Section } from '../types/investigation';
+import type { RouteSweepResult } from '../types/routeSweep';
 
 /** Escape pipe characters so cell content cannot break a table. */
 function cell(text: string): string {
@@ -239,6 +240,13 @@ export function renderMarkdown(inv: Investigation): string {
   const heapPlaceholder = sectionPlaceholder(inv.heapEvidence, 'Heap and retention evidence');
   if (heapPlaceholder) p(heapPlaceholder);
 
+  if (inv.routeSweep.gathered) {
+    renderRouteSweepMarkdown(p, inv.routeSweep.data);
+  } else {
+    const placeholder = sectionPlaceholder(inv.routeSweep, 'Route sweep');
+    if (placeholder) p(placeholder);
+  }
+
   p('## 5. Root cause');
   p();
   const rootCausePlaceholder = sectionPlaceholder(inv.rootCause, 'Root cause analysis');
@@ -346,6 +354,37 @@ function renderMemoryMarkdown(p: (line?: string) => void, m: MemoryEvidence): vo
     );
   }
   p();
+}
+
+function renderRouteSweepMarkdown(p: (line?: string) => void, sweep: RouteSweepResult): void {
+  p('### Route sweep');
+  p();
+  p(`- Routed components in the graph: **${sweep.totalRoutesInGraph}**`);
+  p(`- Targets considered: **${sweep.candidatesConsidered}**`);
+  p(`- Measured: **${sweep.measured}**  Skipped: **${sweep.skipped}**`);
+  if (sweep.controlRouteUsed !== undefined) p(`- Control route: \`${sweep.controlRouteUsed}\``);
+  p();
+
+  p('| Route | Component | Verdict | Bytes/iteration | Notes |');
+  p('|---|---|---|---:|---|');
+  for (const r of sweep.results) {
+    const notes =
+      r.verdict === 'SKIPPED'
+        ? (r.skippedReason ?? '')
+        : `via ${r.controlRoute ?? '?'} (${r.controlComponentName ?? '?'})`;
+    p(
+      `| \`${cell(r.route)}\` | ${cell(r.componentName)} | ${r.verdict} | ` +
+        `${r.trend !== undefined ? signedMb(r.trend.bytesPerIteration) : '-'} | ${cell(notes)} |`,
+    );
+  }
+  p();
+
+  if (sweep.caveats.length > 0) {
+    p('**Caveats**');
+    p();
+    for (const caveat of sweep.caveats) p(`- ${caveat}`);
+    p();
+  }
 }
 
 function renderFindingMarkdown(p: (line?: string) => void, f: Finding, rank: number): void {

@@ -44,6 +44,7 @@ const STEP_TITLES: Record<number, string> = {
   6: 'Put the evidence together',
   7: 'Fix it',
   8: 'Write it up',
+  9: 'Check every route',
 };
 
 /**
@@ -64,6 +65,7 @@ const STEP_PAGE: Record<number, 'setup' | 'fix' | 'report'> = {
   6: 'fix',
   7: 'fix',
   8: 'report',
+  9: 'fix',
 };
 
 const STEP_NOTES: Record<number, string> = {
@@ -76,6 +78,7 @@ const STEP_NOTES: Record<number, string> = {
   6: 'Checks whether the code you were worried about is the code the browser actually struggled with.',
   7: 'Shows you what would change first. Actually changing it is a separate button and asks about every edit.',
   8: 'A document you can send to someone who was not here.',
+  9: 'Optional. Walks every route the router can reach automatically, instead of the one page you picked above, and reports which ones did not clean up after themselves.',
 };
 
 export function renderPage(options: PageOptions): string {
@@ -534,6 +537,11 @@ a{color:var(--accent)}
         <div id="entityPick" style="display:none;margin-top:.6rem"></div>
       </div>
 
+      <div class="panel" id="sweepPanel" style="display:none">
+        <h2><span>Route sweep results</span> <span id="sweepProgress" class="sub"></span></h2>
+        <div id="sweepResults"></div>
+      </div>
+
       <div class="sub" style="margin:0 0 .6rem">
         Or work through it step by step:
       </div>
@@ -974,6 +982,16 @@ function attachRun(result, action) {
     $('reply').classList.add('on');
   }
 
+  /* A route sweep gets its own live results table, reset for this run. */
+  if (action.id === 'routeSweep') {
+    sweepRows = [];
+    $('sweepResults').innerHTML = '';
+    $('sweepProgress').textContent = '';
+    $('sweepPanel').style.display = 'block';
+  } else {
+    $('sweepPanel').style.display = 'none';
+  }
+
   $('out').textContent += '$ memory-agent ' + result.args.join(' ') + '\\n\\n';
 
   proposalLines = [];
@@ -990,6 +1008,7 @@ function attachRun(result, action) {
     out.textContent += data.line + '\\n';
     if (atBottom) out.scrollTop = out.scrollHeight;
     watchForApproval(data.line);
+    if (currentActionId === 'routeSweep') watchForSweepLine(data.line);
   };
   source.onerror = () => finish(null);
 }
@@ -1050,6 +1069,50 @@ function watchForApproval(line) {
     return;
   }
   openApproval(match[1], match[2]);
+}
+
+/* ------------------------------------------------------------------ */
+/* Route sweep results                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One printed line per route from "memory-agent routes sweep" - see the
+ * format contract next to formatRouteSweepLine in src/sweep/routeSweep.ts.
+ * Parsed the same way the approval dialog is: watch the plain stdout the
+ * command already prints, rather than adding a second, structured channel.
+ */
+const SWEEP_LINE = /^ROUTE (\\d+)\\/(\\d+) (\\S+) (\\S+) (GROWING|STABLE|SHRINKING|INCONCLUSIVE|SKIPPED)\\b(.*)$/;
+
+let sweepRows = [];
+
+function watchForSweepLine(line) {
+  const match = SWEEP_LINE.exec(line);
+  if (match === null) return;
+  sweepRows.push({
+    index: match[1],
+    total: match[2],
+    route: match[3],
+    component: match[4],
+    verdict: match[5],
+    detail: (match[6] || '').trim(),
+  });
+  renderSweepResults();
+}
+
+function renderSweepResults() {
+  const last = sweepRows[sweepRows.length - 1];
+  $('sweepProgress').textContent = last ? (last.index + ' / ' + last.total) : '';
+
+  $('sweepResults').innerHTML = sweepRows.map((r) => {
+    const cls = r.verdict === 'GROWING' ? 'bad'
+      : (r.verdict === 'INCONCLUSIVE' || r.verdict === 'SKIPPED') ? 'warn' : 'ok';
+    return '<div class="erow">' +
+      '<div class="ename">' + esc(r.component) + '</div>' +
+      '<div class="eroute">' + esc(r.route) + '</div>' +
+      '<span class="etag ' + cls + '">' + esc(r.verdict) +
+        (r.detail ? ' — ' + esc(r.detail) : '') + '</span>' +
+      '</div>';
+  }).join('');
 }
 
 /**

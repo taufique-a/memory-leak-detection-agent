@@ -20,6 +20,7 @@ import type {
   RuntimeObservations,
   Section,
 } from '../types/investigation';
+import type { RouteSweepResult } from '../types/routeSweep';
 
 /**
  * Escape text for HTML.
@@ -269,6 +270,12 @@ export function renderHtml(inv: Investigation): string {
 
   p(renderPlaceholder(inv.heapEvidence, 'Heap and retention evidence'));
 
+  if (inv.routeSweep.gathered) {
+    p(renderRouteSweepHtml(inv.routeSweep.data));
+  } else {
+    p(renderPlaceholder(inv.routeSweep, 'Route sweep'));
+  }
+
   p('<h2>5. Root cause</h2>');
   p(renderPlaceholder(inv.rootCause, 'Root cause analysis'));
 
@@ -423,6 +430,48 @@ function renderMemoryHtml(m: MemoryEvidence): string {
     );
   }
   parts.push('</tbody></table></div>');
+
+  return parts.join('\n');
+}
+
+function verdictBadgeClass(verdict: string): string {
+  if (verdict === 'GROWING') return 'CRITICAL';
+  if (verdict === 'INCONCLUSIVE' || verdict === 'SKIPPED') return 'MEDIUM';
+  return 'LOW';
+}
+
+function renderRouteSweepHtml(sweep: RouteSweepResult): string {
+  const parts: string[] = ['<h3>Route sweep</h3>'];
+
+  parts.push(`<ul>
+    <li>Routed components in the graph: <strong>${sweep.totalRoutesInGraph}</strong></li>
+    <li>Targets considered: <strong>${sweep.candidatesConsidered}</strong></li>
+    <li>Measured: <strong>${sweep.measured}</strong> &middot; Skipped: <strong>${sweep.skipped}</strong></li>
+    ${sweep.controlRouteUsed !== undefined ? `<li>Control route: <code>${esc(sweep.controlRouteUsed)}</code></li>` : ''}
+  </ul>`);
+
+  parts.push('<div class="table-wrap"><table><thead><tr>');
+  parts.push('<th>Route</th><th>Component</th><th>Verdict</th><th>Bytes/iteration</th><th>Notes</th>');
+  parts.push('</tr></thead><tbody>');
+  for (const r of sweep.results) {
+    const notes =
+      r.verdict === 'SKIPPED'
+        ? (r.skippedReason ?? '')
+        : `via ${r.controlRoute ?? '?'} (${r.controlComponentName ?? '?'})`;
+    parts.push(
+      `<tr><td><code>${esc(r.route)}</code></td><td>${esc(r.componentName)}</td>` +
+        `<td><span class="badge ${verdictBadgeClass(r.verdict)}">${esc(r.verdict)}</span></td>` +
+        `<td class="points">${r.trend !== undefined ? esc(signedMb(r.trend.bytesPerIteration)) : '-'}</td>` +
+        `<td>${esc(notes)}</td></tr>`,
+    );
+  }
+  parts.push('</tbody></table></div>');
+
+  if (sweep.caveats.length > 0) {
+    parts.push('<p><strong>Caveats</strong></p><ul>');
+    for (const caveat of sweep.caveats) parts.push(`<li>${esc(caveat)}</li>`);
+    parts.push('</ul>');
+  }
 
   return parts.join('\n');
 }

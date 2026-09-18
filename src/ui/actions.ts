@@ -494,6 +494,54 @@ export const ACTIONS: readonly ActionDefinition[] = [
     needsApp: true,
   },
   {
+    id: 'routeSweep',
+    step: 9,
+    title: 'Check every route, not just one',
+    summary: 'Repeats the same measurement across every route the app can reach',
+    why:
+      'Everything else here checks one page you picked. This walks the whole route graph ' +
+      'automatically - navigate in, navigate out, measure - and tells you which routes ' +
+      'actually released what they used and which did not.',
+    expect:
+      'minutes to hours depending on how many routes your app has - roughly a minute per ' +
+      'route measured, seconds per route the reachability check skips. Tick "just check ' +
+      'what is reachable" first to see the count before committing to a full run.',
+    params: [
+      { name: 'project', type: 'project', required: true, label: 'Project folder' },
+      { name: 'authFile', type: 'authFile', required: false, label: 'Sign in as (optional)' },
+      {
+        name: 'iterations',
+        type: 'number',
+        required: false,
+        label: 'Repeats per route',
+        default: 6,
+      },
+      {
+        name: 'maxRoutes',
+        type: 'number',
+        required: false,
+        label: 'Stop after this many routes (blank = all)',
+      },
+      {
+        name: 'probeOnly',
+        type: 'flag',
+        required: false,
+        label: 'Just check what is reachable (fast, no measuring)',
+      },
+    ],
+    build: (v) => {
+      const args = ['routes', 'sweep', v['project'] ?? ''];
+      if (v['authFile'] !== undefined && v['authFile'] !== '') args.push('--auth', v['authFile']);
+      args.push('--iterations', v['iterations'] || '6');
+      if (v['maxRoutes'] !== undefined && v['maxRoutes'] !== '') {
+        args.push('--max-routes', v['maxRoutes']);
+      }
+      if (v['probeOnly'] === 'true') args.push('--probe-only');
+      return args;
+    },
+    needsApp: true,
+  },
+  {
     id: 'demo',
     step: 0,
     title: 'Try it first',
@@ -531,6 +579,7 @@ const FOLLOWS_APP_URL: ReadonlySet<string> = new Set([
   'investigate',
   'auto',
   'validate',
+  'routeSweep',
 ]);
 
 export function followsAppUrl(actionId: string): boolean {

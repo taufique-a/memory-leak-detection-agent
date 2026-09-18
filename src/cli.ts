@@ -20,6 +20,7 @@ import { runHeap } from './commands/heap';
 import { runInvestigate } from './commands/investigate';
 import { runReport } from './commands/report';
 import { runRisk } from './commands/risk';
+import { runRoutesCommand } from './commands/routes';
 import { runScan } from './commands/scan';
 import { runScenarioCommand } from './commands/scenario';
 import { runSelfTestCommand } from './commands/selftest';
@@ -54,6 +55,7 @@ COMMANDS
   ${'doctor'.padEnd(28)} Check the environment is ready for runtime work
   ${'selftest'.padEnd(28)} Prove memory measurement works, on a known leak
   ${'scenario <sub>'.padEnd(28)} init | login | validate | run | demo
+  ${'routes <sub>'.padEnd(28)} list | sweep - check cleanup on every route, not just one
   ${'investigate <project>'.padEnd(28)} Static + runtime in one investigation report
   ${'heap <scenario>'.padEnd(28)} Heap snapshots: what accumulated, and what holds it
   ${'correlate <project>'.padEnd(28)} Join static findings to observed behaviour
@@ -101,6 +103,22 @@ SCENARIO
   scenario validate <file>    Check it, and warn about misleading setups
   scenario run <file>         Run it against your application
   scenario demo [--clean]     Run the built-in leaky SPA, no app needed
+
+ROUTES
+  routes list <project>       Print every route a sweep would measure (free, no browser)
+  routes sweep <project> --base-url <url>
+                               Navigate to every reachable route and away again, measuring each
+
+ROUTES SWEEP OPTIONS
+  --base-url <url>   Root of the running application (required)
+  --auth <file>      Saved session from "scenario login", when the app needs one
+  --iterations <n>   Repeats per route (default 6)
+  --warmup <n>       Iterations discarded as warm-up per route (default 2)
+  --max-routes <n>   Stop after this many routes (default: all)
+  --probe-only       Only check reachability - fast, no measuring
+  --no-probe         Skip the reachability check and measure every route
+  --out <dir>        Report directory (default ./reports)
+  --types            Resolve observable sources with the type checker
 
 INVESTIGATE OPTIONS
   --scenario <file>  The journey to run and measure (required)
@@ -215,6 +233,10 @@ export function run(argv: string[]): number | Promise<number> {
 
   if (first === 'scenario') {
     return runScenarioCommand(args.slice(1));
+  }
+
+  if (first === 'routes') {
+    return runRoutesCommand(args.slice(1));
   }
 
   if (first === 'investigate') {
