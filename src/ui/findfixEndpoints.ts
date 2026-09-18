@@ -243,7 +243,8 @@ async function start(req: http.IncomingMessage, res: http.ServerResponse, deps: 
         error:
           `This account cannot open ${targetRoute}` +
           (where !== '' ? ` - it was sent to ${where}` : '') +
-          '. If your app needs a login, sign in on the Set up page; otherwise pick another page.',
+          '. If your app needs a login, sign in on the Set up page; if this account simply has no ' +
+          'access to that page, pick another one.',
       });
       return;
     }

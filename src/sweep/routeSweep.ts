@@ -215,7 +215,11 @@ export async function runRouteSweep(
         verdict: 'SKIPPED',
         durationMs: Date.now() - routeStarted,
         skippedReason:
-          ownVerdict === 'login' ? 'route not reachable (login)' : 'route not reachable (error)',
+          ownVerdict === 'login'
+            ? 'route not reachable (login)'
+            : ownVerdict === 'redirected'
+              ? 'route not reachable (redirected elsewhere)'
+              : 'route not reachable (error)',
         probeVerdict: ownVerdict,
       });
       continue;

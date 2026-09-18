@@ -27,7 +27,14 @@ import type { Page } from 'playwright';
 
 import { launchBrowser } from '../runtime/browser';
 
-export type RouteVerdict = 'ok' | 'login' | 'error';
+/**
+ * ok         - we stayed on the route (or on something beneath it)
+ * login      - sent to a sign-in page
+ * redirected - sent somewhere else that is not a login page, typically a route
+ *              guard bouncing an account without permission to a landing page
+ * error      - the navigation itself failed
+ */
+export type RouteVerdict = 'ok' | 'login' | 'redirected' | 'error';
 
 export interface RouteProbeResult {
   route: string;
@@ -104,7 +111,32 @@ async function probeOne(
   if (LOGIN_PATTERN.test(finalUrl)) {
     return { route, verdict: 'login', finalUrl };
   }
+  if (!stayedOnRoute(route, finalUrl)) {
+    return { route, verdict: 'redirected', finalUrl };
+  }
   return { route, verdict: 'ok', finalUrl };
+}
+
+/**
+ * Did the browser end up on the route we asked for?
+ *
+ * Landing beneath it counts (/contacts -> /contacts/list is a normal child
+ * redirect). Landing elsewhere does not: a guard that bounces an account
+ * without permission from /rfids to /overview produces a perfectly healthy
+ * page, so "not a login page" was never proof the route was usable.
+ * Parameterised routes cannot be compared literally and are given the benefit
+ * of the doubt, as is the root, which apps routinely redirect to a landing page.
+ */
+function stayedOnRoute(route: string, finalUrl: string): boolean {
+  const want = route.replace(/[?#].*$/, '').replace(/\/+$/, '');
+  if (want === '' || want.includes(':')) return true;
+  let landed: string;
+  try {
+    landed = new URL(finalUrl).pathname.replace(/\/+$/, '');
+  } catch {
+    return true;
+  }
+  return landed === want || landed.startsWith(`${want}/`);
 }
 
 /**

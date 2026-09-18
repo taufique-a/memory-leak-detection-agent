@@ -57,6 +57,19 @@ beforeAll(async () => {
       return;
     }
 
+    if (url === '/noaccess') {
+      // A permission guard that bounces to a landing page, not a login page.
+      res.writeHead(302, { location: '/overview' });
+      res.end();
+      return;
+    }
+
+    if (url === '/parent') {
+      res.writeHead(302, { location: '/parent/list' });
+      res.end();
+      return;
+    }
+
     if (url === '/login') {
       res.writeHead(200, { 'content-type': 'text/html' });
       res.end(page('login'));
@@ -97,6 +110,19 @@ describe('probeRoutes', () => {
     expect(results[0]?.verdict).toBe('login');
   }, 90_000);
 
+  it('THE /rfids CASE: a bounce to a non-login page is not "ok"', async () => {
+    if (!chromeAvailable) return;
+    const results = await probeRoutes(['/noaccess'], { baseUrl, settleMs: 600 });
+    expect(results[0]?.verdict).toBe('redirected');
+    expect(results[0]?.finalUrl).toContain('/overview');
+  }, 90_000);
+
+  it('still accepts a redirect to a child of the requested route', async () => {
+    if (!chromeAvailable) return;
+    const results = await probeRoutes(['/parent'], { baseUrl, settleMs: 600 });
+    expect(results[0]?.verdict).toBe('ok');
+  }, 90_000);
+
   it('honours the max, because a probe is not free', async () => {
     if (!chromeAvailable) return;
     const results = await probeRoutes(['/a', '/b', '/c', '/d'], {
@@ -135,6 +161,16 @@ describe('verifyScenarioRoutes', () => {
     expect(check.targetOk).toBe(true);
     expect(check.control).toBe('/allowed');
     expect(check.tried.find((t) => t.route === '/forbidden')?.verdict).toBe('login');
+  }, 120_000);
+
+  it('moves past a control that a guard bounces to a landing page', async () => {
+    if (!chromeAvailable) return;
+    const check = await verifyScenarioRoutes('/target', ['/noaccess', '/allowed'], {
+      baseUrl,
+      settleMs: 600,
+    });
+    expect(check.control).toBe('/allowed');
+    expect(check.tried.find((t) => t.route === '/noaccess')?.verdict).toBe('redirected');
   }, 120_000);
 
   it('fails fast when the TARGET itself is refused', async () => {

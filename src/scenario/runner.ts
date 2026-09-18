@@ -125,6 +125,7 @@ export async function runScenario(
   let currentIteration = -1;
   let iterationsCompleted = 0;
   let abortedReason: string | undefined;
+  let redirectedTo: { wanted: string; landed: string } | undefined;
 
   /* ---- console capture ---- */
   const recordConsole = (type: ConsoleEntry['type'], text: string): void => {
@@ -168,6 +169,31 @@ export async function runScenario(
         let result = await executeStep(session, scenario, step, -1, i, options, screenshots);
 
         /**
+         * A goto that landed somewhere else - a client-side redirect the
+         * login-pattern check does not recognise (here /rfids -> /overview).
+         * Remembered so a later timeout can say so instead of being retried
+         * for five minutes on a page that was never going to have the marker.
+         */
+        if (step.action === 'goto') {
+          redirectedTo = undefined;
+          if (result.ok) {
+            await waitForUrlToSettle(session, 3000);
+            let landed = pathOf(session.page.url());
+            const wanted = pathOf(joinUrl(scenario.baseUrl, step.path));
+            if (landed !== wanted) {
+              // Deep links often bounce once while the app boots; one more try is cheap.
+              report(`  ${step.path} redirected to ${landed} - trying once more`);
+              const again = await executeStep(session, scenario, step, -1, i, options, screenshots);
+              if (again.ok) {
+                await waitForUrlToSettle(session, 3000);
+                landed = pathOf(session.page.url());
+              }
+            }
+            if (landed !== wanted) redirectedTo = { wanted, landed };
+          }
+        }
+
+        /**
          * A setup step that timed out gets ONE retry with far more patience
          * before it is treated as broken.
          *
@@ -190,7 +216,7 @@ export async function runScenario(
          * time unpredictable, and a real per-iteration timeout problem is
          * something worth knowing about, not something to paper over.
          */
-        if (!result.ok && looksLikeTimeout(result.error)) {
+        if (!result.ok && looksLikeTimeout(result.error) && redirectedTo === undefined) {
           const longer = withMoreTime(step, 5);
           if (longer !== step) {
             report(
@@ -259,6 +285,17 @@ export async function runScenario(
             currentUrl = session.page.url();
           } catch {
             /* the page may already be gone; the rest of the message still stands */
+          }
+
+          if (redirectedTo !== undefined) {
+            throw new ScenarioError(
+              `Setup step ${i} (${result.description}) failed, and the app never stayed on ` +
+                `${redirectedTo.wanted}: it redirected to ${redirectedTo.landed}. That is usually ` +
+                'a route guard (this account may lack access to that page) or a page that ' +
+                'only opens by clicking through the app. It is not a slow compile, so no ' +
+                'longer wait was tried. Pick a different control route, or use a login that ' +
+                'can open this one.',
+            );
           }
 
           throw new ScenarioError(
@@ -707,6 +744,15 @@ export async function diagnoseLoginRedirect(
   );
 }
 /** Join a base URL and a path without producing a double slash. */
+/** Pathname without trailing slash, query or hash; the input itself if it is not a URL. */
+function pathOf(url: string): string {
+  try {
+    return new URL(url).pathname.replace(/\/+$/, '') || '/';
+  } catch {
+    return url;
+  }
+}
+
 export function joinUrl(baseUrl: string, pathPart: string): string {
   const base = baseUrl.replace(/\/+$/, '');
   const rest = pathPart.startsWith('/') ? pathPart : `/${pathPart}`;
