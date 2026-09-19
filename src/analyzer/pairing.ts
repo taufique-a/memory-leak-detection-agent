@@ -119,6 +119,9 @@ interface Assessment {
  */
 function needsExplicitTeardown(acquire: ResourceOperation): boolean {
   if (acquire.mitigatedBy !== undefined) return false;
+  // The lifetime analysis found the subscriber and source share a lifetime,
+  // or that the subscription is meant to stay active: nothing to release.
+  if (acquire.lifetime !== undefined && acquire.lifetime.need !== 'yes') return false;
   if (
     acquire.kind === 'rxjs.subscription' &&
     acquire.sourceHint !== undefined &&

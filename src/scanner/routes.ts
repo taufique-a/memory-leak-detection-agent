@@ -35,6 +35,13 @@ export interface RouteNode {
   componentName?: string;
   /** Standalone component named via `loadComponent`. */
   lazyComponentName?: string;
+  /**
+   * Where the named component is imported from, as written in the route
+   * file. Two classes can share a name (IOSense has 11 OverviewComponents);
+   * the import is what says which one this route actually mounts.
+   */
+  componentSpecifier?: string;
+  lazyComponentSpecifier?: string;
   /** Module specifier from `loadChildren: () => import('...')`. */
   lazyModuleSpecifier?: string;
   /** The exported symbol, e.g. "OverviewModule". */
@@ -77,11 +84,24 @@ export interface RoutedComponent {
   reachableFromRoot: boolean;
 }
 
+/** One route that names a component, and which file that component was imported from. */
+export interface RouteAttribution {
+  path: string;
+  depth: number;
+  guards: string[];
+  behindLazyBoundary: boolean;
+  standaloneLazy: boolean;
+  /** Project-relative import target without extension; undefined when unreadable. */
+  stem?: string;
+}
+
 export interface RouteGraph {
   /** Root route arrays found across the project, already linked. */
   roots: RouteNode[];
   /** componentName -> routing context. */
   routedComponents: Map<string, RoutedComponent>;
+  /** componentName -> every route that mounts a class of that name, with the file it was imported from. */
+  attributions: Map<string, RouteAttribution[]>;
   /** How many route arrays we found. */
   routeArraysFound: number;
   /** Lazy boundaries we could not resolve to a file. */
@@ -115,6 +135,7 @@ export function extractRouteArrays(
 ): RouteArrayDeclaration[] {
   const declarations: RouteArrayDeclaration[] = [];
   const directory = path.posix.dirname(relativePath);
+  const imports = readImports(sourceFile);
 
   const visit = (node: ts.Node): void => {
     /* ---- const AppRoutes: Routes = [ ... ] ---- */
@@ -124,14 +145,14 @@ export function extractRouteArrays(
         : undefined;
 
       if (
-        (typeName === 'Routes' || typeName === 'Route[]') &&
+        (typeName === 'Routes' || typeName === 'Route[]' || looksLikeRouteArray(node.initializer)) &&
         ts.isArrayLiteralExpression(node.initializer)
       ) {
         declarations.push({
           ...(ts.isIdentifier(node.name) ? { name: node.name.text } : {}),
           file: relativePath,
           directory,
-          nodes: parseRouteArray(node.initializer, sourceFile, relativePath, '', 0, false),
+          nodes: parseRouteArray(node.initializer, sourceFile, relativePath, '', 0, false, imports),
         });
       }
     }
@@ -150,7 +171,7 @@ export function extractRouteArrays(
           declarations.push({
             file: relativePath,
             directory,
-            nodes: parseRouteArray(first, sourceFile, relativePath, '', 0, false),
+            nodes: parseRouteArray(first, sourceFile, relativePath, '', 0, false, imports),
           });
         }
       }
@@ -163,6 +184,20 @@ export function extractRouteArrays(
   return declarations;
 }
 
+/**
+ * An untyped `const routes = [ { path: '', component: X } ]`. Without a
+ * `: Routes` annotation the type says nothing, so require the shape: a
+ * non-empty array whose every element is an object with a `path` key.
+ */
+function looksLikeRouteArray(node: ts.Expression): boolean {
+  if (!ts.isArrayLiteralExpression(node) || node.elements.length === 0) return false;
+  return node.elements.every(
+    (el) =>
+      ts.isObjectLiteralExpression(el) &&
+      el.properties.some((p) => ts.isPropertyAssignment(p) && p.name.getText() === 'path'),
+  );
+}
+
 /** Parse an array literal of route objects into RouteNodes. */
 function parseRouteArray(
   array: ts.ArrayLiteralExpression,
@@ -171,12 +206,13 @@ function parseRouteArray(
   parentPath: string,
   depth: number,
   behindLazy: boolean,
+  imports: ReadonlyMap<string, string>,
 ): RouteNode[] {
   const nodes: RouteNode[] = [];
 
   for (const element of array.elements) {
     if (!ts.isObjectLiteralExpression(element)) continue;
-    const node = parseRouteObject(element, sourceFile, file, parentPath, depth, behindLazy);
+    const node = parseRouteObject(element, sourceFile, file, parentPath, depth, behindLazy, imports);
     if (node) nodes.push(node);
   }
 
@@ -190,10 +226,12 @@ function parseRouteObject(
   parentPath: string,
   depth: number,
   behindLazy: boolean,
+  imports: ReadonlyMap<string, string>,
 ): RouteNode | undefined {
   let segment = '';
   let componentName: string | undefined;
   let lazyComponentName: string | undefined;
+  let lazyComponentSpecifier: string | undefined;
   let lazyModuleSpecifier: string | undefined;
   let lazyModuleExport: string | undefined;
   const guards: string[] = [];
@@ -226,7 +264,10 @@ function parseRouteObject(
       }
       case 'loadComponent': {
         const resolved = parseDynamicImport(prop.initializer);
-        if (resolved?.exportName !== undefined) lazyComponentName = resolved.exportName;
+        if (resolved?.exportName !== undefined) {
+          lazyComponentName = resolved.exportName;
+          lazyComponentSpecifier = resolved.specifier;
+        }
         break;
       }
       case 'canActivate':
@@ -255,6 +296,10 @@ function parseRouteObject(
     fullPath,
     ...(componentName !== undefined ? { componentName } : {}),
     ...(lazyComponentName !== undefined ? { lazyComponentName } : {}),
+    ...(componentName !== undefined && imports.has(componentName)
+      ? { componentSpecifier: imports.get(componentName) as string }
+      : {}),
+    ...(lazyComponentSpecifier !== undefined ? { lazyComponentSpecifier } : {}),
     ...(lazyModuleSpecifier !== undefined ? { lazyModuleSpecifier } : {}),
     ...(lazyModuleExport !== undefined ? { lazyModuleExport } : {}),
     guards,
@@ -270,11 +315,26 @@ function parseRouteObject(
           fullPath,
           depth + 1,
           behindLazy || isLazyBoundary,
+          imports,
         )
       : [],
   };
 
   return node;
+}
+
+/** local name -> module specifier, for every import in the file (an alias resolves to its local name). */
+function readImports(sourceFile: ts.SourceFile): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const stmt of sourceFile.statements) {
+    if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+    const bindings = stmt.importClause?.namedBindings;
+    if (bindings !== undefined && ts.isNamedImports(bindings)) {
+      for (const el of bindings.elements) out.set(el.name.text, stmt.moduleSpecifier.text);
+    }
+    if (stmt.importClause?.name !== undefined) out.set(stmt.importClause.name.text, stmt.moduleSpecifier.text);
+  }
+  return out;
 }
 
 /**
@@ -375,6 +435,8 @@ export function linkRouteGraph(
     byDirectory.set(decl.directory, list);
   }
 
+  /** tsconfig `baseUrl` is conventionally the source root: 'app/x' means 'src/app/x'. */
+  const baseRoot = path.posix.dirname(sourceRootPrefix);
   const unresolvedLazyModules: string[] = [];
   const consumed = new Set<RouteArrayDeclaration>();
 
@@ -383,17 +445,23 @@ export function linkRouteGraph(
    * `visiting` guards against a module cycle causing infinite recursion.
    */
   const link = (node: RouteNode, declaringDir: string, visiting: Set<string>): void => {
+    // Only the children this node was declared with. Children attached below
+    // came from another file and were already linked against THAT file's
+    // directory; re-linking them from here resolved their relative imports
+    // against the wrong folder and reported working lazy modules as missing.
+    const declared = [...node.children];
     if (node.lazyModuleSpecifier !== undefined) {
-      const targetDir = resolveSpecifierDirectory(declaringDir, node.lazyModuleSpecifier);
+      const targetDir = resolveSpecifierDirectory(declaringDir, node.lazyModuleSpecifier, baseRoot, byDirectory);
       const key = `${targetDir}|${node.lazyModuleSpecifier}`;
 
       if (!visiting.has(key)) {
-        const candidates = (byDirectory.get(targetDir) ?? []).filter((d) => !consumed.has(d));
+        // A module lazy-loaded from several places mounts its routes under each
+        // of them, so a declaration already attached elsewhere is still valid.
+        // Cycles are stopped by `visiting`, not by "already used".
+        const candidates = (byDirectory.get(targetDir) ?? []).filter((d) => !rootDeclarations.includes(d));
 
         if (candidates.length === 0) {
-          if (!byDirectory.has(targetDir)) {
-            unresolvedLazyModules.push(node.lazyModuleSpecifier);
-          }
+          unresolvedLazyModules.push(node.lazyModuleSpecifier);
         } else {
           const nextVisiting = new Set(visiting).add(key);
           for (const candidate of candidates) {
@@ -408,7 +476,7 @@ export function linkRouteGraph(
       }
     }
 
-    for (const child of node.children) link(child, declaringDir, visiting);
+    for (const child of declared) link(child, declaringDir, visiting);
   };
 
   /**
@@ -456,6 +524,7 @@ export function linkRouteGraph(
   return {
     roots,
     routedComponents: collectRoutedComponents(roots, reachableNames),
+    attributions: collectAttributions(roots, baseRoot),
     routeArraysFound: declarations.length,
     unresolvedLazyModules: [...new Set(unresolvedLazyModules)],
   };
@@ -477,9 +546,17 @@ function rebase(node: RouteNode, parentPath: string, depth: number, lazy: boolea
  * Resolve a relative module specifier to a project-relative directory.
  * './modules/overview/overview.module' from 'src/app' -> 'src/app/modules/overview'
  */
-function resolveSpecifierDirectory(fromDirectory: string, specifier: string): string {
-  const joined = path.posix.normalize(path.posix.join(fromDirectory, specifier));
-  return path.posix.dirname(joined);
+function resolveSpecifierDirectory(
+  fromDirectory: string,
+  specifier: string,
+  baseRoot: string,
+  known: ReadonlyMap<string, unknown>,
+): string {
+  const relative = path.posix.dirname(path.posix.normalize(path.posix.join(fromDirectory, specifier)));
+  if (specifier.startsWith('.')) return relative;
+  // Non-relative: a path alias rooted at baseUrl, when that lands on a known route file.
+  const aliased = path.posix.dirname(path.posix.normalize(path.posix.join(baseRoot, specifier)));
+  return known.has(aliased) ? aliased : relative;
 }
 
 /** Flatten the tree into a component -> routing-context map. */
@@ -519,4 +596,88 @@ function collectRoutedComponents(
 
   for (const root of roots) visit(root);
   return map;
+}
+
+function stemOf(node: RouteNode, specifier: string | undefined, baseRoot: string): string | undefined {
+  if (specifier === undefined) return undefined;
+  const joined = specifier.startsWith('.')
+    ? path.posix.join(path.posix.dirname(node.file), specifier)
+    : path.posix.join(baseRoot, specifier);
+  return path.posix.normalize(joined).replace(/.(ts|js)$/, '');
+}
+
+function collectAttributions(roots: RouteNode[], baseRoot: string): Map<string, RouteAttribution[]> {
+  const map = new Map<string, RouteAttribution[]>();
+  const add = (name: string, node: RouteNode, specifier: string | undefined, standaloneLazy: boolean): void => {
+    const stem = stemOf(node, specifier, baseRoot);
+    const list = map.get(name) ?? [];
+    list.push({
+      path: node.fullPath,
+      depth: node.depth,
+      guards: node.guards,
+      behindLazyBoundary: node.behindLazyBoundary,
+      standaloneLazy,
+      ...(stem !== undefined ? { stem } : {}),
+    });
+    map.set(name, list);
+  };
+  const visit = (node: RouteNode): void => {
+    if (node.componentName !== undefined) add(node.componentName, node, node.componentSpecifier, false);
+    if (node.lazyComponentName !== undefined) add(node.lazyComponentName, node, node.lazyComponentSpecifier, true);
+    for (const child of node.children) visit(child);
+  };
+  for (const root of roots) visit(root);
+  return map;
+}
+
+export interface RouteForClass {
+  paths: string[];
+  minDepth: number;
+  alwaysLazy: boolean;
+  standaloneLazy: boolean;
+  guards: string[];
+  /**
+   * true  = the route's import points at THIS class's file.
+   * false = the import could not be tied to a file, so this is the name-level
+   *         guess and other classes with the same name may own the route.
+   */
+  exact: boolean;
+}
+
+/**
+ * Which routes mount THIS class - not "a class with this name".
+ *
+ * A route file says `component: OverviewComponent` and imports it from one
+ * specific file. When 11 classes share the name, only the one whose file
+ * the import points at is mounted. `isKnownStem` says whether an import
+ * target is a project file/folder we know about; an import to somewhere we
+ * cannot see (a package, an unresolved alias) never counts as evidence
+ * against a class.
+ */
+export function routeForClass(
+  graph: RouteGraph,
+  name: string,
+  file: string,
+  isKnownStem: (stem: string) => boolean,
+): RouteForClass | undefined {
+  const entries = graph.attributions.get(name);
+  if (entries === undefined || entries.length === 0) return undefined;
+  const fileStem = file.replace(/.(ts|js)$/, '');
+
+  const pointsHere = entries.filter(
+    (e) => e.stem !== undefined && (e.stem === fileStem || fileStem.startsWith(e.stem + '/')),
+  );
+  const undecidable = entries.filter((e) => e.stem === undefined || !isKnownStem(e.stem));
+  const chosen = pointsHere.length > 0 ? pointsHere : undecidable;
+  if (chosen.length === 0) return undefined; // every route imports a different file
+
+  const first = chosen.reduce((a, b) => (b.depth < a.depth ? b : a));
+  return {
+    paths: [...new Set(chosen.map((e) => e.path))],
+    minDepth: first.depth,
+    alwaysLazy: chosen.every((e) => e.behindLazyBoundary),
+    standaloneLazy: chosen.some((e) => e.standaloneLazy),
+    guards: first.guards,
+    exact: pointsHere.length > 0,
+  };
 }

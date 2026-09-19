@@ -262,8 +262,15 @@ export function findImport(sourceFile: ts.SourceFile, moduleName: string): ts.Im
 export function collectSubscribeCalls(
   target: ts.ClassDeclaration,
   sourceFile: ts.SourceFile,
-): { calls: ts.CallExpression[]; httpLike: number } | AddOnDestroyFailure {
+  judge?: (call: ts.CallExpression) => { need: string; reason: string } | undefined,
+): {
+  calls: ts.CallExpression[];
+  httpLike: number;
+  /** Subscriptions deliberately left alone, with the reason. */
+  kept: { line: number; reason: string }[];
+} | AddOnDestroyFailure {
   const calls: ts.CallExpression[] = [];
+  const kept: { line: number; reason: string }[] = [];
   let httpLike = 0;
 
   const walk = (node: ts.Node, insideNestedFunction: boolean): AddOnDestroyFailure | undefined => {
@@ -290,7 +297,11 @@ export function collectSubscribeCalls(
         ts.isPropertyAssignment(parent) ||
         (ts.isCallExpression(parent) && parent.arguments.includes(node as ts.Expression));
 
-      if (!alreadyManaged) {
+      const verdict = alreadyManaged ? undefined : judge?.(node);
+      if (verdict !== undefined && verdict.need !== 'yes') {
+        // Intentionally long-lived, or sharing its source's lifetime: leave it.
+        kept.push({ line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1, reason: verdict.reason });
+      } else if (!alreadyManaged) {
         calls.push(node);
         const text = node.expression.expression.getText(sourceFile);
         if (/\bhttp\b|HttpClient|\.get\(|\.post\(/i.test(text)) httpLike++;
@@ -343,7 +354,7 @@ export function collectSubscribeCalls(
     if (failure !== undefined) return failure;
   }
 
-  return { calls, httpLike };
+  return { calls, httpLike, kept };
 }
 
 /* ------------------------------------------------------------------ */

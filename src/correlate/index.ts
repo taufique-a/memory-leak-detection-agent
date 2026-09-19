@@ -76,6 +76,16 @@ export function correlate(input: CorrelateInput): CorrelationResult {
     .map((e) => e.text)
     .join(' \n ');
 
+  // The heap names a constructor, never a file. When several classes share
+  // that name, a match cannot say WHICH of them grew - so it must not count
+  // as strong evidence against every one of them.
+  const filesByName = new Map<string, Set<string>>();
+  for (const f of risk.findings) {
+    const set = filesByName.get(f.location.className) ?? new Set<string>();
+    set.add(f.location.file);
+    filesByName.set(f.location.className, set);
+  }
+
   const matchedHeapNames = new Set<string>();
   const matchedDetached = new Set<string>();
 
@@ -104,12 +114,16 @@ export function correlate(input: CorrelateInput): CorrelationResult {
     if (heapMatch !== undefined && heap !== undefined) {
       matchedHeapNames.add(heapMatch);
       const delta = heap.comparison.grew.find((g) => g.name === heapMatch);
+      const sharers = filesByName.get(finding.location.className)?.size ?? 1;
       support.push({
         kind: 'heap-constructor-growth',
         detail:
           `"${heapMatch}" gained ${delta?.countDelta ?? 0} instances between snapshots` +
-          `${delta?.perIteration !== undefined ? ` (${delta.perIteration.toFixed(1)} per iteration)` : ''}.`,
-        weight: 'strong',
+          `${delta?.perIteration !== undefined ? ` (${delta.perIteration.toFixed(1)} per iteration)` : ''}.` +
+          (sharers > 1
+            ? ` ${sharers} classes in this project are called ${finding.location.className}, so the heap alone cannot say which one this is.`
+            : ''),
+        weight: sharers > 1 ? 'weak' : 'strong',
       });
     }
 

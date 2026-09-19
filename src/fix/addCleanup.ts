@@ -27,6 +27,7 @@
 import * as ts from 'typescript';
 
 import { DEFINITION_BY_KIND } from '../analyzer/resources';
+import { decideSubscription, type ProjectKnowledge } from '../knowledge/lifetime';
 import type { ResourceKind } from '../types/analysis';
 import {
   applyEdits,
@@ -68,6 +69,7 @@ export function addCleanup(
   source: string,
   fileName: string,
   className: string,
+  knowledge?: ProjectKnowledge,
 ): AddCleanupResult | AddOnDestroyFailure {
   const eol = (source.match(/\r\n/g) ?? []).length > (source.match(/(?<!\r)\n/g) ?? []).length ? '\r\n' : '\n';
 
@@ -107,10 +109,19 @@ export function addCleanup(
   const memberIndent = indentOf(source, (target.members[0] as ts.ClassElement).getStart(sourceFile));
 
   /* ---- 1. subscriptions (unchanged, proven logic) ---- */
-  const subs = collectSubscribeCalls(target, sourceFile);
+  const subs = collectSubscribeCalls(
+    target,
+    sourceFile,
+    knowledge === undefined ? undefined : (call) => decideSubscription(call, sourceFile, knowledge),
+  );
   if ('reason' in subs) {
     skipped['rxjs.subscription'] = subs.reason;
+  } else if (subs.calls.length === 0 && subs.kept.length > 0) {
+    skipped['rxjs.subscription'] =
+      'Every subscription here is intentionally left active, so nothing was changed: ' +
+      [...new Set(subs.kept.map((k) => k.reason))].join(' ');
   } else if (subs.calls.length > 0) {
+    for (const k of subs.kept) notes.push(`Line ${k.line} was left as it is: ${k.reason}`);
     const field = uniqueMemberName2(takenNames, 'subscriptions');
     const rxjsImport = findImport(sourceFile, 'rxjs');
     if (rxjsImport === undefined) {

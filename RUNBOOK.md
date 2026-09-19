@@ -1,6 +1,8 @@
 # Memory Leak Agent — Runbook
 
 Everything you need to run, test and extend this tool without help.
+For *how the agent thinks* (what it measures, how it decides a subscription
+needs cleanup, how a fix is proven), read [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
 
 **Project:** `C:\Users\Taufique\memory-leak-detection-agent`
 **Target app:** `C:\Users\Taufique\IOSense` (Angular 15.2.10)
@@ -275,16 +277,17 @@ terminal:
   *"I have signed in"* in the UI. No switching back to a terminal. The window
   is **maximised and the page uses its full size**, so the login form is
   responsive rather than letterboxed into a fixed 1440×900 box.
-- **Applying a fix.** Step 7's *"Apply a fix"* writes to your code — the only
-  action here that does. It requires you to type **`APPLY`** first, then shows
-  each diff and asks about it individually. Answer with the **yes** / **no**
-  buttons.
+- **Applying a fix.** On the *Find & fix* page (see "Find & Fix" below) you
+  tick the issues you want, review the exact diff of each in a window, and press
+  **Apply**. This is the only action in the UI that writes to your code. There
+  is no manual-edit path: the agent works out and writes the change itself, then
+  checks it.
 
 ### Investigating **any** component, not just the two written by hand
 
 Near the top of the page there is a **"Find something to investigate"** search
 box. Type part of a class name, selector or route — `energy`, `oee`, `report` —
-and it searches every component in your project (3,195 of them in IOSense).
+and it searches every component in your project (about 3,000 in IOSense).
 
 Pick one and the page shows its route and its render marker, lets you choose a
 second route to navigate away to, and then **generates a scenario file for it
@@ -311,7 +314,7 @@ The search is honest about what it cannot do:
 | Badge | Meaning |
 |---|---|
 | **static only** | No route reaches it, or it has no selector — so there is no page to navigate to, or nothing to wait for after navigating. Use *"Inspect one component"* in step 2 instead. |
-| **ambiguous route** | More than one class in the project has this name. Routes are matched **by class name**, so the route shown may belong to a different copy — IOSense has five classes called `OverviewComponent`. Check the file before trusting the generated scenario. |
+| **ambiguous route** | More than one class in the project has this name and the route's import could not be tied to this file. Routes are matched through the **import in the route file** where possible (IOSense has 11 classes called `OverviewComponent`, only two are routed), so this badge is now rare; when it shows, check the file before trusting the generated scenario. |
 | **no ngOnDestroy** | Declares no teardown hook. Not proof of anything, but the more interesting hit. |
 
 Before writing the scenario it **opens a browser and tries both routes with
@@ -365,10 +368,44 @@ What it will **not** do, by design:
 The `.auth/` directory is deliberately *not* downloadable — it holds live
 session tokens.
 
-**Applying keeps every safety property:** refuses a dirty working tree, works
-only on a `memory-agent/<id>` branch, records a rollback commit, approves each
-change separately, and runs your build/lint/tests afterwards. The `--yes`
-flag that would skip all the prompts is not reachable from the UI at all.
+**Applying from the UI (Find & Fix)** edits your working tree in place and is
+bound to what you reviewed: the change is regenerated from the file as it is
+right now, and it is refused if the file no longer matches the content you were
+shown (a hash check). Every original file is saved under
+`artifacts/findfix/<session>/originals/`, so **Undo** puts each file back
+byte for byte. Changed files open in VS Code. If you have other uncommitted
+work, the page tells you how many files, so you can tell the agent's change
+from yours in `git diff`. The `--yes` flag of the command-line `fix` is not
+reachable from the UI.
+
+### Find & Fix — the agent-driven flow
+
+The *Find & fix* page has two ways in:
+
+1. **Find by route / navigation** — pick a route (or a lazy-loaded module) and a
+   second route to navigate away to, and how many times to go there and back.
+2. **Find by component** — pick a component; the agent works out its route.
+
+Then it runs, and you can watch each stage: **read the code → work out the
+route → navigate (Chrome) → photograph memory before/after → match to code →
+prepare fixes**. What you get back is a list of *issue cards*. Each shows what
+is wrong, the evidence (growth per visit, objects still alive, **shallow and
+retained size**), the file and line, and the change the agent will make.
+
+- **Select several** cards and apply them together; one verification runs for
+  the whole batch.
+- **After applying** the agent builds the project, runs only the tests related
+  to the changed files, repeats the same navigation, and compares with the
+  measurement it started from. The result is **verified**, **still an issue**,
+  or **checks failed** (build/test/page broke), with the reason.
+- **Undo** restores every file from the last apply.
+- A subscription that is *meant* to stay active (an `ActivatedRoute` param, an
+  app-lifetime root service, a subject the component owns, …) is **left alone**
+  and the review window says which ones and why. See section 6b.
+
+The same flow from a terminal is `memory-agent findfix <find|apply|undo>
+--session <id>`; the UI writes the session for it, so you normally never type
+it.
 
 **Security.** The server executes commands, so it is locked down: bound to
 `127.0.0.1` only, a random token required on every request (it is in the URL
@@ -427,6 +464,16 @@ npm run dev -- risk "C:\Users\Taufique\IOSense" --filter overview
 Useful flags: `--json <file>`, `--limit <n>` (findings kept, `0` = all),
 `--detail <n>` (printed in full), `--filter <path-fragment>`, `--types`.
 
+### Routes — check every route, not just one
+
+```powershell
+npm run dev -- routes list "C:\Users\Taufique\IOSense"      # routes the code declares
+npm run dev -- routes sweep <project> --base-url http://localhost:7400   # measure cleanup route by route
+```
+
+A route that redirects to login is reported as *login* or *redirected*, and one
+that is merely slow as such, so a permissions problem is not mistaken for a leak.
+
 ### Scenarios — repeatable browser journeys
 
 ```powershell
@@ -454,7 +501,9 @@ npm run dev -- heap scenarios/iosense-overview-devices.json --trace-top 5 --json
 
 Takes a snapshot before and after the measured loop, reports which
 constructors gained instances, which DOM is detached, and the **retaining
-chain** explaining why each survives collection. The baseline is captured
+chain** explaining why each survives collection. Both **shallow size** (the
+object itself) and **retained size** (everything only it keeps alive — the real
+cost) are shown, and retained size is what ranks the list. The baseline is captured
 *after* warm-up, so first-visit loading is excluded.
 
 Snapshots are written to `artifacts/heap/<scenario>/` and can be opened
@@ -578,7 +627,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~66s, 698 tests)
+npm test                       # everything (~2-3 minutes, about 850 tests in 28 files)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -593,7 +642,9 @@ with *"Jest worker ran out of memory"*, surfacing as several suites "failing to
 run" with no useful error. Serial is also faster here.
 
 Two test files drive a **real Chrome** (`runtime.test.ts`, `scenario.test.ts`)
-and skip gracefully if Chrome is unavailable.
+and skip gracefully if Chrome is unavailable. Two tests in `ui.test.ts`
+("restricting a second serve") start a real server process and can time out
+when the whole suite is under load; they pass when run alone.
 
 ### Before committing
 
@@ -750,45 +801,64 @@ after printing `SERVING`, you are on an old build.
 
 ## 6b. What the fixer will and will not change
 
-**It writes two kinds of change.**
+### First: does this actually need cleaning up?
 
-**1. Complete a `destroy$` that already exists.** `takeUntil(this.destroy$)`
-where the subject is never fired, and the component already has an
-`ngOnDestroy`. Two statements appended; no existing line touched.
+Not every `subscribe()` should be released in `ngOnDestroy`. Before writing
+anything the agent decides, for each subscription, whether the **subscriber
+outlives the source** (a real leak) or they **die together / the subscriber is
+meant to live for the whole app** (leave it). It reads `package.json` and your
+own services to do this. Left alone, with the reason shown:
 
-**2. Create an `ngOnDestroy` that unsubscribes.** The one that actually helps.
-The component has subscriptions and no teardown hook at all, so it makes one:
+| Left alone | Why |
+|---|---|
+| `ActivatedRoute` params / queryParams / data | Angular completes them with the route |
+| A Subject, EventEmitter or form the component created | Dies with the component |
+| A service in the component's own `providers` | New instance per component |
+| A service method that returns an HTTP call, `timer(n)`, `of()` | Completes by itself |
+| AppComponent, or a root service subscribing in its constructor / `ngOnInit` | Lives as long as the app; its `ngOnDestroy` never runs |
+| A line marked `// leak-agent: keep-alive` | You said so |
+
+A root service that subscribes inside a method that can run repeatedly is
+flagged **for review** and not changed. A component subscribing to an
+app-wide service's Subject (for example a devices stream), `Router.events`, or
+an `ngx-mqtt` `observe()` **is** released. If every subscription in a class is
+intentional, nothing is written and the reason is shown.
+
+### What it writes
+
+It handles nearly every resource kind the analyzer knows (subscriptions, timers,
+event listeners, observers, web sockets, workers, charts and maps, dialogs), in
+one pass per class:
 
 | Edit | What it does |
 |---|---|
-| import | adds `OnDestroy` to the `@angular/core` import |
-| import | adds `Subscription` to the rxjs import, or creates one |
+| import | adds `OnDestroy` to the `@angular/core` import; adds `Subscription` to the rxjs import (or creates one) |
 | class | extends the `implements` clause, or adds one |
-| body | adds a `Subscription` field, wraps each `subscribe()` in `.add(...)`, adds the hook |
+| body | adds a `Subscription` field, wraps each subscription that needs it in `.add(...)`, adds or **extends** `ngOnDestroy` |
+| other kinds | stores the handle and clears / disconnects / destroys it in `ngOnDestroy` |
 
-It works from the **AST**, not line numbers, applies its edits back to front,
-and **re-parses the result** before offering it — a transform that produces a
-syntax error must never reach the approval step, because a diff that looks
-right is exactly how a bad edit gets approved.
-
-Measured against IOSense: **1,193 findings would get a complete change, with
-zero parse errors** across all of them.
+It works from the **AST**, applies edits back to front, and **re-parses the
+result** before offering it: a transform that produces a syntax error must never
+reach the review step. Existing line endings (CRLF) are preserved.
 
 ### What it refuses
 
 | Refused | Why |
 |---|---|
-| A `subscribe()` inside a nested callback | `this` may not be the component there. **652 IOSense findings hit this** — the whole class is refused rather than half-fixed |
-| A subscription already stored somewhere | Something is already managing it |
-| A class that already has `ngOnDestroy` | The other generator's job |
+| A `subscribe()` inside a plain `function() {}` callback | `this` is not the component there. The class is refused rather than half-fixed (arrow functions are fine) |
+| A subscription already stored or passed somewhere | Something else is managing it |
 | A file with no `@angular/core` import | Not an Angular class |
-| An empty `ngOnDestroy`, a stray timer, an inline-arrow listener | Needs a judgement call. Described, never written |
+| An `ngOnDestroy` that is not an ordinary method | No body to add to safely |
+| A finding the browser never showed | A static guess never edits your source |
 
-Hoisting an inline arrow out of `addEventListener` stays manual on purpose:
-the arrow usually closes over local variables, and moving it changes what it
-can see.
+A confirmed problem the agent cannot fix automatically appears in the *watch
+list* — visible with its evidence, with no Apply button.
 
-### Where the change lands
+### Where the change lands (command-line `fix`)
+
+The rules in this subsection are for the command-line `fix` and `auto`
+commands. The UI's Find & Fix edits the working tree with saved originals and
+Undo, as described in section 2.
 
 **By default: your branch, your working tree, not committed.** You read it with
 `git diff`, run the app, and commit and push it yourself. Nothing is committed
@@ -884,7 +954,7 @@ Rules the tool enforces on itself, so you can trust the labels:
 - Static analysis **cannot** produce `PROVEN` or `CONFIRMED`. Reading source code
   observes nothing.
 - `CONFIRMED` needs growth **and** a good fit **and** zero step failures.
-- `VERIFIED` needs a fix applied and re-measured — Phase 16, not built yet.
+- `VERIFIED` needs a fix applied and re-measured (`verify`, and the Find & Fix verify stage).
 - Sections that have no data say **`NOT GATHERED — requires Phase N`** rather
   than being silently omitted.
 
@@ -906,7 +976,12 @@ src/
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search
   project/     source folder browsing, validation, serving, and served-app checks
-tests/         695 tests, mirrors src/
+  findfix/     Find & Fix sessions, scope, issue cards, selection
+  knowledge/   package.json profile, service catalogue, subscription-lifetime decisions
+  correlate/   joins static findings, runtime trend and heap evidence
+  sweep/       route-by-route cleanup checks
+docs/          HOW_IT_WORKS.md - plain-English guide to the agent
+tests/         about 850 tests in 28 files, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)
@@ -920,9 +995,10 @@ Two constraints worth knowing before you edit:
   `createSourceFile`, no `SyntaxKind`. The entire analyzer would stop working.
   A test asserts the major version is below 7. Never run `npm install typescript`
   unpinned.
-- **Never install globally, and keep everything off `C:`** (about 5 GB free).
-  `env.ps1` / `env.cmd` already point the npm cache and Playwright browsers at
-  `E:`.
+- **Never install globally.** `env.ps1` / `env.cmd` point the npm cache and
+  Playwright browsers next to the portable Node, under
+  `C:\Users\Taufique\node-portable\` (`npm-cache`, `playwright-browsers`). Free disk
+  space is limited, and heap snapshots are large — clear `artifacts/` when done.
 
 ---
 
@@ -951,7 +1027,10 @@ Two constraints worth knowing before you edit:
 | 18 Autonomous investigation | ✅ | `auto` — the whole pipeline, with early vetoes |
 | 19 Advanced | ⬜ | CI, investigation history, IDE integration |
 | — Guided UI | ✅ | `ui` — local web interface, step 0 to step 8 |
-| — Dynamic targets | ✅ | search any of 3,195 components, scenario generated for the one you pick |
+| — Dynamic targets | ✅ | search any component; scenario generated for the one you pick |
+| — Find & Fix | ✅ | agent-driven find → review → apply (several at once) → verify → undo |
+| — Knowledge | ✅ | `package.json` versions, service catalogue, keep-or-release decisions per subscription |
+| — Retained size | ✅ | dominator-tree retained size next to shallow size |
 
 **Phase 12 is deliberately partial.** The evidence bundle and analysis prompt
 are complete and usable today — `writeBundleForManualUse()` writes both to
@@ -964,6 +1043,11 @@ credentials.
 ---
 
 ## 10. What we have found in IOSense so far
+
+*These figures were measured earlier in the project and are kept as a record;
+counts change as the code and the analyzer change. Re-run `risk` and
+`investigate` for current numbers. They predate the keep-or-release
+decisions, which remove intentional long-lived subscriptions from the lists.*
 
 **Static** — 5,208 files, 2,988 components, 2,546 ranked findings
 (124 CRITICAL). Only 30% of components define `ngOnDestroy`. 37 subscriptions

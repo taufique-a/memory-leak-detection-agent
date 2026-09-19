@@ -271,6 +271,13 @@ export interface ResourceOperation {
    * a ranking input rather than a fact.
    */
   sourceHint?: ObservableSourceHint;
+
+  /**
+   * Subscriptions only: the verdict of the lifetime analysis (see
+   * knowledge/lifetime.ts) - whether releasing this in ngOnDestroy is right,
+   * pointless, or dangerous, and the rule that decided. Absent = no opinion.
+   */
+  lifetime?: { need: 'yes' | 'no' | 'review'; reason: string; rule: string };
 }
 
 /* ------------------------------------------------------------------ */

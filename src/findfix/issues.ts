@@ -81,9 +81,20 @@ export interface BuildIssuesInput {
 
 export function buildIssues(input: BuildIssuesInput): { issues: FindFixIssue[]; watchList: FindFixIssue[] } {
   const classes = new Set(input.scopeClasses);
-  const inScope = (cf: CorrelatedFinding): boolean =>
-    classes.has(cf.finding.location.className) ||
+  // A class name shared by several files says nothing about which one is on
+  // the page: for those, only the page's own folders count.
+  const filesByName = new Map<string, Set<string>>();
+  for (const cf of input.correlation.findings) {
+    const set = filesByName.get(cf.finding.location.className) ?? new Set<string>();
+    set.add(cf.finding.location.file);
+    filesByName.set(cf.finding.location.className, set);
+  }
+  const inDirectory = (cf: CorrelatedFinding): boolean =>
     input.scopeDirectories.some((d) => d !== '' && cf.finding.location.file.startsWith(d + '/'));
+  const inScope = (cf: CorrelatedFinding): boolean =>
+    ((filesByName.get(cf.finding.location.className)?.size ?? 1) <= 1 &&
+      classes.has(cf.finding.location.className)) ||
+    inDirectory(cf);
 
   /**
    * A heap match or detached DOM ties a finding to what was actually
@@ -91,7 +102,7 @@ export function buildIssues(input: BuildIssuesInput): { issues: FindFixIssue[]; 
    * the page's objects is exactly the case a folder-based scope would miss.
    */
   const implicated = (cf: CorrelatedFinding): boolean =>
-    cf.support.some((s) => s.kind === 'heap-constructor-growth' || s.kind === 'detached-dom');
+    cf.support.some((s) => (s.kind === 'heap-constructor-growth' && s.weight !== 'weak') || s.kind === 'detached-dom');
 
   const relevant = input.correlation.findings.filter(
     (cf) => !input.exclude.has(cf.finding.id) && (inScope(cf) || implicated(cf)),
@@ -123,6 +134,12 @@ export function buildIssues(input: BuildIssuesInput): { issues: FindFixIssue[]; 
   return { issues, watchList };
 }
 
+/** The heap's constructor name IS this class - a whole-word match, never a substring of a longer name. */
+export function constructorMatches(constructorName: string, className: string): boolean {
+  const escaped = className.replace(/[$]/g, '\$&');
+  return new RegExp(`(^|[^A-Za-z0-9_$])${escaped}($|[^A-Za-z0-9_$])`).test(constructorName);
+}
+
 function describe(cf: CorrelatedFinding, input: BuildIssuesInput, angularMajor: number | undefined): FindFixIssue {
   const f = cf.finding;
   const proposal = proposeFix(cf, {
@@ -141,7 +158,7 @@ function describe(cf: CorrelatedFinding, input: BuildIssuesInput, angularMajor: 
   }
   for (const s of cf.support) if (s.kind !== 'measured-growth') evidence.push(s.detail);
   for (const r of input.retained) {
-    if (r.constructorName === f.location.className || r.constructorName.includes(f.location.className)) {
+    if (constructorMatches(r.constructorName, f.location.className)) {
       // Both numbers, and what each one means: shallow is the objects
       // themselves, retained is what they keep alive - the real cost.
       evidence.push(

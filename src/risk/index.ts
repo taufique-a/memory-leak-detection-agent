@@ -25,11 +25,13 @@ import * as path from 'node:path';
 import * as ts from 'typescript';
 
 import { analyzeSourceFileWith } from '../analyzer';
+import { loadProjectKnowledge } from '../knowledge/lifetime';
 import { createTypeResolver, type TypeResolver } from '../analyzer/typeResolver';
 import { isParseFailure, parseSourceFile } from '../scanner/parse';
 import {
   extractRouteArrays,
   linkRouteGraph,
+  routeForClass,
   type RouteArrayDeclaration,
   type RouteGraph,
 } from '../scanner/routes';
@@ -118,6 +120,10 @@ export function assessRisk(projectPath: string, options: RiskOptions = {}): Risk
 
   const classAnalyses: ClassAnalysis[] = [];
   const routeDeclarations: RouteArrayDeclaration[] = [];
+  /** Files and folders a route's import can point at. */
+  const knownStems = new Set<string>();
+  // package.json and the project's own services, read once for every file.
+  const knowledge = loadProjectKnowledge(rootDir);
   let filesParsed = 0;
   /** Files the tsconfig program does not include, so cannot be refined. */
   let filesOutsideProgram = 0;
@@ -167,10 +173,16 @@ export function assessRisk(projectPath: string, options: RiskOptions = {}): Risk
     // Routes come from the whole project, regardless of --filter, because a
     // filtered component still needs its route context.
     routeDeclarations.push(...extractRouteArrays(sourceFile, relativePath));
+    {
+      const stem = relativePath.replace(/\.(ts|js)$/, '');
+      knownStems.add(stem);
+      for (let d = path.posix.dirname(stem); d !== '.' && !knownStems.has(d); d = path.posix.dirname(d)) knownStems.add(d);
+    }
 
     if (options.filter !== undefined && !relativePath.includes(options.filter)) continue;
 
     const analysis = analyzeSourceFileWith(sourceFile, relativePath, {
+      knowledge,
       ...(resolver && nodeBelongsToProgram ? { refineSource: resolver.refine } : {}),
     });
     classAnalyses.push(...analysis.classes);
@@ -187,7 +199,14 @@ export function assessRisk(projectPath: string, options: RiskOptions = {}): Risk
   /* ---- score ---- */
   const findings: Finding[] = [];
   for (const cls of classAnalyses) {
-    const routed = routeGraph.routedComponents.get(cls.className);
+    // The route that mounts THIS class (through the route file's import), not
+    // merely one whose class has the same name.
+    const named = routeGraph.routedComponents.get(cls.className);
+    const mine = routeForClass(routeGraph, cls.className, cls.file, (stem) => knownStems.has(stem));
+    const routed =
+      named !== undefined && mine !== undefined
+        ? { ...named, paths: mine.paths, minDepth: mine.minDepth, alwaysLazy: mine.alwaysLazy, guards: mine.guards }
+        : undefined;
     for (const pairing of cls.pairings) {
       const finding = scoreFinding({
         cls,

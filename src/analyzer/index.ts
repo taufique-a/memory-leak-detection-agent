@@ -10,6 +10,8 @@ import * as path from 'node:path';
 
 import * as ts from 'typescript';
 
+import { decideAllSubscriptions, loadProjectKnowledge, type ProjectKnowledge } from '../knowledge/lifetime';
+
 import { isParseFailure, parseSourceFile } from '../scanner/parse';
 import { isTestFile, toRelativePosix, walkDirectory } from '../scanner/walk';
 import { readWorkspace } from '../scanner/workspace';
@@ -26,6 +28,8 @@ import { buildClassAnalyses } from './pairing';
 import { findResourceOperations, type VisitOptions } from './visitor';
 
 export interface AnalyzeOptions {
+  /** Project knowledge (services, libraries, versions) for lifetime decisions. */
+  knowledge?: ProjectKnowledge;
   onProgress?: (done: number, total: number) => void;
   /** Include *.spec.ts and mocks. Default false - test leaks do not ship. */
   includeTests?: boolean;
@@ -116,9 +120,17 @@ export function analyzeSourceFile(
 export function analyzeSourceFileWith(
   sourceFile: ts.SourceFile,
   relativePath: string,
-  options: VisitOptions,
+  options: VisitOptions & { knowledge?: ProjectKnowledge },
 ): FileAnalysis {
   const operations = findResourceOperations(sourceFile, relativePath, options);
+  if (options.knowledge !== undefined) {
+    const decisions = decideAllSubscriptions(sourceFile, options.knowledge);
+    for (const op of operations) {
+      if (op.kind !== 'rxjs.subscription' || op.action !== 'acquire') continue;
+      const d = decisions.get(`${op.line}:${op.column}`);
+      if (d !== undefined) op.lifetime = d;
+    }
+  }
 
   /**
    * ORDER MATTERS HERE.
@@ -220,6 +232,11 @@ export function analyzeProject(
     scanRoot = rootDir;
   }
 
+  // Read package.json and the project's own services once, so every file is
+  // judged against what the project is actually made of.
+  const knowledge = options.knowledge ?? loadProjectKnowledge(rootDir);
+  for (const note of knowledge.profile.notes) warnings.push(note);
+
   const walk = walkDirectory(scanRoot, { extensions: ['.ts'] });
   const includeTests = options.includeTests ?? false;
 
@@ -241,7 +258,9 @@ export function analyzeProject(
       continue;
     }
 
-    const analysis = analyzeSourceFile(parsed.sourceFile, relativePath);
+    const analysis = analyzeSourceFileWith(parsed.sourceFile, relativePath, {
+      knowledge,
+    });
 
     // Keep only files that actually contain something. Storing 5000 empty
     // entries would bloat the JSON for no benefit.

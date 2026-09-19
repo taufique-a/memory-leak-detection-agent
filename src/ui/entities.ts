@@ -29,6 +29,7 @@ import { isParseFailure, parseSourceFile } from '../scanner/parse';
 import {
   extractRouteArrays,
   linkRouteGraph,
+  routeForClass,
   type RouteArrayDeclaration,
   type RouteNode,
 } from '../scanner/routes';
@@ -207,10 +208,22 @@ function buildEntityIndex(projectRoot: string): EntityIndex {
     nameCounts.set(cls.name, (nameCounts.get(cls.name) ?? 0) + 1);
   }
 
+  // Files and folders the routes' imports can point at.
+  const knownStems = new Set<string>();
+  for (const cls of classes) {
+    const stem = cls.file.replace(/.(ts|js)$/, '');
+    knownStems.add(stem);
+    for (let dir = path.posix.dirname(stem); dir !== '.' && dir !== '/' && !knownStems.has(dir); dir = path.posix.dirname(dir)) {
+      knownStems.add(dir);
+    }
+  }
+
   const entities: Entity[] = classes.map((cls) => {
-    const routed = graph.routedComponents.get(cls.name);
+    // Which routes mount THIS class - resolved through the route file's own
+    // import, so 11 classes called OverviewComponent do not all inherit /overview.
+    const routed = routeForClass(graph, cls.name, cls.file, (stem) => knownStems.has(stem));
     const routes = routed?.paths ?? [];
-    const reachable = routed?.reachableFromRoot === true;
+    const reachable = routes.length > 0 && graph.routedComponents.get(cls.name)?.reachableFromRoot === true;
 
     let investigable = true;
     let blockedReason: string | undefined;
@@ -228,7 +241,8 @@ function buildEntityIndex(projectRoot: string): EntityIndex {
         'would race the application and measure half-built pages.';
     }
 
-    const ambiguous = (nameCounts.get(cls.name) ?? 0) > 1;
+    // Only a guess when the route's import could not be tied to this file.
+    const ambiguous = (nameCounts.get(cls.name) ?? 0) > 1 && routed?.exact !== true;
     if (ambiguous && routes.length > 0) {
       blockedReason =
         `${nameCounts.get(cls.name)} classes in this project are called ${cls.name}, so the ` +
@@ -251,6 +265,18 @@ function buildEntityIndex(projectRoot: string): EntityIndex {
       ...(ambiguous ? { ambiguousName: true } : {}),
     };
   });
+
+  // Two classes of one name that BOTH have a proven route cannot be told
+  // apart by the name-keyed route options below, so neither is drivable.
+  const provenByName = new Map<string, Entity[]>();
+  for (const e of entities) {
+    if (e.routes.length > 0 && (nameCounts.get(e.name) ?? 0) > 1 && e.ambiguousName !== true) {
+      provenByName.set(e.name, [...(provenByName.get(e.name) ?? []), e]);
+    }
+  }
+  for (const group of provenByName.values()) {
+    if (group.length > 1) for (const e of group) e.ambiguousName = true;
+  }
 
   /**
    * A control route should be cheap and boring: the point is to leave the

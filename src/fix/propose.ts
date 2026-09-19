@@ -26,6 +26,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { loadProjectKnowledge, type ProjectKnowledge } from '../knowledge/lifetime';
 import { addCleanup } from './addCleanup';
 import { DEFINITION_BY_KIND } from '../analyzer/resources';
 import type { CorrelatedFinding } from '../types/correlation';
@@ -67,6 +68,8 @@ export interface ProposeOptions {
   projectRoot: string;
   /** Angular major version, so we do not propose an API it cannot compile. */
   angularMajor?: number;
+  /** Overrides the knowledge loaded from projectRoot (tests). */
+  knowledge?: ProjectKnowledge;
 }
 
 /**
@@ -83,6 +86,10 @@ export function proposeFix(
   const absolute = path.join(options.projectRoot, finding.location.file);
 
   if (!fs.existsSync(absolute)) return undefined;
+
+  // What the project is made of, so a subscription that is meant to stay
+  // active is left alone instead of being "fixed" into a broken feature.
+  const knowledge = options.knowledge ?? loadProjectKnowledge(options.projectRoot);
 
   let source: string;
   try {
@@ -106,7 +113,7 @@ export function proposeFix(
     (i) => i.code === 'DESTROY_SUBJECT_NEVER_COMPLETED',
   );
   if (brokenTakeUntil !== undefined) {
-    const fix = fixBrokenDestroySubject(finding, source, absolute);
+    const fix = fixBrokenDestroySubject(finding, source, absolute, knowledge);
     if (fix !== undefined) return fix;
   }
 
@@ -117,7 +124,7 @@ export function proposeFix(
    * OWN kind came back unaddressed (its specific reason is in `skipped`)
    * falls through to a manual description.
    */
-  const cleanup = createCleanup(finding, source, absolute);
+  const cleanup = createCleanup(finding, source, absolute, knowledge);
   if (!('reason' in cleanup)) return cleanup;
 
   const emptyOnDestroy = finding.lifecycleIssues?.find((i) => i.code === 'ONDESTROY_EMPTY');
@@ -132,10 +139,15 @@ export function proposeFix(
   return describeManualFix(finding, cleanup.reason);
 }
 
-function createCleanup(finding: Finding, source: string, absolutePath: string): ProposedFix | { reason: string } {
+function createCleanup(
+  finding: Finding,
+  source: string,
+  absolutePath: string,
+  knowledge?: ProjectKnowledge,
+): ProposedFix | { reason: string } {
   const className =
     finding.operations.find((o) => o.className !== undefined)?.className ?? finding.location.className;
-  const result = addCleanup(source, path.basename(absolutePath), className);
+  const result = addCleanup(source, path.basename(absolutePath), className, knowledge);
   if ('reason' in result) return { reason: result.reason };
 
   const addressed = result.wrapped[finding.kind];
@@ -212,6 +224,7 @@ function fixBrokenDestroySubject(
   finding: Finding,
   source: string,
   absolutePath: string,
+  knowledge?: ProjectKnowledge,
 ): ProposedFix | undefined {
   // Which signal is not being completed?
   const signal = finding.operations.find((o) => o.mitigationSignal !== undefined)
@@ -229,7 +242,7 @@ function fixBrokenDestroySubject(
     // No hook to append to, so create one. This used to be where every
     // IOSense finding stopped - all 30 broken-destroy$ components lack an
     // ngOnDestroy, so every one came back "manual fix required".
-    const created = createCleanup(finding, source, absolutePath);
+    const created = createCleanup(finding, source, absolutePath, knowledge);
     return 'reason' in created ? undefined : created;
   }
 
