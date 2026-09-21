@@ -4,6 +4,18 @@ Written in plain English. Every statement here is taken from the real code in th
 
 ---
 
+## In short
+
+1. **It reads your code** and lists everything each component starts: subscriptions, timers, listeners, charts, dialogs.
+2. **It drives Chrome** through the page and back many times and measures memory after each round. Memory that keeps climbing is a leak.
+3. **It matches** what stays in memory to the line of code that started it.
+4. **It fixes only what the browser proved**, and only what is safe. Anything meant to stay alive is left alone, with the reason shown.
+5. **It rebuilds, re-tests and repeats the same navigation** to prove the fix worked. **Undo** puts every file back.
+
+Everything it tells you comes from your code or from real Chrome data. Where it is guessing, it says so.
+
+---
+
 ## The whole flow in one picture
 
 ```
@@ -84,7 +96,7 @@ The agent computes retained size itself with a *dominator tree* (`src/heap/domin
 
 - Heap objects have **class names**, not file names. The agent matches the heap name to the class in your code.
 - The route → component link comes from your route files (`src/scanner/routes.ts`), including lazy-loaded modules and `loadComponent`.
-- **Same-name classes.** Many projects have several classes with one name (IOSense has 11 `OverviewComponent`s). The agent now reads the *import* in the route file to see which file the route really mounts (`routeForClass`). A same-named class in another folder gets no route. When the import cannot be traced, the result is marked as a guess. If the heap name matches several classes, the evidence is downgraded to "weak" and the page's own folders decide which class is in scope (`src/correlate/index.ts`, `src/findfix/issues.ts`). Heap names are matched as whole words only.
+- **Same-name classes.** Many projects have several classes with one name (IOSense has 11 `OverviewComponent`s). The agent reads the *import* in the route file to see which file the route really mounts (`routeForClass`). A same-named class in another folder gets no route. Two same-named classes that each have their own route (`/overview` and `/overview-v2`) are both offered, each tied to its own file; a name is only "ambiguous" when two classes claim the *same* route. When the import cannot be traced, the result is marked as a guess. If the heap name matches several classes, the evidence is downgraded to "weak" and the page's own folders decide which class is in scope (`src/correlate/index.ts`, `src/findfix/issues.ts`). Heap names are matched as whole words only.
 - Dialogs opened with `.open(SomeComponent)` are not routes; they are found through the code that opens them.
 
 ## 7. Analysing subscriptions and observables
@@ -99,9 +111,9 @@ Every `.subscribe()` is found by reading the code as a syntax tree (`src/analyze
 |---|---|---|
 | Component subscribes to `ActivatedRoute.params/queryParams/data…` | no | Angular scopes and completes these with the route |
 | Component subscribes to a Subject / EventEmitter it created itself | no | Dies with the component |
-| Component subscribes to `valueChanges` of a form it built | no | Dies with the component |
+| Component subscribes to `valueChanges` of a form it built (`FormGroup`, `UntypedFormGroup`, `fb.group(...)`) | no | Dies with the component |
 | Service is in the component's own `providers` | no | New instance per component |
-| Service method that returns an HTTP call | no | HTTP completes after one response |
+| Service method that returns an HTTP call, including one kept in a variable or cache first (`const req$ = this.http.get(...); this.cache$ = req$; return req$;`) | no | HTTP completes after one response |
 | `timer(500)` (one argument), `of()`, `from([...])` | no | Completes by itself |
 | Root singleton or `AppComponent` subscribing in constructor / `ngOnInit` | no | Lives as long as the app; its `ngOnDestroy` never runs; meant to stay active (device stream, login state) |
 | Root singleton subscribing inside a method that can run many times | review | Each call adds a subscription that can never be released — needs a person |
@@ -143,6 +155,12 @@ Before writing anything (`src/fix/`):
 - The fix is regenerated from the file as it is now; the reviewed content is bound to a hash, and the write is refused if the file changed.
 - The exact diff is shown in a review window before anything is written.
 
+What the fixer will and will not write for listeners and timers (`src/fix/releaseListeners.ts`, `releaseTimers.ts`):
+
+- A listener is removed with the **same function**, so an inline arrow is first moved into a class field. The remove call keeps only `capture`: `passive` and `once` exist only when adding, and TypeScript rejects them on `removeEventListener`.
+- The target must be reachable from `ngOnDestroy`: `this`, `window`/`document`, or a class member. A local variable is not. The one exception is a local made from a fixed `document.querySelector('...')` / `getElementById('...')`, which is looked up again in `ngOnDestroy` (with `?.`). Any other local target is refused.
+- A `setTimeout` started inside a `@HostListener` (one per click or key press) is not tracked. It runs once and frees itself, and tracking each one would make the handle list grow forever.
+
 ## 11. Applying several fixes at once
 
 Select any number of issues; the server writes the selection to the session (`selection-N.json`), and apply regenerates each fix fresh. Original files are stored under `artifacts/findfix/<session>/originals/`. VS Code opens the changed files. One verification runs for the whole batch.
@@ -158,7 +176,9 @@ Select any number of issues; the server writes the selection to the session (`se
 
 ## 13. Navigation and routing based detection
 
-You pick *Route / lazy module* (with a control route to bounce off) or *Component*. The agent goes A → B → A many times. Route links are checked: if the app redirects (login guard) or the page is just slow, the result says which (`src/sweep/routeSweep.ts`, `src/ui/routeProbe.ts`).
+You pick *Route / lazy module* (with a control route to bounce off) or *Component*. The agent goes A → B → A many times.
+
+The route lists come straight from your routing files. The first list offers every lazy module and every page declared directly in `app-routing` (including `loadComponent` pages); **Navigation A and Navigation B each list every route with its exact path**, and every dropdown has a search box. Only routes whose component can actually be opened and measured are listed: it needs a selector to wait for and a class name that is not claimed by another class on the same route. While it runs, a progress bar and the elapsed time show where it is. Route links are checked: if the app redirects (login guard) or the page is just slow, the result says which (`src/sweep/routeSweep.ts`, `src/ui/routeProbe.ts`).
 
 ## 14. Lazy-loaded modules
 
@@ -175,7 +195,17 @@ Still not covered: components created purely at runtime from a config map (widge
 
 The heap snapshot lists detached DOM (elements removed from the page but still in memory), plus instances of a component class still alive after leaving. The retaining path (what points at what, back to a root) shows the holder: a timer, a listener, a service field, a chart object. The agent names that holder and links it to the code that started it.
 
-## 16. How the parts connect
+## 16. What it cannot do yet (known limits)
+
+Found by checking it against 28 IOSense components read independently; the tool and the reviewers agreed on the clear leaks, and these are where they differed:
+
+- **A new subscription every time a stream re-emits.** Code like `devices$.subscribe(() => this.subscribeToMqtt())` that opens a new MQTT subscription on every update and overwrites the old handle is **not detected** yet.
+- **A stream built from HTTP calls.** `combineLatest(listOfHttpCalls).subscribe(...)` finishes on its own, but proving that needs data-flow tracking, so it can still be reported.
+- **Code that can never run.** A `setInterval` inside `if (!this.flag)` where `flag` is always `true` is reported, because reading the code cannot tell.
+- **Medium and low findings are suspicions.** Static findings are a reason to look, never a verdict; only findings the browser confirmed get a fix.
+- **Widgets created at runtime** from a config map are reached only through the code that opens them (see section 14).
+
+## 17. How the parts connect
 
 `analyze` (code) → `entities` (components, routes, modules) → `scenario runner` (Chrome, trend) → `heap` (snapshots, retained size, paths) → `correlate` (browser evidence + code findings) → `issues` (what you see) → `fix` (decision-aware changes) → `apply` → `verify` (build, tests, re-run) → `report`/`undo`.
 
