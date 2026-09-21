@@ -14,8 +14,11 @@ needs cleanup, how a fix is proven), read [docs/HOW_IT_WORKS.md](docs/HOW_IT_WOR
 Double-click `run-ui.cmd` in this folder, or type its full path in any terminal
 from any directory, on any machine. It sets up Node 22 **inside this project**
 (see below), installs dependencies the first time (`node_modules` missing
-triggers an automatic `npm install`), and opens the guided UI — no `cd`, no
-dot-sourcing, no setup anywhere else.
+triggers an automatic `npm install`), updates them on every start,
+and opens the guided UI — no `cd`, no dot-sourcing, no setup anywhere else.
+
+If you start it by hand (`env.cmd` then `npm run dev`), run `npm install`
+after every `git pull`.
 
 **Node 22 lives in this folder.** The version is pinned in `.node-version` and
 kept in `.node\` (gitignored, about 100 MB). The first run downloads it — about
@@ -435,7 +438,7 @@ from source (no build step needed).
 ```powershell
 npm run dev -- doctor
 ```
-Checks Node ≥ 20, TypeScript < 7, git, and that Chrome is launchable. Exit code
+Checks Node, TypeScript, git, Chrome and the DevTools MCP packages. Exit code
 `0` = ready.
 
 ```powershell
@@ -658,7 +661,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~2-3 minutes, about 850 tests in 28 files)
+npm test                       # everything (~2-3 minutes, 30 test files)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -692,6 +695,10 @@ Wrong shell or wrong file. See section 1.
 
 ### `node -v` says `v14.20.0`
 The environment is not active in *this* window. Activate it again.
+
+### `Cannot find module '@modelcontextprotocol/sdk/client/index.js'`
+A package is missing, usually after a `git pull`. Run `npm install` in the
+project folder (environment active) and start again.
 
 ### `The application redirected to a login page …`
 **Do not just sign in again.** There are three different causes and only one
@@ -1009,12 +1016,13 @@ src/
   project/     source folder browsing, validation, serving, and served-app checks
   findfix/     Find & Fix sessions, scope, issue cards, selection
   knowledge/   package.json profile, service catalogue, subscription-lifetime decisions
+  mcp/         Chrome DevTools MCP client and live watching
   correlate/   joins static findings, runtime trend and heap evidence
   sweep/       route-by-route cleanup checks
 docs/          HOW_IT_WORKS.md - plain-English guide to the agent
 scripts/       setup-node.ps1 / .cmd - fetch the pinned Node into .node\
 .node/         Node 22, npm cache, Playwright browsers (gitignored; version in .node-version)
-tests/         about 850 tests in 28 files, mirrors src/
+tests/         30 test files, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)

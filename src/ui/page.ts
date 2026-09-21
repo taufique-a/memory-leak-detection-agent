@@ -463,11 +463,19 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 .bar span{display:block;height:100%;width:35%;background:var(--accent);
   transform:translateX(-100%);animation:sweep 1.1s ease-in-out infinite}
 @keyframes sweep{to{transform:translateX(400%)}}
+.selfilter{width:100%;box-sizing:border-box;margin:.25rem 0 .35rem;padding:.4rem .6rem;
+  font:inherit;font-size:.85rem;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
+.meter{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:.2rem 0 .7rem}
+.meter span{display:block;height:100%;width:0;background-color:var(--accent);border-radius:4px;
+  transition:width .5s ease;background-image:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
+  background-size:40% 100%;background-repeat:no-repeat;animation:shine 1.4s linear infinite}
+.meter.stopped span{animation:none;background-image:none}
+@keyframes shine{from{background-position:-40% 0}to{background-position:140% 0}}
 .bar.idle{visibility:hidden}
 button{transition:opacity .15s,background .15s}
 .action button:not(:disabled):hover{opacity:.88}
 @media (prefers-reduced-motion:reduce){
-  .spinner,.running #running,.bar span,#reply.on,.stage.active .dot{animation:none}
+  .spinner,.running #running,.bar span,.meter span,#reply.on,.stage.active .dot{animation:none}
 }
 ul.state{list-style:none;padding:0;margin:.4rem 0 0;font-size:.83rem}
 ul.state li{padding:.15rem 0;color:var(--muted)}
@@ -632,6 +640,7 @@ a{color:var(--accent)}
       <!-- progress -->
       <div class="panel" id="ffProgress" style="display:none;margin-bottom:1rem">
         <h2><span id="ffProgressTitle">Working</span> <span class="sub" id="ffElapsed"></span></h2>
+        <div class="meter" id="ffMeter"><span id="ffMeterFill"></span></div>
         <ol class="stepper" id="ffStages"></ol>
       </div>
 
@@ -1007,6 +1016,9 @@ function collect(action) {
   return params;
 }
 
+let runStartedAt = 0;
+let runTimer = null;
+
 async function run(actionId) {
   if (currentRun) return;
   const action = ACTIONS.find((a) => a.id === actionId);
@@ -1042,8 +1054,15 @@ function attachRun(result, action) {
   $('consolePanel').classList.add('running');
   $('bar').classList.remove('idle');
   $('stopBtn').disabled = false;
-  $('status').innerHTML = '<span class="pill warn">working</span> Expect ' + esc(action.expect) +
-    '. You can keep reading while it runs.';
+  runStartedAt = Date.now();
+  if (runTimer) clearInterval(runTimer);
+  const showElapsed = () => {
+    $('status').innerHTML = '<span class="pill warn">working</span> ' +
+      humanDuration(Date.now() - runStartedAt) + ' so far. Expect ' + esc(action.expect) +
+      '. You can keep reading while it runs.';
+  };
+  showElapsed();
+  runTimer = setInterval(showElapsed, 1000);
   for (const b of document.querySelectorAll('button[data-action]')) b.disabled = true;
 
   /* Show the reply controls for commands that will ask something. */
@@ -1074,6 +1093,7 @@ async function finish(exitCode) {
   const finishedAction = currentActionId;
   if (source) { source.close(); source = null; }
   currentRun = null;
+  if (runTimer) { clearInterval(runTimer); runTimer = null; }
   $('running').textContent = 'nothing running';
   $('consolePanel').classList.remove('running');
   $('bar').classList.add('idle');
@@ -1215,6 +1235,41 @@ function applyRouteOptions(data) {
     : 'No pages that can be opened and measured were found in this project.';
   if (selectedEntity) fillNavB('ffCompNavB', '', null);
 }
+
+/**
+ * A search box above a long dropdown. Typing hides the options that do not
+ * contain the text; the first match is picked so the list below follows.
+ */
+function addSelectFilter(id) {
+  const select = $(id);
+  const box = document.createElement('input');
+  box.type = 'search';
+  box.className = 'selfilter';
+  box.placeholder = 'Type to search...';
+  box.setAttribute('aria-label', 'Search the list below');
+  select.parentNode.insertBefore(box, select);
+
+  const apply = () => {
+    const words = box.value.toLowerCase().split(/\\s+/).filter(Boolean);
+    let first = null;
+    for (const o of Array.from(select.options)) {
+      const text = o.textContent.toLowerCase();
+      o.hidden = !words.every((w) => text.indexOf(w) !== -1);
+      if (!o.hidden && !first && (words.length === 0 || o.value !== '')) first = o;
+    }
+    const current = select.selectedOptions[0];
+    if (words.length && first && (!current || current.hidden)) {
+      select.value = first.value;
+      select.dispatchEvent(new Event('change'));
+    }
+  };
+  box.addEventListener('input', apply);
+  // The lists are rebuilt when the project changes; keep the filter applied.
+  new MutationObserver(() => { if (box.value) apply(); }).observe(select, { childList: true });
+}
+addSelectFilter('ffModule');
+addSelectFilter('ffNavA');
+addSelectFilter('ffNavB');
 
 function routeLabel(path) {
   const r = ffOptions && ffOptions.routes.find((x) => x.path === path);
@@ -1410,6 +1465,15 @@ function renderStages() {
       (s.state === 'active' && s.detail ? '<span class="det">' + esc(s.detail) + '</span>' : '') +
       '</span><span class="el">' + took + '</span></li>';
   }).join('');
+  // Finished steps count fully, the running one counts half.
+  let doneCount = 0;
+  for (const e of FF_STAGES) {
+    const st = ffStages[e[0]] && ffStages[e[0]].state;
+    if (st === 'done' || st === 'skip') doneCount += 1;
+    else if (st === 'active') doneCount += 0.5;
+  }
+  $('ffMeterFill').style.width = Math.round((doneCount / FF_STAGES.length) * 100) + '%';
+  $('ffMeter').classList.toggle('stopped', !ffActive);
   const started = FF_STAGES.map((e) => ffStages[e[0]] && ffStages[e[0]].startedAt).filter(Boolean);
   $('ffElapsed').textContent = started.length && ffActive
     ? humanDuration(Date.now() - Math.min.apply(null, started)) + ' so far'
