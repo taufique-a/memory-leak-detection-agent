@@ -7,6 +7,7 @@
  */
 
 import * as vm from 'node:vm';
+import { isChromeAvailable } from '../src/runtime/browser';
 
 import { ACTIONS, buildArgs, findAction } from '../src/ui/actions';
 import { renderPage } from '../src/ui/page';
@@ -1009,6 +1010,93 @@ describe('server security', () => {
       `http://127.0.0.1:${server.port}/api/download?path=${encodeURIComponent('artifacts/x.json')}`,
     );
     expect(res.status).toBe(403);
+  });
+
+  /* ---- reports: a table, a details page, a PDF - and no raw download ---- */
+
+  describe('reports', () => {
+    const id = `MLA-TEST-${Date.now().toString(36).toUpperCase()}`;
+    const base = () => `http://127.0.0.1:${server.port}`;
+    let dir: string;
+
+    beforeAll(async () => {
+      const fs = await import('node:fs');
+      const pathMod = await import('node:path');
+      dir = pathMod.join(process.cwd(), 'reports');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        pathMod.join(dir, `${id}.json`),
+        JSON.stringify({
+          createdAt: '2026-09-21T10:00:00.000Z',
+          status: 'CONFIRMED',
+          project: { packageName: 'demo-app' },
+          summary: { totalFindings: 7, byRisk: { CRITICAL: 0, HIGH: 2, MEDIUM: 5, LOW: 0 } },
+          scenario: { gathered: true },
+        }),
+      );
+      fs.writeFileSync(
+        pathMod.join(dir, `${id}.html`),
+        '<!doctype html><html><body><h1>Demo report</h1><p>2 high findings</p></body></html>',
+      );
+    });
+
+    afterAll(async () => {
+      const fs = await import('node:fs');
+      const pathMod = await import('node:path');
+      for (const ext of ['.json', '.html', '.md']) fs.rmSync(pathMod.join(dir, id + ext), { force: true });
+    });
+
+    it('lists it as a table row with the numbers that matter', async () => {
+      const res = await fetch(`${base()}/api/reports?token=${server.token}`);
+      const rows = ((await res.json()) as { reports: Array<Record<string, unknown>> }).reports;
+      const row = rows.find((r) => r.id === id);
+      expect(row).toMatchObject({ project: 'demo-app', totalFindings: 7, worst: 'HIGH', measured: true, status: 'CONFIRMED' });
+    });
+
+    it('shows the details page with a Download PDF button, and nothing that can run scripts', async () => {
+      const res = await fetch(`${base()}/api/report/view?token=${server.token}&id=${id}`);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain('Demo report');
+      expect(html).toContain(`/api/report/pdf?id=${id}`);
+      expect(html).toContain('Download PDF');
+      expect(res.headers.get('content-security-policy')).toContain("script-src 'none'");
+      expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+    });
+
+    it.each([['a path', '../package.json'], ['a made-up id', 'MLA-nope'], ['nothing', '']])(
+      'answers 404 for %s instead of reading a file',
+      async (_l, bad) => {
+        const res = await fetch(`${base()}/api/report/view?token=${server.token}&id=${encodeURIComponent(bad)}`);
+        expect(res.status).toBe(404);
+      },
+    );
+
+    it('REFUSES to download a report file directly', async () => {
+      for (const ext of ['.json', '.html', '.md']) {
+        const res = await fetch(
+          `${base()}/api/download?token=${server.token}&path=${encodeURIComponent(`reports/${id}${ext}`)}`,
+        );
+        expect(res.status).toBe(403);
+      }
+    });
+
+    it('needs the token for the table, the page and the PDF', async () => {
+      for (const p of ['/api/reports', `/api/report/view?id=${id}`, `/api/report/pdf?id=${id}`]) {
+        expect((await fetch(base() + p)).status).toBe(403);
+      }
+    });
+
+    it('makes a real PDF from the details page', async () => {
+      const chrome = await isChromeAvailable();
+      if (!chrome.available) return;
+      const res = await fetch(`${base()}/api/report/pdf?token=${server.token}&id=${id}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('application/pdf');
+      expect(res.headers.get('content-disposition')).toContain(`${id}.pdf`);
+      const bytes = Buffer.from(await res.arrayBuffer());
+      expect(bytes.subarray(0, 5).toString()).toBe('%PDF-');
+    }, 60_000);
   });
 
   /* ---- choosing the source folder ---- */

@@ -33,6 +33,7 @@ import { getEntityIndex, searchEntities } from './entities';
 import { renderPage } from './page';
 import { readSavedSession } from '../scenario/session';
 import { handleFindFix } from './findfixEndpoints';
+import { detailsPage, listReports, readReportHtml, renderPdf, validReportId } from './reports';
 import { browseFolder, findProjectsUnder } from '../project/browse';
 import { checkServedProject, heapUsedByRunningServers } from '../project/served';
 import { validateSource } from '../project/validate';
@@ -501,6 +502,58 @@ async function handle(
     return;
   }
 
+  if (url.pathname === '/api/reports' && req.method === 'GET') {
+    sendJson(res, { reports: listReports(ctx.options.agentRoot) });
+    return;
+  }
+
+  if (url.pathname === '/api/report/view' && req.method === 'GET') {
+    const id = url.searchParams.get('id');
+    const html = validReportId(id) ? readReportHtml(ctx.options.agentRoot, id) : undefined;
+    if (html === undefined || !validReportId(id)) {
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end('That report was not found. It may have been deleted.');
+      return;
+    }
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      // A report holds text from your project, so it gets no scripts and no network,
+      // and the address (which carries the token) is not passed on.
+      'content-security-policy':
+        "default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'none'; base-uri 'none'; form-action 'none'",
+      'referrer-policy': 'no-referrer',
+      'x-content-type-options': 'nosniff',
+    });
+    res.end(detailsPage(html, id, ctx.token));
+    return;
+  }
+
+  if (url.pathname === '/api/report/pdf' && req.method === 'GET') {
+    const id = url.searchParams.get('id');
+    const html = validReportId(id) ? readReportHtml(ctx.options.agentRoot, id) : undefined;
+    if (html === undefined || !validReportId(id)) {
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end('That report was not found. It may have been deleted.');
+      return;
+    }
+    try {
+      const pdf = await renderPdf(html);
+      res.writeHead(200, {
+        'content-type': 'application/pdf',
+        'content-length': String(pdf.length),
+        'content-disposition': `attachment; filename="${id}.pdf"`,
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      });
+      res.end(pdf);
+    } catch (err) {
+      res.writeHead(503, { 'content-type': 'text/plain' });
+      res.end(`The PDF could not be made: ${(err as Error).message}. Is Google Chrome installed? Run "doctor" to check.`);
+    }
+    return;
+  }
+
   if (url.pathname === '/api/download' && req.method === 'GET') {
     serveArtifact(url.searchParams.get('path') ?? '', ctx.options.agentRoot, res);
     return;
@@ -919,6 +972,13 @@ function serveArtifact(requested: string, agentRoot: string, res: http.ServerRes
     return;
   }
   const resolved = check.path;
+
+  // Reports are read on the details page and saved as a PDF from there, never downloaded raw.
+  if (resolved.startsWith(path.resolve(agentRoot, 'reports') + path.sep)) {
+    res.writeHead(403, { 'content-type': 'text/plain' });
+    res.end('Reports open from the Report page (view details). They cannot be downloaded directly.');
+    return;
+  }
 
   let stat: fs.Stats;
   try {

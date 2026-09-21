@@ -277,6 +277,14 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 .files{overflow:auto;min-height:0;flex:1 1 auto;padding:.4rem .6rem}
 .fgroup{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
   padding:.5rem .4rem .25rem;position:sticky;top:0;background:var(--card)}
+.rtable{width:100%;border-collapse:collapse;font-size:.85rem}
+.rtable th{text-align:left;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
+  font-weight:600;padding:.4rem .6rem;border-bottom:1px solid var(--line)}
+.rtable td{white-space:nowrap;padding:.55rem .6rem;border-bottom:1px solid var(--line);vertical-align:middle}
+.rtable tr:last-child td{border-bottom:0}
+.rtable .num{text-align:right;font-variant-numeric:tabular-nums}
+.rtable .act{text-align:right;white-space:nowrap}
+.rwrap{overflow-x:auto;padding:0 .4rem .4rem}
 .frow{display:flex;align-items:center;gap:.5rem;padding:.35rem .4rem;border-radius:5px}
 .frow:hover{background:var(--code)}
 .fname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
@@ -669,6 +677,12 @@ a{color:var(--accent)}
       </div>
 
       <div id="steps-report"></div>
+
+      <div class="panel" id="reportsPanel">
+        <h2><span>Reports</span></h2>
+        <div class="rwrap" id="reportsTable"><div class="status">No reports yet. Write one in the steps
+          above and it will appear here.</div></div>
+      </div>
 
       <div class="panel" id="filesPanel">
         <h2>
@@ -2175,7 +2189,39 @@ const GROUP_LABEL = {
  * just the files newer than the current run's start - or, before any run,
  * the single newest file so the panel is not empty.
  */
+/** The Reports table: one row each, details open in a new tab; nothing is downloaded from here. */
+async function refreshReports() {
+  let data;
+  try {
+    data = await api('/api/reports');
+  } catch { return; }
+  const rows = data.reports || [];
+  if (!rows.length) {
+    $('reportsTable').innerHTML = '<div class="status">No reports yet. Write one in the steps above ' +
+      'and it will appear here.</div>';
+    return;
+  }
+  const level = { CRITICAL: 'bad', HIGH: 'bad', MEDIUM: 'warn', LOW: 'ok' };
+  let html = '<table class="rtable"><thead><tr><th>Date</th><th>Project</th><th class="num">Findings</th>' +
+    '<th>Worst</th><th>Measured</th><th></th></tr></thead><tbody>';
+  for (const r of rows) {
+    const when = r.createdAt ? new Date(r.createdAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+    const view = '/api/report/view?id=' + encodeURIComponent(r.id) + '&token=' + TOKEN;
+    html += '<tr><td>' + esc(when) + '</td><td>' + esc(r.project || '-') + '</td>' +
+      '<td class="num">' + r.totalFindings + '</td>' +
+      '<td>' + (r.worst ? '<span class="pill ' + (level[r.worst] || '') + '">' + esc(r.worst.toLowerCase()) + '</span>' : '-') + '</td>' +
+      '<td>' + (r.measured ? 'yes' : 'no, code only') + '</td>' +
+      '<td class="act"><a class="mini" href="' + view + '" target="_blank" rel="noopener">view details</a> ' +
+      '<button class="mini danger" data-delreport="' + esc(r.files.join('|')) + '">delete</button></td></tr>';
+  }
+  $('reportsTable').innerHTML = html + '</tbody></table>';
+  for (const btn of document.querySelectorAll('button[data-delreport]')) {
+    arm(btn, () => removeFiles({ paths: btn.getAttribute('data-delreport').split('|') }));
+  }
+}
+
 async function refreshFiles() {
+  refreshReports();
   let data;
   try {
     data = await api('/api/files' + (showAllFiles ? '?all=1' : ''));
@@ -2201,7 +2247,7 @@ async function refreshFiles() {
       : 'From your last run — ' + files.length + ' files. Click a name to open it.') +
     '</div>';
 
-  for (const key of ['reports', 'artifacts', 'scenarios']) {
+  for (const key of ['artifacts', 'scenarios']) {
     const list = groups[key];
     if (!list || !list.length) continue;
     html += '<div class="fgroup">' + esc(GROUP_LABEL[key] || key) +

@@ -345,10 +345,16 @@ scenario it did not generate**.
 Link selectors are **guessed** from the route path, so the notes printed before
 the run tell you what to fix if a step times out. See section 6.
 
-**Your results** are on the Report page — by default **only what the latest run
-produced**, not the whole history. Each has **copy** (contents to clipboard),
-**save** (download) and **delete**. There is also **copy output** for the
-console panel.
+**Reports** are on the Report page as a simple table: date, project, number of
+findings, the worst level, and whether Chrome measured it. **View details** opens
+the full report in a **new tab**, and **Download PDF** on that page saves it. A
+report file cannot be downloaded directly from the table (the server refuses it);
+the PDF is the one way to keep it. **delete** removes a report.
+
+**Your results** below the table lists the other files a run produced (heap
+snapshots, scenarios) — by default **only what the latest run produced**, not
+the whole history. Each has **copy** (contents to clipboard), **save**
+(download) and **delete**. There is also **copy output** for the console panel.
 
 ### Clearing up
 
@@ -593,8 +599,8 @@ npm run dev -- investigate "C:\Users\Taufique\IOSense" `
 ```
 
 Output lands in `reports\MLA-YYYYMMDD-XXXX.{md,html,json}`.
-**Open the `.html` in Chrome** — it is fully self-contained, so you can email it
-or attach it to a ticket.
+Open it from the Report page (**view details**) and use **Download PDF** there to
+share it. The `.html` is fully self-contained if you ever need the file itself.
 
 ---
 
