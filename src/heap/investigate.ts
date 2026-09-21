@@ -18,7 +18,8 @@
 
 import * as path from 'node:path';
 
-import { captureHeapSnapshot, type CapturedSnapshot } from './capture';
+import { captureHeapSnapshot, captureHeapSnapshotViaMcp, type CapturedSnapshot } from './capture';
+import { connectDevToolsMcp, type DevToolsMcp } from '../mcp/devtools';
 import { loadHeapSnapshot, buildReverseEdges } from './parse';
 import {
   compareSnapshots,
@@ -49,7 +50,21 @@ export interface HeapInvestigationOptions {
   traceTop?: number;
   /** Keep the .heapsnapshot files. Default true - they are the raw evidence. */
   keepSnapshots?: boolean;
+  /**
+   * Use Chrome DevTools MCP for snapshots and console/network evidence.
+   * Default true; falls back to the raw protocol, saying why, if it cannot start.
+   */
+  devtoolsMcp?: boolean;
   onProgress?: (message: string) => void;
+}
+
+/** What Chrome DevTools MCP saw and did during the run. */
+export interface DevToolsEvidence {
+  serverVersion: string;
+  /** Console errors and warnings the page logged during the run. */
+  consoleProblems: string[];
+  /** Requests that failed or returned an error status. */
+  failedRequests: string[];
 }
 
 /** A growing constructor with the explanation of why it survives. */
@@ -85,6 +100,8 @@ export interface HeapInvestigationResult {
   findings: RetainedObjectFinding[];
   durationMs: number;
   warnings: string[];
+  /** Present when Chrome DevTools MCP was connected for this run. */
+  devtools?: DevToolsEvidence;
 }
 
 export async function investigateHeap(
@@ -112,15 +129,39 @@ export async function investigateHeap(
     if (mismatch !== undefined) throw new ScenarioError(mismatch);
   }
 
+  const useMcp = options.devtoolsMcp !== false;
   const session = await launchBrowser({
+    ...(useMcp ? { debugPort: 0 } : {}),
     headed: options.headed === true,
     timeoutMs: scenario.timeoutMs ?? 60_000,
     ...(scenario.viewport !== undefined ? { viewport: scenario.viewport } : {}),
     ...(storageStateFile !== undefined ? { storageStateFile } : {}),
   });
 
+  let mcp: DevToolsMcp | undefined;
   try {
     await enableMetrics(session.cdp);
+
+    if (useMcp && session.debugPort !== undefined) {
+      try {
+        report('connecting Chrome DevTools MCP');
+        mcp = await connectDevToolsMcp({ debugPort: session.debugPort, roots: [outputDir] });
+      } catch (err) {
+        warnings.push(`Chrome DevTools MCP was not available (${(err as Error).message}); used the raw protocol for snapshots.`);
+      }
+    }
+
+    /** MCP first; the raw protocol if MCP fails, with the reason recorded. */
+    const snapshot = async (name: string): Promise<CapturedSnapshot> => {
+      if (mcp !== undefined) {
+        try {
+          return await captureHeapSnapshotViaMcp(mcp, session.cdp, session.page.url(), { outputDir, name, onProgress: report });
+        } catch (err) {
+          warnings.push(`Chrome DevTools MCP could not take the ${name} snapshot (${(err as Error).message}); used the raw protocol.`);
+        }
+      }
+      return captureHeapSnapshot(session.cdp, { outputDir, name, onProgress: report });
+    };
 
     /* ---- setup ---- */
     report('running setup');
@@ -146,11 +187,7 @@ export async function investigateHeap(
 
     /* ---- baseline ---- */
     report('capturing BEFORE snapshot');
-    const before = await captureHeapSnapshot(session.cdp, {
-      outputDir,
-      name: 'before',
-      onProgress: report,
-    });
+    const before = await snapshot('before');
 
     /* ---- the measured loop ---- */
     const iterations = scenario.iterations;
@@ -162,11 +199,26 @@ export async function investigateHeap(
 
     /* ---- after ---- */
     report('capturing AFTER snapshot');
-    const after = await captureHeapSnapshot(session.cdp, {
-      outputDir,
-      name: 'after',
-      onProgress: report,
-    });
+    // What DevTools recorded while the loop ran, before the page moves on.
+    let devtools: DevToolsEvidence | undefined;
+    if (mcp !== undefined) {
+      try {
+        await mcp.selectPageByUrl(session.page.url());
+        const consoleProblems = (await mcp.consoleMessages(['error', 'warn']))
+          .map((e) => `[${e.type}] ${e.text}`)
+          .slice(0, 20);
+        const failedRequests = (await mcp.networkRequests())
+          .filter((r) => r.status !== undefined && !/^[23]\d\d$/.test(r.status))
+          .map((r) => `${r.method} ${r.url} [${r.status}]`)
+          .filter((line, i, all) => all.indexOf(line) === i)
+          .slice(0, 20);
+        devtools = { serverVersion: mcp.serverVersion, consoleProblems, failedRequests };
+      } catch (err) {
+        warnings.push(`Could not read console/network from Chrome DevTools MCP: ${(err as Error).message}`);
+      }
+    }
+
+    const after = await snapshot('after');
 
     if (!before.afterForcedGc || !after.afterForcedGc) {
       warnings.push(
@@ -314,8 +366,10 @@ export async function investigateHeap(
       findings,
       durationMs: Date.now() - started,
       warnings,
+      ...(devtools !== undefined ? { devtools } : {}),
     };
   } finally {
+    if (mcp !== undefined) await mcp.close();
     await session.close();
   }
 }

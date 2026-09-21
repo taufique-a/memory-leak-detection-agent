@@ -26,5 +26,9 @@
     "ts-jest": "^29.4.12",
     "tsx": "^4.23.12",
     "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "chrome-devtools-mcp": "1.9.0"
   }
 }

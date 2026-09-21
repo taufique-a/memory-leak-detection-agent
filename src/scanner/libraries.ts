@@ -135,6 +135,49 @@ const KNOWN_LIBRARIES: Readonly<Record<string, LibraryKnowledge>> = {
     note: 'Same accumulation problem as socket.io, plus a reconnect loop that keeps running.',
   },
 
+  'ngx-mqtt': {
+    category: 'realtime',
+    disposalApi: 'unsubscribe every observe(topic) subscription; MqttService.disconnect() when the connection is no longer needed',
+    note: 'observe(topic) stays subscribed on the broker connection until unsubscribed, and the MqttService is usually an app-wide singleton, so a component that never unsubscribes is kept alive by it.',
+  },
+  '@stomp/stompjs': {
+    category: 'realtime',
+    disposalApi: 'subscription.unsubscribe() and client.deactivate()',
+    note: 'STOMP subscriptions and the reconnect timer live on the client until deactivated.',
+  },
+  '@microsoft/signalr': {
+    category: 'realtime',
+    disposalApi: 'connection.off(...) then connection.stop()',
+    note: 'Handlers registered with connection.on() keep their component alive until removed.',
+  },
+  'sockjs-client': {
+    category: 'realtime',
+    disposalApi: 'socket.close()',
+    note: 'An open SockJS connection keeps its message handlers, and everything they reference, alive.',
+  },
+
+  /* ---- more charts / diagrams ---- */
+  gojs: {
+    category: 'chart',
+    disposalApi: 'diagram.div = null (GoJS docs: releases the diagram from its element)',
+    note: 'A Diagram keeps its model, DOM listeners and canvas until its div is set to null.',
+  },
+  'chart.js': {
+    category: 'chart',
+    disposalApi: 'chart.destroy()',
+    note: 'Chart.js registers resize observers and keeps its canvas; without destroy() the chart and its data stay reachable.',
+  },
+  'plotly.js': {
+    category: 'chart',
+    disposalApi: 'Plotly.purge(element)',
+    note: 'Plotly attaches listeners and keeps traces on the element until purged.',
+  },
+  '@amcharts/amcharts5': {
+    category: 'chart',
+    disposalApi: 'root.dispose()',
+    note: 'Each Root owns a canvas/WebGL context and animation loop until disposed.',
+  },
+
   /* ---- editors / heavy widgets ---- */
   'monaco-editor': {
     category: 'editor',
@@ -147,11 +190,52 @@ const KNOWN_LIBRARIES: Readonly<Record<string, LibraryKnowledge>> = {
     note: 'Retains DOM and key bindings without destroy().',
   },
 
+  'ngx-editor': {
+    category: 'editor',
+    disposalApi: 'editor.destroy() in ngOnDestroy (ngx-editor docs)',
+    note: 'An Editor instance owns a ProseMirror view and its listeners until destroyed.',
+  },
+  fullcalendar: {
+    category: 'other',
+    disposalApi: "$(element).fullCalendar('destroy') (v3, jQuery-based) / calendar.destroy() (v4+)",
+    note: 'v3 binds jQuery handlers and window resize listeners that survive removing the element.',
+  },
+  'lottie-web': {
+    category: 'animation',
+    disposalApi: 'animation.destroy()',
+    note: 'A loaded animation keeps an animation frame loop and its DOM/canvas until destroyed.',
+  },
+  'ngx-lottie': {
+    category: 'animation',
+    disposalApi: 'automatic via the component wrapper (it destroys the animation with the component)',
+    note: 'Animations created directly with lottie-web bypass the wrapper and need animation.destroy().',
+  },
+  'video.js': {
+    category: 'other',
+    disposalApi: 'player.dispose()',
+    note: 'A player holds the media element, event handlers and network activity until disposed.',
+  },
+
   /* ---- animation ---- */
   gsap: {
     category: 'animation',
     disposalApi: 'tween.kill() / ScrollTrigger.kill()',
     note: 'Active tweens hold references to their targets and keep a ticker running.',
+  },
+  'pixi.js': {
+    category: 'animation',
+    disposalApi: 'app.destroy(true)',
+    note: 'The renderer owns a WebGL context and a ticker that keep running until destroyed.',
+  },
+  konva: {
+    category: 'animation',
+    disposalApi: 'stage.destroy()',
+    note: 'A Stage keeps its layers, canvases and listeners until destroyed.',
+  },
+  fabric: {
+    category: 'animation',
+    disposalApi: 'canvas.dispose()',
+    note: 'A fabric.Canvas keeps its objects and DOM listeners until disposed.',
   },
   three: {
     category: 'animation',
@@ -190,6 +274,15 @@ export function detectRiskyLibraries(
   );
 
   return found;
+}
+
+/** Every catalogued library with its category and teardown API. */
+export function knownLibraryEntries(): Array<{ name: string; category: string; disposalApi: string }> {
+  return Object.entries(KNOWN_LIBRARIES).map(([name, k]) => ({
+    name,
+    category: k.category,
+    disposalApi: k.disposalApi,
+  }));
 }
 
 /** Package names the knowledge base recognises. Used by tests. */

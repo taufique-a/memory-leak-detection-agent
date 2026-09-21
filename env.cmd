@@ -1,12 +1,8 @@
 @echo off
 REM ============================================================================
-REM  Memory Leak Agent - isolated Node environment activator (cmd.exe version)
+REM  Memory Leak Agent - Node environment activator (cmd.exe version)
 REM ============================================================================
-REM  The PowerShell equivalent is env.ps1. This exists because Command Prompt
-REM  does not understand PowerShell's dot-sourcing syntax: typing
-REM  ". .\env.ps1" in cmd gives "'.' is not recognized as an internal or
-REM  external command", which looks like a broken project rather than the
-REM  wrong shell.
+REM  The PowerShell equivalent is env.ps1.
 REM
 REM  HOW TO USE (from cmd.exe):
 REM      cd /d C:\Users\Taufique\memory-leak-detection-agent
@@ -17,9 +13,11 @@ REM  NoDefaultCurrentDirectoryInExePath=1 set, a Windows security setting
 REM  that stops cmd searching the current folder for a command - so plain
 REM  "env.cmd" gives "is not recognized" even standing in this directory.
 REM
-REM  Do not confuse this with PowerShell's ". .\env.ps1", which is
-REM  dot-SPACE-dot-backslash and is a completely different mechanism
-REM  (dot-sourcing). Here the dot-backslash is just part of the path.
+REM  NODE LIVES INSIDE THIS PROJECT
+REM      The Node.js version is pinned in .node-version and kept in .node\
+REM      (gitignored). If it is not there yet, this script downloads it - about
+REM      30 MB, checked against nodejs.org's SHA-256 - so there is nothing to
+REM      install or set up anywhere else.
 REM
 REM  WHAT IT DOES NOT DO
 REM      It does not change your system PATH.
@@ -30,21 +28,26 @@ REM  Want to skip this whole file? Run run-ui.cmd instead - it does this step
 REM  and launches the guided UI in one go, from any directory.
 REM ============================================================================
 
-set "MEMORY_AGENT_NODE=C:\Users\Taufique\node-portable\node-v22.23.2-win-x64"
+set "AGENT_ROOT=%~dp0"
+set /p NODE_VERSION=<"%AGENT_ROOT%.node-version"
+set "MEMORY_AGENT_NODE=%AGENT_ROOT%.node\node-v%NODE_VERSION%-win-x64"
 
 if not exist "%MEMORY_AGENT_NODE%\node.exe" (
-    echo ERROR: portable Node not found at %MEMORY_AGENT_NODE%
-    echo Re-run the Phase 0 download step.
-    exit /b 1
+    echo   Node %NODE_VERSION% is not in this project yet - downloading it once...
+    call "%AGENT_ROOT%scripts\setup-node.cmd"
+    if errorlevel 1 (
+        echo ERROR: could not set up Node %NODE_VERSION%. See the message above.
+        exit /b 1
+    )
 )
 
 REM Only prepend once, even if this is run twice in the same window.
 echo %PATH% | find /i "%MEMORY_AGENT_NODE%" >nul
 if errorlevel 1 set "PATH=%MEMORY_AGENT_NODE%;%PATH%"
 
-REM Keep npm's cache and Playwright's browsers alongside the portable Node install.
-set "npm_config_cache=C:\Users\Taufique\node-portable\npm-cache"
-set "PLAYWRIGHT_BROWSERS_PATH=C:\Users\Taufique\node-portable\playwright-browsers"
+REM npm's cache and Playwright's browsers also stay inside the project.
+set "npm_config_cache=%AGENT_ROOT%.node\npm-cache"
+set "PLAYWRIGHT_BROWSERS_PATH=%AGENT_ROOT%.node\playwright-browsers"
 
 echo.
 echo   Memory Leak Agent environment ACTIVE (this window only)

@@ -21,6 +21,7 @@ import * as path from 'node:path';
 
 import type { Page } from 'playwright';
 
+import { LiveDevTools, type LiveDevToolsResult } from '../mcp/live';
 import { launchBrowser, type BrowserSession } from '../runtime/browser';
 import { enableMetrics, takeMemorySample, type MemorySample } from '../runtime/metrics';
 import { analyseTrend, type TrendAnalysis } from '../runtime/trend';
@@ -34,6 +35,13 @@ export interface RunOptions {
   /** Directory for screenshots. */
   artifactDir?: string;
   onProgress?: (message: string) => void;
+  /**
+   * Watch the app through Chrome DevTools MCP while it is driven: after every
+   * round, record the page address, console problems and failed requests, and
+   * read repeated problems out of them. Off by default; if DevTools MCP cannot
+   * start the run continues and says so in `devtools.unavailable`.
+   */
+  devtools?: boolean;
 }
 
 export interface ScenarioRun {
@@ -56,6 +64,8 @@ export interface ScenarioRun {
   screenshots: string[];
   /** Set when the run stopped early. */
   abortedReason?: string;
+  /** What Chrome DevTools MCP recorded live, when `devtools` was requested. */
+  devtools?: LiveDevToolsResult;
 }
 
 export class ScenarioError extends Error {
@@ -111,6 +121,7 @@ export async function runScenario(
   }
 
   const session = await launchBrowser({
+    ...(options.devtools === true ? { debugPort: 0 } : {}),
     headed: options.headed === true,
     timeoutMs,
     ...(scenario.viewport !== undefined ? { viewport: scenario.viewport } : {}),
@@ -126,6 +137,9 @@ export async function runScenario(
   let iterationsCompleted = 0;
   let abortedReason: string | undefined;
   let redirectedTo: { wanted: string; landed: string } | undefined;
+  let live: LiveDevTools | undefined;
+  let liveUnavailable: string | undefined;
+  let devtools: LiveDevToolsResult | undefined;
 
   /* ---- console capture ---- */
   const recordConsole = (type: ConsoleEntry['type'], text: string): void => {
@@ -308,6 +322,19 @@ export async function runScenario(
       }
     }
 
+    /* ---- live DevTools ---- */
+    if (options.devtools === true) {
+      const started = await LiveDevTools.start(session);
+      if (started instanceof LiveDevTools) {
+        live = started;
+        report('watching the page through Chrome DevTools MCP');
+        await live.observe(0);
+      } else {
+        liveUnavailable = started.unavailable;
+        report(`Chrome DevTools MCP is not available (${started.unavailable}); continuing without it`);
+      }
+    }
+
     /* ---- baseline ---- */
     samples.push(await takeMemorySample(session.cdp, 'baseline', 0, startedAt));
 
@@ -361,6 +388,7 @@ export async function runScenario(
         await takeMemorySample(session.cdp, `iteration ${iteration}`, iteration, startedAt),
       );
       if (iterationOk) iterationsCompleted++;
+      if (live !== undefined) await live.observe(iteration);
 
       if (iteration % 5 === 0 || iteration === scenario.iterations) {
         report(`  ${iteration}/${scenario.iterations} iterations`);
@@ -379,8 +407,14 @@ export async function runScenario(
         );
       }
     }
+    if (live !== undefined) devtools = await live.finish();
   } finally {
+    // finish() closes the MCP server on the normal path; this covers a run that threw.
+    if (live !== undefined && devtools === undefined) await live.finish().catch(() => undefined);
     await session.close();
+  }
+  if (devtools === undefined && liveUnavailable !== undefined) {
+    devtools = { serverVersion: 'unavailable', timeline: [], issues: [], unavailable: liveUnavailable };
   }
 
   const trend = analyseTrend(samples, {
@@ -402,6 +436,7 @@ export async function runScenario(
     failures: stepResults.filter((r) => !r.ok),
     screenshots,
     ...(abortedReason !== undefined ? { abortedReason } : {}),
+    ...(devtools !== undefined ? { devtools } : {}),
   };
 }
 

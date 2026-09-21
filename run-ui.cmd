@@ -6,7 +6,9 @@ REM  Run this from anywhere on ANY machine - double-click it, or type its full
 REM  path in any terminal. It does not matter what your current directory,
 REM  drive letter or Windows user account is.
 REM
-REM  It figures out Node itself, installs dependencies if they are missing,
+REM  It sets up Node itself (pinned in .node-version and kept inside this
+REM  project, in .node\ - downloaded once if it is not there), installs
+REM  dependencies if they are missing,
 REM  checks and compiles the project you are investigating, and then opens
 REM  the guided UI. The UI's own "choose your project" step lets you pick the
 REM  app to investigate, so no project path needs to be hardcoded here either.
@@ -18,13 +20,14 @@ REM    whatever "node" is already the default on this machine - v14 for
 REM    IOSense - never with the Node below. That split is intentional: the
 REM    tool's own requirements should never change how your project builds.
 REM
-REM  MACHINE-SPECIFIC SETUP (optional, for the tool's own Node - see above)
-REM    This tool needs Node >=20. If this machine's system Node already
-REM    satisfies that, you need nothing else - skip to running the script.
+REM  NOTHING TO SET UP
+REM    The Node this tool needs (>=20) lives in this project's .node\ folder.
+REM    The first run downloads it (about 30 MB, checked against nodejs.org's
+REM    SHA-256); after that there is no download. No installer, no PATH change.
 REM
-REM    If not (e.g. system Node is v14, as on Taufique's original machine),
-REM    point this script at a portable Node 20+ install and, if you want, a
-REM    default project, without editing this file (which is shared/committed):
+REM  OPTIONAL OVERRIDES
+REM    To use a different Node, or to set a default project, without editing
+REM    this file (which is shared/committed):
 REM      1. Copy run-ui.local.cmd.example to run-ui.local.cmd (next to this
 REM         file - it is gitignored, so your machine's paths never get
 REM         committed).
@@ -36,6 +39,17 @@ REM it from or what your current directory was.
 cd /d "%~dp0"
 
 if exist ".\run-ui.local.cmd" call ".\run-ui.local.cmd"
+
+REM The project's own Node, unless run-ui.local.cmd pointed somewhere else.
+set /p NODE_VERSION=<".node-version"
+set "PROJECT_NODE=%~dp0.node\node-v%NODE_VERSION%-win-x64"
+if not defined MEMORY_AGENT_NODE set "MEMORY_AGENT_NODE=%PROJECT_NODE%"
+if not exist "%PROJECT_NODE%\node.exe" if /i "%MEMORY_AGENT_NODE%"=="%PROJECT_NODE%" (
+    echo   Node %NODE_VERSION% is not in this project yet - downloading it once...
+    call "%~dp0scripts\setup-node.cmd"
+)
+if not defined MEMORY_AGENT_NPM_CACHE set "MEMORY_AGENT_NPM_CACHE=%~dp0.node\npm-cache"
+if not defined MEMORY_AGENT_PLAYWRIGHT_PATH set "MEMORY_AGENT_PLAYWRIGHT_PATH=%~dp0.node\playwright-browsers"
 
 if defined MEMORY_AGENT_NODE (
     if exist "%MEMORY_AGENT_NODE%\node.exe" (
@@ -51,9 +65,8 @@ if defined MEMORY_AGENT_PLAYWRIGHT_PATH set "PLAYWRIGHT_BROWSERS_PATH=%MEMORY_AG
 
 where node >nul 2>nul
 if errorlevel 1 (
-    echo ERROR: no "node" found on PATH, and no working MEMORY_AGENT_NODE override.
-    echo Install Node 20+, or see run-ui.local.cmd.example for pointing this
-    echo script at a portable Node install.
+    echo ERROR: the project's Node could not be set up ^(see the message above^).
+    echo Check the internet connection and run scripts\setup-node.cmd again.
     pause
     exit /b 1
 )

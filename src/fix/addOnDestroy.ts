@@ -135,7 +135,7 @@ export function addOnDestroyWithUnsubscribe(
     edits.push({
       start: end,
       end,
-      text: `\nimport { Subscription } from 'rxjs';`,
+      text: newImportLine(sourceFile, 'Subscription', 'rxjs'),
     });
   } else {
     const rxjsEdit = ensureNamedImport(rxjsImport, 'Subscription');
@@ -259,6 +259,58 @@ export function findImport(sourceFile: ts.SourceFile, moduleName: string): ts.Im
  * cannot reason about - half-fixing a component is worse than not touching
  * it, because the remaining half still leaks and now looks handled.
  */
+/** Quote and semicolon style of a file, read from its own imports. */
+export function importStyle(sourceFile: ts.SourceFile): { quote: string; semi: string } {
+  for (const stmt of sourceFile.statements) {
+    if (ts.isImportDeclaration(stmt)) {
+      const text = stmt.getText(sourceFile);
+      return { quote: text.includes('from "') ? '"' : "'", semi: text.endsWith(';') ? ';' : '' };
+    }
+  }
+  return { quote: "'", semi: ';' };
+}
+
+/** A new import line written the way this file writes its imports. */
+export function newImportLine(sourceFile: ts.SourceFile, names: string, from: string): string {
+  const { quote, semi } = importStyle(sourceFile);
+  return `\nimport { ${names} } from ${quote}${from}${quote}${semi}`;
+}
+
+/** The class's own destroy signal (`destroy$ = new Subject()`), if it already has one. */
+export function findDestroySubject(target: ts.ClassDeclaration): string | undefined {
+  for (const member of target.members) {
+    if (
+      ts.isPropertyDeclaration(member) &&
+      ts.isIdentifier(member.name) &&
+      /destroy|unsubscribe|stop\$/i.test(member.name.text) &&
+      member.initializer !== undefined &&
+      ts.isNewExpression(member.initializer) &&
+      ts.isIdentifier(member.initializer.expression) &&
+      member.initializer.expression.text === 'Subject'
+    ) {
+      return member.name.text;
+    }
+  }
+  return undefined;
+}
+
+/** The class's own `x = new Subscription()` field, if it already has one. */
+export function findSubscriptionField(target: ts.ClassDeclaration): string | undefined {
+  for (const member of target.members) {
+    if (
+      ts.isPropertyDeclaration(member) &&
+      ts.isIdentifier(member.name) &&
+      member.initializer !== undefined &&
+      ts.isNewExpression(member.initializer) &&
+      ts.isIdentifier(member.initializer.expression) &&
+      member.initializer.expression.text === 'Subscription'
+    ) {
+      return member.name.text;
+    }
+  }
+  return undefined;
+}
+
 export function collectSubscribeCalls(
   target: ts.ClassDeclaration,
   sourceFile: ts.SourceFile,

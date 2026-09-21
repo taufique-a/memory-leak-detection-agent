@@ -15,6 +15,7 @@ import * as ts from 'typescript';
 import { analyzeProject } from '../src/analyzer';
 import { addCleanup } from '../src/fix/addCleanup';
 import { catalogFile, decideAllSubscriptions, emptyKnowledge, type ProjectKnowledge } from '../src/knowledge/lifetime';
+import { ConventionCounter } from '../src/knowledge/conventions';
 import { readProjectProfile } from '../src/knowledge/projectProfile';
 
 const SERVICES = `
@@ -192,5 +193,88 @@ describe('library rules follow package.json', () => {
   });
   it('gives no opinion when the library is not a dependency', () => {
     expect(decide(src, knowledgeFor(SERVICES, MODULE, src))).toEqual([]);
+  });
+});
+
+describe('the fixer follows the project\'s own way of writing cleanup', () => {
+  const style = (over: Partial<ProjectKnowledge['conventions']> = {}) => {
+    const k = knowledgeFor(SERVICES, MODULE);
+    k.conventions = { ...k.conventions, ...over };
+    return k;
+  };
+  const doubleQuoted = `import { Component, OnInit } from "@angular/core"\n` + comp('ngOnInit() { this.devices.devices$.subscribe(() => {}) }');
+
+  it('names the new collector the way the project does', () => {
+    const src = `import { Component } from '@angular/core';\n` + comp('ngOnInit() { this.devices.devices$.subscribe(() => {}); }');
+    const r = addCleanup(src, 'c.ts', 'FooComponent', style({ subscriptionField: 'subs' }));
+    if ('reason' in r) throw new Error(r.reason);
+    expect(r.newContent).toContain('private readonly subs = new Subscription()');
+    expect(r.newContent).toContain('this.subs.unsubscribe();');
+  });
+  it('writes the new import with the file\'s own quotes and no semicolon', () => {
+    const r = addCleanup(doubleQuoted, 'c.ts', 'FooComponent', style());
+    if ('reason' in r) throw new Error(r.reason);
+    expect(r.newContent).toContain('import { Subscription } from "rxjs"\n');
+  });
+  it('reuses a Subscription the class already has instead of adding a second one', () => {
+    const src =
+      `import { Component, OnDestroy } from '@angular/core';\nimport { Subscription } from 'rxjs';\n` +
+      `@Component({ selector: 'x', template: '' })\nexport class FooComponent implements OnDestroy {\n` +
+      `  subs = new Subscription();\n  constructor(private devices: DevicesService) {}\n` +
+      `  ngOnInit() { this.devices.devices$.subscribe(() => {}); }\n` +
+      `  ngOnDestroy() { this.subs.unsubscribe(); }\n}`;
+    const r = addCleanup(src, 'c.ts', 'FooComponent', knowledgeFor(SERVICES, MODULE, src));
+    if ('reason' in r) throw new Error(r.reason);
+    expect(r.newContent).toContain('this.subs.add(this.devices.devices$.subscribe');
+    expect(r.newContent.match(/new Subscription\(\)/g)).toHaveLength(1);
+    expect(r.newContent.match(/subs\.unsubscribe\(\)/g)).toHaveLength(1);
+  });
+  it('learns the project\'s habits from its source', () => {
+    const c = new ConventionCounter();
+    c.add(`import { A } from "a"\nsubs = new Subscription();\nx.pipe(takeUntil(this.destroy$))`);
+    c.add(`import { B } from "b"\nprivate subs: Subscription = new Subscription();\ny.pipe(takeUntil(this.destroy$))`);
+    c.add(`import { C } from "c"\nsubs = new Subscription();`);
+    expect(c.result()).toMatchObject({ subscriptionField: 'subs', destroySubject: 'destroy$', quote: '"', semicolons: false, cleanupStyle: 'subscription-add' });
+  });
+});
+
+describe('a project that writes takeUntil(this.destroy$) gets exactly that', () => {
+  const takeUntilProject = (src: string) => {
+    const k = knowledgeFor(SERVICES, MODULE, src);
+    k.conventions = { ...k.conventions, cleanupStyle: 'take-until', destroySubject: 'destroy$' };
+    return k;
+  };
+  const parses = (code: string): boolean =>
+    (ts.transpileModule(code, { reportDiagnostics: true, compilerOptions: { experimentalDecorators: true } }).diagnostics ?? []).length === 0;
+
+  it('adds the destroy signal, pipes takeUntil before subscribe, and fires it in ngOnDestroy', () => {
+    const src = `import { Component } from '@angular/core';\nimport { map } from 'rxjs/operators';\n` + comp('ngOnInit() { this.devices.devices$.pipe(map((d) => d)).subscribe(() => {}); }');
+    const r = addCleanup(src, 'c.ts', 'FooComponent', takeUntilProject(src));
+    if ('reason' in r) throw new Error(r.reason);
+    expect(r.newContent).toContain('.pipe(map((d) => d)).pipe(takeUntil(this.destroy$)).subscribe');
+    expect(r.newContent).toContain('private readonly destroy$ = new Subject<void>();');
+    expect(r.newContent).toContain("import { map, takeUntil } from 'rxjs/operators';");
+    expect(r.newContent).toContain('this.destroy$.next();');
+    expect(r.newContent).toContain('this.destroy$.complete();');
+    expect(parses(r.newContent)).toBe(true);
+  });
+  it('reuses the class\'s own destroy$ and does not fire it twice', () => {
+    const src =
+      `import { Component, OnDestroy } from '@angular/core';\nimport { Subject } from 'rxjs';\nimport { takeUntil } from 'rxjs/operators';\n` +
+      `@Component({ selector: 'x', template: '' })\nexport class FooComponent implements OnDestroy {\n` +
+      `  destroy$ = new Subject<void>();\n  constructor(private devices: DevicesService) {}\n` +
+      `  ngOnInit() { this.devices.devices$.subscribe(() => {}); }\n` +
+      `  ngOnDestroy() { this.destroy$.next(); this.destroy$.complete(); }\n}`;
+    const r = addCleanup(src, 'c.ts', 'FooComponent', takeUntilProject(src));
+    if ('reason' in r) throw new Error(r.reason);
+    expect(r.newContent).toContain('this.devices.devices$.pipe(takeUntil(this.destroy$)).subscribe');
+    expect(r.newContent.match(/new Subject/g)).toHaveLength(1);
+    expect(r.newContent.match(/destroy\$\.next\(\)/g)).toHaveLength(1);
+    expect(parses(r.newContent)).toBe(true);
+  });
+  it('still leaves an ActivatedRoute subscription alone in this mode', () => {
+    const src = `import { Component } from '@angular/core';\n` + comp('ngOnInit() { this.route.params.subscribe(() => {}); }');
+    const r = addCleanup(src, 'c.ts', 'FooComponent', takeUntilProject(src));
+    expect('reason' in r && r.reason.includes('intentionally left active')).toBe(true);
   });
 });

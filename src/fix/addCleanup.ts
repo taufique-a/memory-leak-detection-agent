@@ -33,6 +33,9 @@ import {
   applyEdits,
   collectSubscribeCalls,
   ensureImplements,
+  findDestroySubject,
+  findSubscriptionField,
+  newImportLine,
   ensureNamedImport,
   findClass,
   findImport,
@@ -122,24 +125,85 @@ export function addCleanup(
       [...new Set(subs.kept.map((k) => k.reason))].join(' ');
   } else if (subs.calls.length > 0) {
     for (const k of subs.kept) notes.push(`Line ${k.line} was left as it is: ${k.reason}`);
-    const field = uniqueMemberName2(takenNames, 'subscriptions');
-    const rxjsImport = findImport(sourceFile, 'rxjs');
-    if (rxjsImport === undefined) {
-      const end = angularImport.getEnd();
-      edits.push({ start: end, end, text: `\nimport { Subscription } from 'rxjs';` });
-    } else {
-      const rxjsEdit = ensureNamedImport(rxjsImport, 'Subscription');
-      if (rxjsEdit !== undefined) edits.push(rxjsEdit);
+    /**
+     * Follow the class's own pattern first, then the project's.
+     *
+     * A class that already keeps a `x = new Subscription()` gets its new
+     * subscriptions added to THAT (adding a second collector next to it is
+     * how generated code gets noticed and reverted). Otherwise the field is
+     * named the way the rest of the project names it (IOSense: "subs").
+     */
+    const existingField = findSubscriptionField(target);
+    /**
+     * A project that mostly writes `takeUntil(this.destroy$)` gets exactly
+     * that (IOSense: 780 places), not a second style. A class that already
+     * keeps its own Subscription collector keeps using it.
+     */
+    const conv = knowledge?.conventions;
+    const destroyName = conv?.destroySubject;
+    const takeUntilMode = existingField === undefined && conv?.cleanupStyle === 'take-until' && destroyName !== undefined;
+    const existingDestroy = takeUntilMode ? findDestroySubject(target) : undefined;
+    const field = takeUntilMode
+      ? (existingDestroy ?? uniqueMemberName2(takenNames, destroyName as string))
+      : (existingField ?? uniqueMemberName2(takenNames, conv?.subscriptionField ?? 'subscriptions'));
+    const rxjsMajor = knowledge?.profile.rxjsMajor;
+    // RxJS 5 has no root 'rxjs' export of Subscription; 6 and 7 do.
+    const rxjsModule = rxjsMajor !== undefined && rxjsMajor < 6 ? 'rxjs/Subscription' : 'rxjs';
+    const rxjsImport = findImport(sourceFile, rxjsModule);
+    if (takeUntilMode) {
+      if (existingDestroy === undefined) {
+        const subjectImport = findImport(sourceFile, 'rxjs');
+        if (subjectImport === undefined) {
+          const end = angularImport.getEnd();
+          edits.push({ start: end, end, text: newImportLine(sourceFile, 'Subject', 'rxjs') });
+        } else {
+          const e = ensureNamedImport(subjectImport, 'Subject');
+          if (e !== undefined) edits.push(e);
+        }
+        fieldLines.push(
+          `${memberIndent}/** Fires when the component is destroyed; subscriptions wait on it. */`,
+          `${memberIndent}private readonly ${field} = new Subject<void>();`,
+        );
+      }
+      const operatorsImport = findImport(sourceFile, 'rxjs/operators');
+      if (operatorsImport === undefined) {
+        const end = angularImport.getEnd();
+        edits.push({ start: end, end, text: newImportLine(sourceFile, 'takeUntil', 'rxjs/operators') });
+      } else {
+        const e = ensureNamedImport(operatorsImport, 'takeUntil');
+        if (e !== undefined) edits.push(e);
+      }
+    } else if (existingField === undefined) {
+      if (rxjsImport === undefined) {
+        const end = angularImport.getEnd();
+        edits.push({ start: end, end, text: newImportLine(sourceFile, 'Subscription', rxjsModule) });
+      } else {
+        const rxjsEdit = ensureNamedImport(rxjsImport, 'Subscription');
+        if (rxjsEdit !== undefined) edits.push(rxjsEdit);
+      }
+      fieldLines.push(
+        `${memberIndent}/** Everything this class subscribes to, released in ngOnDestroy. */`,
+        `${memberIndent}private readonly ${field} = new Subscription();`,
+      );
     }
-    fieldLines.push(
-      `${memberIndent}/** Everything this class subscribes to, released in ngOnDestroy. */`,
-      `${memberIndent}private readonly ${field} = new Subscription();`,
-    );
     for (const call of subs.calls) {
-      edits.push({ start: call.getStart(sourceFile), end: call.getStart(sourceFile), text: `this.${field}.add(` });
-      edits.push({ start: call.getEnd(), end: call.getEnd(), text: ')' });
+      if (takeUntilMode) {
+        // source$.subscribe(...)  ->  source$.pipe(takeUntil(this.destroy$)).subscribe(...)
+        const callee = call.expression as ts.PropertyAccessExpression;
+        const at = callee.expression.getEnd();
+        edits.push({ start: at, end: at, text: `.pipe(takeUntil(this.${field}))` });
+      } else {
+        edits.push({ start: call.getStart(sourceFile), end: call.getStart(sourceFile), text: `this.${field}.add(` });
+        edits.push({ start: call.getEnd(), end: call.getEnd(), text: ')' });
+      }
     }
-    statements.push(`this.${field}.unsubscribe();`);
+    // An existing field is usually already released in the existing ngOnDestroy.
+    if (takeUntilMode) {
+      if (!new RegExp(`\\b${escapeRegExp(field)}\\.next\\(`).test(classText)) statements.push(`this.${field}.next();`);
+      if (!new RegExp(`\\b${escapeRegExp(field)}\\.complete\\(`).test(classText)) statements.push(`this.${field}.complete();`);
+    } else if (existingField === undefined || !new RegExp(`\\b${escapeRegExp(existingField)}\\.unsubscribe\\(`).test(classText)) {
+      statements.push(`this.${field}.unsubscribe();`);
+    }
     wrapped['rxjs.subscription'] = subs.calls.length;
     if (subs.httpLike > 0) {
       notes.push(
@@ -260,7 +324,8 @@ export function addCleanup(
   }
 
   /* ---- assemble ---- */
-  if (statements.length === 0) {
+  // Wrapping calls into an existing, already-released collector needs no new teardown line.
+  if (statements.length === 0 && Object.keys(wrapped).length === 0) {
     const reasons = Object.values(skipped);
     return {
       reason:
@@ -284,7 +349,9 @@ export function addCleanup(
     });
   }
 
-  if (existing !== undefined && ts.isMethodDeclaration(existing) && existing.body !== undefined) {
+  if (statements.length === 0) {
+    // Only edits to existing code: the class already releases its collector.
+  } else if (existing !== undefined && ts.isMethodDeclaration(existing) && existing.body !== undefined) {
     const body = existing.body;
     const firstStatement = body.statements[0];
     const bodyIndent =
@@ -339,6 +406,11 @@ export function addCleanup(
 /* ------------------------------------------------------------------ */
 /* Shared helpers                                                      */
 /* ------------------------------------------------------------------ */
+
+/** Member names can contain `$` (destroy$), which is a regex anchor. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 function uniqueMemberName2(taken: Set<string>, preferred: string): string {
   let name = preferred;

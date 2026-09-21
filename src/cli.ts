@@ -15,6 +15,8 @@ import { runCorrelate } from './commands/correlate';
 import { runDoctor } from './commands/doctor';
 import { runFix } from './commands/fix';
 import { runCompile } from './commands/compile';
+import { runDeps } from './commands/deps';
+import { runDevTools } from './commands/devtools';
 import { runServe } from './commands/serve';
 import { runVerify } from './commands/verify';
 import { runHeap } from './commands/heap';
@@ -55,6 +57,8 @@ COMMANDS
   ${'report <project>'.padEnd(28)} Generate a shareable investigation report
   ${'doctor'.padEnd(28)} Check the environment is ready for runtime work
   ${'selftest'.padEnd(28)} Prove memory measurement works, on a known leak
+  ${'deps <project>'.padEnd(28)} Read package.json: which libraries change how leaks are judged
+  ${'devtools'.padEnd(28)} Prove Chrome DevTools MCP works (heap, console, network), live
   ${'scenario <sub>'.padEnd(28)} init | login | validate | run | demo
   ${'routes <sub>'.padEnd(28)} list | sweep - check cleanup on every route, not just one
   ${'investigate <project>'.padEnd(28)} Static + runtime in one investigation report
@@ -258,6 +262,14 @@ export function run(argv: string[]): number | Promise<number> {
 
   if (first === 'compile') {
     return runCompile(args.slice(1));
+  }
+
+  if (first === 'deps') {
+    return runDeps(args.slice(1));
+  }
+
+  if (first === 'devtools') {
+    return runDevTools(args.slice(1));
   }
 
   if (first === 'serve') {

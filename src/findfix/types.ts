@@ -105,6 +105,19 @@ export interface FindFixResult {
   /** Suspicious code the measurement did not implicate. Shown, not fixed. */
   watchList: FindFixIssue[];
   scopeSummary: string[];
+  /** What Chrome DevTools MCP recorded during the run, when it was connected. */
+  devtools?: {
+    serverVersion: string;
+    snapshotSource: string;
+    consoleProblems: string[];
+    failedRequests: string[];
+    /** Problems read from what DevTools recorded round by round (see mcp/live.ts). */
+    runtimeIssues: Array<{ severity: 'high' | 'medium' | 'low'; title: string; detail: string; rounds: number[] }>;
+    /** How many navigation rounds DevTools was watching. */
+    roundsWatched: number;
+    /** Why DevTools MCP could not be used, when it could not. */
+    unavailable?: string;
+  };
   /** Findings already fixed in earlier rounds of this session. */
   excludedFixed: string[];
   warnings: string[];

@@ -47,3 +47,6 @@ Desktop.ini
 # project path). Every machine's values differ, so this never gets committed -
 # see run-ui.local.cmd.example.
 run-ui.local.cmd
+
+# Node.js kept inside the project (see scripts/setup-node.ps1, .node-version)
+.node/

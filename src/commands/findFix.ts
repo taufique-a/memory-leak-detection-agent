@@ -159,7 +159,7 @@ async function find(dir: string, request: FindFixRequest, scenario: Scenario): P
   stage('navigate', 'start', `Going ${request.targetRoute} → ${request.controlRoute} and back, ${request.iterations} times`);
   let run: ScenarioRun;
   try {
-    run = await runScenario(scenario, { onProgress: say });
+    run = await runScenario(scenario, { onProgress: say, devtools: true });
   } catch (err) {
     stage('navigate', 'fail', (err as Error).message.split('\n')[0] ?? 'the navigation failed');
     console.log((err as Error).message);
@@ -230,6 +230,24 @@ async function find(dir: string, request: FindFixRequest, scenario: Scenario): P
     issues,
     watchList,
     scopeSummary: request.scopeNotes,
+    ...(heap?.devtools !== undefined || run.devtools !== undefined
+      ? {
+          devtools: {
+            serverVersion: heap?.devtools?.serverVersion ?? run.devtools?.serverVersion ?? 'unknown',
+            snapshotSource: heap?.after.source ?? 'none',
+            consoleProblems: heap?.devtools?.consoleProblems ?? [],
+            failedRequests: heap?.devtools?.failedRequests ?? [],
+            runtimeIssues: (run.devtools?.issues ?? []).map((i) => ({
+              severity: i.severity,
+              title: i.title,
+              detail: i.detail,
+              rounds: i.iterations.filter((n) => n >= 1),
+            })),
+            roundsWatched: (run.devtools?.timeline ?? []).filter((t) => t.iteration >= 1).length,
+            ...(run.devtools?.unavailable !== undefined ? { unavailable: run.devtools.unavailable } : {}),
+          },
+        }
+      : {}),
     excludedFixed: [...exclude],
     warnings,
   };

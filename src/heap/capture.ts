@@ -1,18 +1,18 @@
 /**
- * Heap snapshot capture over the Chrome DevTools Protocol.
+ * Heap snapshot capture: Chrome DevTools MCP first, the raw protocol as backup.
  *
- * WHY CDP AND NOT chrome-devtools-mcp
- * -----------------------------------
- * Phase 7 verified that chrome-devtools-mcp exposes 11 heap tools, and the
- * original plan was to drive them from here. On closer inspection that is
- * the wrong choice for a pipeline: MCP tools return TEXT formatted for a
- * language model to read, so a program consuming them would be
- * screen-scraping prose that can change between versions.
+ * TWO CHANNELS, ONE FILE FORMAT
+ * ------------------------------
+ * `captureHeapSnapshotViaMcp` asks the Chrome DevTools MCP server to take
+ * the snapshot (`take_heapsnapshot`); `captureHeapSnapshot` streams it over
+ * the raw DevTools protocol. Both produce the same .heapsnapshot file, which
+ * we parse ourselves for shallow and retained size - the MCP tools return
+ * prose for a model to read, but the snapshot FILE is structured, so nothing
+ * is scraped. A live check (`memory-agent devtools`) proves the two channels
+ * agree on counts, shallow size and retained size.
  *
- * CDP hands us the raw .heapsnapshot instead. We parse it ourselves and get
- * structured data with no intermediate formatting. The MCP server remains
- * the better tool for a human or an AI investigating interactively - that is
- * simply a different job from this one.
+ * investigateHeap tries MCP and falls back to the raw protocol with the
+ * reason recorded, so a snapshot never silently comes from somewhere else.
  *
  * SNAPSHOTS ARE LARGE
  * -------------------
@@ -29,6 +29,7 @@ import * as path from 'node:path';
 
 import type { CDPSession } from 'playwright';
 
+import type { DevToolsMcp } from '../mcp/devtools';
 import { forceGarbageCollection } from '../runtime/metrics';
 
 export interface CaptureOptions {
@@ -58,6 +59,8 @@ export interface CapturedSnapshot {
   afterForcedGc: boolean;
   /** Number of CDP chunks received, useful when diagnosing a truncated file. */
   chunks: number;
+  /** Which channel took it: Chrome DevTools MCP, or the raw protocol. */
+  source: 'chrome-devtools-mcp' | 'cdp';
 }
 
 /**
@@ -176,7 +179,53 @@ export async function captureHeapSnapshot(
     durationMs: Date.now() - started,
     afterForcedGc,
     chunks,
+    source: 'cdp',
   };
+}
+
+/**
+ * Take the snapshot THROUGH Chrome DevTools MCP (`take_heapsnapshot`).
+ *
+ * Same guarantees as the raw path: garbage is collected first, the file is
+ * written under a .part name and only renamed once it ends correctly. The
+ * MCP server writes the file itself, so `chunks` is 0.
+ */
+export async function captureHeapSnapshotViaMcp(
+  mcp: DevToolsMcp,
+  cdp: CDPSession,
+  pageUrl: string,
+  options: CaptureOptions,
+): Promise<CapturedSnapshot> {
+  const started = Date.now();
+  const report = options.onProgress ?? ((): void => {});
+  fs.mkdirSync(options.outputDir, { recursive: true });
+  const file = path.join(options.outputDir, `${options.name}.heapsnapshot`);
+  // The MCP server insists on the .heapsnapshot extension and rewrites any
+  // other one, so the in-progress name has to end with it too.
+  const partial = path.join(options.outputDir, `${options.name}.partial.heapsnapshot`);
+
+  let afterForcedGc = false;
+  if (options.forceGc ?? true) {
+    report('forcing garbage collection before snapshot');
+    afterForcedGc = await forceGarbageCollection(cdp);
+  }
+
+  report('capturing heap snapshot through Chrome DevTools MCP');
+  await mcp.selectPageByUrl(pageUrl);
+  fs.rmSync(partial, { force: true });
+  await mcp.takeHeapSnapshot(partial);
+
+  const bytes = fs.statSync(partial).size;
+  if (!endsWithClosingBrace(partial, bytes)) {
+    throw new Error(
+      `The snapshot Chrome DevTools MCP wrote does not end correctly (${(bytes / 1048576).toFixed(0)} MB), ` +
+        `so it was left as ${path.basename(partial)} instead of being used.`,
+    );
+  }
+  fs.rmSync(file, { force: true });
+  fs.renameSync(partial, file);
+
+  return { file, bytes, durationMs: Date.now() - started, afterForcedGc, chunks: 0, source: 'chrome-devtools-mcp' };
 }
 
 /** Did the stream finish? V8 always closes the top-level object. */

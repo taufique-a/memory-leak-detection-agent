@@ -1556,6 +1556,23 @@ function renderRound(r) {
   }
   html += '<details style="margin-top:.5rem"><summary class="sub">What was checked</summary><ul class="state">' +
     r.scopeSummary.map((s) => '<li>' + esc(s) + '</li>').join('') + '</ul></details>';
+  if (r.devtools && r.devtools.runtimeIssues && r.devtools.runtimeIssues.length) {
+    html += '<div class="banner" style="margin-top:.6rem"><strong>Chrome DevTools also found ' + r.devtools.runtimeIssues.length +
+      ' problem' + (r.devtools.runtimeIssues.length === 1 ? '' : 's') + ' while watching the page</strong><ul class="state">' +
+      r.devtools.runtimeIssues.map(function (i) {
+        return '<li>' + esc(i.title) + ' <span class="sub">(' + esc(i.severity) + (i.rounds.length ? ', rounds ' + i.rounds.join(', ') : '') + ')</span><br><span class="sub">' + esc(i.detail) + '</span></li>';
+      }).join('') + '</ul></div>';
+  }
+  if (r.devtools && r.devtools.unavailable) {
+    html += '<div class="sub" style="margin-top:.4rem">Chrome DevTools MCP could not be used for the navigation: ' + esc(r.devtools.unavailable) + '</div>';
+  }
+  if (r.devtools) {
+    html += '<details style="margin-top:.5rem"><summary class="sub">Chrome DevTools (MCP ' + esc(r.devtools.serverVersion) + ', watched ' + (r.devtools.roundsWatched || 0) + ' rounds)</summary><ul class="state">' +
+      '<li>Heap snapshots taken through: ' + esc(r.devtools.snapshotSource === 'chrome-devtools-mcp' ? 'Chrome DevTools MCP' : 'the raw DevTools protocol') + '</li>' +
+      '<li>Console errors and warnings: ' + (r.devtools.consoleProblems.length ? '<br>' + r.devtools.consoleProblems.map(esc).join('<br>') : 'none') + '</li>' +
+      '<li>Failed requests: ' + (r.devtools.failedRequests.length ? '<br>' + r.devtools.failedRequests.map(esc).join('<br>') : 'none') + '</li>' +
+      '</ul></details>';
+  }
   if (r.warnings.length) html += '<div class="sub" style="margin-top:.4rem">' + r.warnings.map(esc).join('<br>') + '</div>';
   html += '</div>';
 

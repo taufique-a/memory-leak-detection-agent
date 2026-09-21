@@ -12,25 +12,34 @@ needs cleanup, how a fix is proven), read [docs/HOW_IT_WORKS.md](docs/HOW_IT_WOR
 ## 0. The fastest way — run-ui.cmd
 
 Double-click `run-ui.cmd` in this folder, or type its full path in any terminal
-from any directory, on any machine. It works out which Node to use, installs
-dependencies the first time (`node_modules` missing triggers an automatic
-`npm install`), and opens the guided UI — no `cd`, no dot-sourcing, no manual
-setup on a machine that has never run this before.
+from any directory, on any machine. It sets up Node 22 **inside this project**
+(see below), installs dependencies the first time (`node_modules` missing
+triggers an automatic `npm install`), and opens the guided UI — no `cd`, no
+dot-sourcing, no setup anywhere else.
 
-If the machine's default `node` is already v20+, that's all there is to it. If
-not (this machine's system Node is v14, for IOSense's own build), copy
-`run-ui.local.cmd.example` to `run-ui.local.cmd` (gitignored — every machine's
-copy stays local) and set `MEMORY_AGENT_NODE` to a portable Node 20+ install.
-The same file can set `MEMORY_AGENT_PROJECT` to skip the guided UI's "choose
-your project" step; leave it unset to pick the project inside the UI instead.
+**Node 22 lives in this folder.** The version is pinned in `.node-version` and
+kept in `.node\` (gitignored, about 100 MB). The first run downloads it — about
+30 MB from nodejs.org, checked against the SHA-256 nodejs.org publishes before
+it is unpacked (`scripts\setup-node.ps1`). After that there is no download. It
+is not installed anywhere else: no installer, no PATH change, no registry. Your
+system Node 14 (IOSense's own build) is untouched. To fetch it by hand, or
+after deleting `.node\`, run `scripts\setup-node.cmd`. To move to a newer Node,
+edit `.node-version` and run it again. npm's cache and Playwright's browsers
+also stay inside `.node\`.
+
+Optionally, copy `run-ui.local.cmd.example` to `run-ui.local.cmd` (gitignored —
+every machine's copy stays local) to set `MEMORY_AGENT_PROJECT` and skip the
+guided UI's "choose your project" step; leave it unset to pick the project
+inside the UI. The same file can point `MEMORY_AGENT_NODE` at a different Node
+if you ever want to override the project's own.
 
 The rest of this section explains what the script is doing under the hood,
 and how to do it by hand if you need to.
 
 ## 1. Activate the environment — do this first, every time
 
-This project runs on a **portable Node 22** kept outside the system install.
-Your system Node 14 (which IOSense builds with) is never touched. Activation
+This project runs on its **own Node 22**, kept in this folder (`.node\`, see
+section 0) and downloaded automatically if it is missing. Your system Node 14 (which IOSense builds with) is never touched. Activation
 lasts **only for the window you run it in**; close the window and you are back
 to Node 14.
 
@@ -440,6 +449,28 @@ only thing that would catch it*. Exit `0` = trustworthy.
 ```powershell
 npm run dev -- selftest --headed        # watch it happen in a real window
 ```
+
+### Chrome DevTools MCP and dependencies
+
+```powershell
+npm run dev -- devtools                                  # live proof: heap, console, network via DevTools MCP
+npm run dev -- deps "C:\Users\Taufique\IOSense"        # read package.json: which libraries change the verdicts
+```
+
+`devtools` opens Chrome on a page with a known answer, attaches the
+`chrome-devtools-mcp` server and checks that a snapshot taken through MCP matches
+one taken over raw CDP (object count, shallow size, retained size), and that it
+reads the console, failed requests and page state. Exit `0` = working. In Find & Fix
+the navigation run is also watched through DevTools MCP round by round, and repeated
+console errors, failing requests and resource-exhaustion warnings are listed under
+"Chrome DevTools also found…". Real
+investigations use MCP for snapshots automatically and fall back to raw CDP,
+with a warning, if it cannot start.
+
+`deps` lists the installed versions that decide behaviour (Angular, RxJS…),
+how they change what the agent does, the resource libraries it has teardown
+rules for, resource-looking packages it has none for, and packages declared but
+not installed.
 
 ### Static analysis — no browser, no login, read-only
 
@@ -981,6 +1012,8 @@ src/
   correlate/   joins static findings, runtime trend and heap evidence
   sweep/       route-by-route cleanup checks
 docs/          HOW_IT_WORKS.md - plain-English guide to the agent
+scripts/       setup-node.ps1 / .cmd - fetch the pinned Node into .node\
+.node/         Node 22, npm cache, Playwright browsers (gitignored; version in .node-version)
 tests/         about 850 tests in 28 files, mirrors src/
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
@@ -996,8 +1029,8 @@ Two constraints worth knowing before you edit:
   A test asserts the major version is below 7. Never run `npm install typescript`
   unpinned.
 - **Never install globally.** `env.ps1` / `env.cmd` point the npm cache and
-  Playwright browsers next to the portable Node, under
-  `C:\Users\Taufique\node-portable\` (`npm-cache`, `playwright-browsers`). Free disk
+  Playwright browsers inside the project, under `.node\` (`npm-cache`,
+  `playwright-browsers`), so nothing lives outside this folder. Free disk
   space is limited, and heap snapshots are large — clear `artifacts/` when done.
 
 ---
@@ -1006,7 +1039,7 @@ Two constraints worth knowing before you edit:
 
 | Phase | Status | Delivered |
 |---|---|---|
-| 0 Environment | ✅ | portable Node 22, both shell activators |
+| 0 Environment | ✅ | Node 22 kept in the project (`.node\`, auto-downloaded and verified), both shell activators |
 | 1 Foundation | ✅ | TypeScript + Jest, TS pinned to 5.9.3 |
 | 2 Project scanner | ✅ | `scan` |
 | 3 AST analyzer | ✅ | `analyze` |

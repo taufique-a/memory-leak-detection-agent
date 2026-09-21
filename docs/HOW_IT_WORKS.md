@@ -46,13 +46,22 @@ The UI server only listens on your own machine, needs a token, and never accepts
 
 ## 3. How it connects to Chrome DevTools (and the DevTools MCP)
 
-It launches your installed Google Chrome through Playwright (`src/runtime/browser.ts`) and opens a **Chrome DevTools Protocol (CDP) session** — the same protocol the DevTools panel uses. Through it the agent:
+The agent launches your installed Google Chrome through Playwright (`src/runtime/browser.ts`) and uses **two channels into that one browser**:
 
-- forces garbage collection (`HeapProfiler.collectGarbage`),
-- reads memory numbers (`Performance.getMetrics`),
-- takes heap snapshots (`HeapProfiler.takeHeapSnapshot`).
+1. **Chrome DevTools Protocol (CDP)**, the raw protocol the DevTools panel uses. It drives the run and reads memory: forces garbage collection (`HeapProfiler.collectGarbage`) and reads numbers after every round (`Performance.getMetrics`).
+2. **Chrome DevTools MCP** (`chrome-devtools-mcp`, Google's MCP server). The agent starts it, speaks MCP to it with the official SDK (`src/mcp/devtools.ts`), and attaches it to the same Chrome through its loopback debugging port. Through it the agent:
+   - takes the **heap snapshots** (`take_heapsnapshot`) used for shallow size, retained size and retaining paths,
+   - reads the page's **console errors/warnings** and **failed network requests** during the run, which appear in the Find & Fix result under "Chrome DevTools" and in `memory-agent heap`,
+   - **watches the navigation live** (`src/mcp/live.ts`): after every round trip it records the address DevTools reports, the console errors/warnings and the failed requests first seen in that round. From that timeline it reports real problems, each with the rounds it happened in: an error that repeats on every visit, a request that fails on every visit, a problem that only starts after several visits, and the browser running out of something (for example "Too many active WebGL contexts"). These appear in Find & Fix as "Chrome DevTools also found N problems", next to the memory issues,
+   - can run a function in the page and list the open tabs.
 
-**About the Chrome DevTools MCP server:** the agent does *not* call it during a run. The MCP server returns text written for a language model, and a pipeline needs exact data. So the agent talks CDP directly and gets the raw snapshot file (reason written at the top of `src/heap/capture.ts`). The MCP server is still useful for a person exploring by hand; it does the same job with different plumbing.
+Playwright still performs the clicks and page loads, because it needs stable selectors and waits; DevTools MCP is a second pair of eyes on the same tab, so the data it reports is the data Chrome itself recorded.
+
+If the MCP server cannot start, or a snapshot through it fails, the agent takes that snapshot over CDP instead and **says so in the warnings**, so a snapshot never silently comes from somewhere else. Both channels write the same `.heapsnapshot` file, which the agent parses itself; nothing is scraped from prose.
+
+**Proof it works, not just configured:** `memory-agent devtools` launches Chrome on a page with a known answer (200 planted objects), attaches the MCP server, and checks that the snapshot taken through MCP contains exactly those objects, that shallow and retained size match a raw-CDP snapshot of the same page, and that console, network and page evaluation are read correctly. `memory-agent doctor` also reports whether the package is installed.
+
+Two details found by running it live: the server only writes files inside folders its client declares as roots (the agent declares the snapshot folder), and it requires the `.heapsnapshot` file extension.
 
 ## 4. Shallow size and retained size
 
@@ -107,11 +116,22 @@ When nothing is certain the agent gives no opinion and the normal rules apply. I
 
 ## 9. How `package.json` is used
 
-`src/knowledge/projectProfile.ts` reads every dependency and its **installed** version from `node_modules` (the range `^6.3.3` can mean any 6.x). It records the RxJS, Angular and Material majors and which known resource-heavy libraries are present (charts, maps, editors, MQTT — `src/scanner/libraries.ts`). This is used to:
+`src/knowledge/projectProfile.ts` reads every dependency and its **installed** version from `node_modules` (the range `^6.3.3` can mean any 6.x). It records the RxJS, Angular and Material majors and which known resource-heavy libraries are present (charts, maps, editors, MQTT and other sockets - `src/scanner/libraries.ts`). Run `memory-agent deps <project>` to see exactly what it found and how it changes the agent.
 
-- pick a cleanup style the project can compile (for example RxJS 6 and Angular 15 have no `takeUntilDestroyed`, so the agent uses `Subscription` + `ngOnDestroy`),
-- turn on library-specific rules only when the library is really installed (the `ngx-mqtt` rule),
-- warn when `package.json` is missing or `rxjs` is not declared.
+**Versions decide behaviour:**
+
+- RxJS 6 and Angular 15 have no `takeUntilDestroyed`, so the agent never writes it; RxJS 5 would get `rxjs/Subscription`.
+- `ngx-mqtt` present → `observe(topic)` in a component is an infinite subscription and is reported.
+- `@angular/material` present → dialog `afterClosed()` completes by itself and is not reported.
+- A resource library the agent has teardown rules for (Highcharts, ECharts, amCharts, GoJS, Leaflet, HERE Maps, MQTT, …) is expected to be torn down with its documented call. Resource-looking packages with **no** rules are listed, so a gap is visible.
+- Packages declared but not installed, or declared twice with different ranges, are listed as problems.
+
+**The project's own way of writing cleanup is learned from its code** (`src/knowledge/conventions.ts`) - what the agent reads is what is written, nothing is assumed from the framework version. For IOSense that is: 780 places use `takeUntil(this.destroy$)`, 45 use a `subs = new Subscription()`, `takeUntilDestroyed` is not used, single quotes, semicolons. So a generated fix looks like the rest of the codebase:
+
+- if the project mostly uses `takeUntil(this.destroy$)`, a fix adds `.pipe(takeUntil(this.destroy$))` before `.subscribe`, a `destroy$ = new Subject<void>()`, and `next()`/`complete()` in `ngOnDestroy`, with `takeUntil` imported from `rxjs/operators`;
+- if it mostly uses a `Subscription` collector, the fix uses one named the way the project names it (`subs`);
+- a class that already has its own `destroy$` or `Subscription` field keeps using it, and a teardown line already present is not written twice;
+- new imports use the file's own quotes and semicolons.
 
 ## 10. Deciding a fix is safe
 

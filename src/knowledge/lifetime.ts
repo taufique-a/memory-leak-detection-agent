@@ -26,6 +26,7 @@ import * as path from 'node:path';
 import * as ts from 'typescript';
 
 import { walkDirectory } from '../scanner/walk';
+import { ConventionCounter, DEFAULT_CONVENTIONS, type ProjectConventions } from './conventions';
 import { readProjectProfile, type ProjectProfile } from './projectProfile';
 
 export type Need = 'yes' | 'no' | 'review';
@@ -53,6 +54,8 @@ export interface ClassCatalogEntry {
 
 export interface ProjectKnowledge {
   profile: ProjectProfile;
+  /** How the project writes its own cleanup code, learned from its source. */
+  conventions: ProjectConventions;
   classes: Map<string, ClassCatalogEntry>;
   /** Classes named in an NgModule `bootstrap: [...]`, plus AppComponent. */
   bootstrapped: Set<string>;
@@ -206,6 +209,7 @@ export function loadProjectKnowledge(root: string, options: { keepAlive?: string
   const classes = new Map<string, ClassCatalogEntry>();
   const bootstrapped = new Set<string>(['AppComponent']);
   const moduleProvided = new Set<string>();
+  const counter = new ConventionCounter();
   const srcRoot = fs.existsSync(path.join(resolved, 'src')) ? path.join(resolved, 'src') : resolved;
   for (const file of walkDirectory(srcRoot, { extensions: ['.ts'] }).files) {
     if (/\.(spec|test)\.ts$/.test(file)) continue;
@@ -215,6 +219,7 @@ export function loadProjectKnowledge(root: string, options: { keepAlive?: string
     } catch {
       continue;
     }
+    counter.add(text);
     // Cheap pre-filter: only files that declare something Angular-decorated.
     if (!/@(Injectable|Component|Directive|NgModule)\b/.test(text)) continue;
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
@@ -227,6 +232,7 @@ export function loadProjectKnowledge(root: string, options: { keepAlive?: string
 
   const value: ProjectKnowledge = {
     profile: readProjectProfile(resolved),
+    conventions: counter.result(),
     classes,
     bootstrapped,
     keepAlive: (options.keepAlive ?? []).map((p) => new RegExp(p)),
@@ -237,7 +243,7 @@ export function loadProjectKnowledge(root: string, options: { keepAlive?: string
 
 /** A knowledge object with nothing in it - decisions return no opinion. */
 export function emptyKnowledge(root = '.'): ProjectKnowledge {
-  return { profile: readProjectProfile(root), classes: new Map(), bootstrapped: new Set(['AppComponent']), keepAlive: [] };
+  return { profile: readProjectProfile(root), conventions: DEFAULT_CONVENTIONS, classes: new Map(), bootstrapped: new Set(['AppComponent']), keepAlive: [] };
 }
 
 /* ------------------------------------------------------------------ */

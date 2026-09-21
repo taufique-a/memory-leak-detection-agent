@@ -1,9 +1,11 @@
 # ============================================================================
-#  Memory Leak Agent - isolated Node environment activator
+#  Memory Leak Agent - Node environment activator (PowerShell)
 # ============================================================================
 #  WHAT THIS DOES
-#    Puts our portable Node 22 at the FRONT of PATH, but ONLY for the
-#    PowerShell window you run it in.
+#    Puts this project's own Node.js (pinned in .node-version, kept in .node\)
+#    at the FRONT of PATH, but ONLY for the PowerShell window you run it in.
+#    If .node\ is missing it is downloaded once (about 30 MB, verified against
+#    nodejs.org's SHA-256), so nothing needs installing anywhere else.
 #
 #  WHAT IT DOES NOT DO
 #    It does not change your system PATH.
@@ -22,12 +24,17 @@
 #  and launches the guided UI in one go, from any directory.
 # ============================================================================
 
-$MEMORY_AGENT_NODE = "C:\Users\Taufique\node-portable\node-v22.23.2-win-x64"
+$AgentRoot = $PSScriptRoot
+$NodeVersion = (Get-Content (Join-Path $AgentRoot '.node-version') -Raw).Trim()
+$MEMORY_AGENT_NODE = Join-Path $AgentRoot ".node\node-v$NodeVersion-win-x64"
 
 if (-not (Test-Path "$MEMORY_AGENT_NODE\node.exe")) {
-    Write-Host "ERROR: portable Node not found at $MEMORY_AGENT_NODE" -ForegroundColor Red
-    Write-Host "Re-run the Phase 0 download step." -ForegroundColor Red
-    return
+    Write-Host "  Node $NodeVersion is not in this project yet - downloading it once..." -ForegroundColor Yellow
+    & (Join-Path $AgentRoot 'scripts\setup-node.ps1') -Root $AgentRoot
+    if (-not (Test-Path "$MEMORY_AGENT_NODE\node.exe")) {
+        Write-Host "ERROR: could not set up Node $NodeVersion. See the message above." -ForegroundColor Red
+        return
+    }
 }
 
 # Only prepend once, even if you dot-source this twice in the same window.
@@ -35,11 +42,9 @@ if ($env:Path -notlike "*$MEMORY_AGENT_NODE*") {
     $env:Path = "$MEMORY_AGENT_NODE;" + $env:Path
 }
 
-# Keep npm's cache alongside the portable Node install.
-$env:npm_config_cache = "C:\Users\Taufique\node-portable\npm-cache"
-
-# Keep Playwright browser downloads there too (used from Phase 7 onward).
-$env:PLAYWRIGHT_BROWSERS_PATH = "C:\Users\Taufique\node-portable\playwright-browsers"
+# npm's cache and Playwright's browsers also stay inside the project.
+$env:npm_config_cache = Join-Path $AgentRoot '.node\npm-cache'
+$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $AgentRoot '.node\playwright-browsers'
 
 Write-Host ""
 Write-Host "  Memory Leak Agent environment ACTIVE (this window only)" -ForegroundColor Green

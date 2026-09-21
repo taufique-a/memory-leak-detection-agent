@@ -166,6 +166,16 @@ function printReport(r: HeapInvestigationResult): void {
   field('Before', `${mb(r.before.bytes)}  ${r.before.file}`);
   field('After', `${mb(r.after.bytes)}  ${r.after.file}`);
   field('Forced GC before both', r.before.afterForcedGc && r.after.afterForcedGc ? 'yes' : colour.red('NO'));
+  field(
+    'Snapshots taken through',
+    r.before.source === 'chrome-devtools-mcp' && r.after.source === 'chrome-devtools-mcp'
+      ? 'Chrome DevTools MCP'
+      : 'the raw DevTools protocol (see warnings)',
+  );
+  if (r.devtools !== undefined) {
+    field('DevTools console problems', r.devtools.consoleProblems.length === 0 ? 'none' : r.devtools.consoleProblems.join(' | '));
+    field('DevTools failed requests', r.devtools.failedRequests.length === 0 ? 'none' : r.devtools.failedRequests.join(' | '));
+  }
   field('Measured iterations', num(r.iterations));
 
   heading('WHAT CHANGED');

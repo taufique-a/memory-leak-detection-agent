@@ -13,7 +13,8 @@ REM    - Leave MEMORY_AGENT_PROJECT blank to pick the project inside the
 REM      guided UI instead (Set up page -> browse).
 REM ============================================================================
 
-REM set "MEMORY_AGENT_NODE=C:\path\to\a\portable\node-v22.x.x-win-x64"
+REM set "MEMORY_AGENT_NODE=C:path	odifferent
+ode-v22.x.x-win-x64"   REM only if you do NOT want the project's own Node
 REM set "MEMORY_AGENT_PROJECT=C:\path\to\the\Angular\app\you\investigate"
 
 REM Optional: keep npm's cache / Playwright's browser downloads off a drive

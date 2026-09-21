@@ -18,6 +18,7 @@
  * numbers less relevant - Chrome 151 is what the application is used in.
  */
 
+import { freePort } from '../mcp/devtools';
 import { chromium, type Browser, type BrowserContext, type CDPSession, type Page } from 'playwright';
 
 export interface BrowserOptions {
@@ -51,6 +52,13 @@ export interface BrowserOptions {
    * credential - gitignored, and never written into a report.
    */
   storageStateFile?: string;
+
+  /**
+   * Open Chrome's remote-debugging port (loopback only) on this port, so the
+   * Chrome DevTools MCP server can attach to this same browser. Pass 0 to
+   * have a free port picked. Off by default: nothing else needs it.
+   */
+  debugPort?: number;
 }
 
 /** A live browser with a CDP session attached. */
@@ -60,6 +68,8 @@ export interface BrowserSession {
   page: Page;
   /** Raw Chrome DevTools Protocol session, for what Playwright does not expose. */
   cdp: CDPSession;
+  /** Remote-debugging port, when one was requested. */
+  debugPort?: number;
   /** Chrome version string, recorded in the report. */
   version: string;
   close(): Promise<void>;
@@ -73,6 +83,7 @@ export interface BrowserSession {
  * own initiative that would otherwise show up as "growth".
  */
 export async function launchBrowser(options: BrowserOptions = {}): Promise<BrowserSession> {
+  const debugPort = options.debugPort === undefined ? undefined : options.debugPort === 0 ? await freePort() : options.debugPort;
   const browser = await chromium.launch({
     channel: 'chrome',
     headless: options.headed !== true,
@@ -93,6 +104,7 @@ export async function launchBrowser(options: BrowserOptions = {}): Promise<Brows
       '--no-default-browser-check',
       '--no-first-run',
       ...(options.maximized === true ? ['--start-maximized'] : []),
+      ...(debugPort !== undefined ? [`--remote-debugging-port=${debugPort}`, '--remote-debugging-address=127.0.0.1'] : []),
     ],
   });
 
@@ -120,6 +132,7 @@ export async function launchBrowser(options: BrowserOptions = {}): Promise<Brows
     context,
     page,
     cdp,
+    ...(debugPort !== undefined ? { debugPort } : {}),
     version: browser.version(),
     async close(): Promise<void> {
       // Detaching the CDP session first avoids a noisy race on shutdown.
