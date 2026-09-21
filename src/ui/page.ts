@@ -463,8 +463,20 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 .bar span{display:block;height:100%;width:35%;background:var(--accent);
   transform:translateX(-100%);animation:sweep 1.1s ease-in-out infinite}
 @keyframes sweep{to{transform:translateX(400%)}}
-.selfilter{width:100%;box-sizing:border-box;margin:.25rem 0 .35rem;padding:.4rem .6rem;
-  font:inherit;font-size:.85rem;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
+.ss{position:relative}
+.ss-btn{width:100%;text-align:left;background:var(--bg);color:var(--fg);border:1px solid var(--line);
+  border-radius:5px;padding:.4rem 1.6rem .4rem .55rem;font-size:.85rem;cursor:pointer;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative}
+.ss-btn:after{content:"\\25BE";position:absolute;right:.6rem;top:50%;transform:translateY(-50%)}
+.ss-panel{position:absolute;left:0;right:0;top:calc(100% + 2px);z-index:30;background:var(--bg);
+  border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.18)}
+.ss-search{display:block;width:100%;box-sizing:border-box;border:0;border-bottom:1px solid var(--line);
+  border-radius:6px 6px 0 0;padding:.5rem .65rem;font:inherit;font-size:.85rem;background:var(--bg);color:var(--fg)}
+.ss-list{max-height:16rem;overflow-y:auto}
+.ss-item{padding:.4rem .65rem;font-size:.85rem;color:var(--fg);cursor:pointer}
+.ss-item.hot{background:var(--code)}
+.ss-item.on{font-weight:600;color:var(--accent)}
+.ss-none{padding:.5rem .65rem;font-size:.85rem;color:var(--muted)}
 .meter{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:.2rem 0 .7rem}
 .meter span{display:block;height:100%;width:0;background-color:var(--accent);border-radius:4px;
   transition:width .5s ease;background-image:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
@@ -1237,35 +1249,87 @@ function applyRouteOptions(data) {
 }
 
 /**
- * A search box above a long dropdown. Typing hides the options that do not
- * contain the text; the first match is picked so the list below follows.
+ * Makes a long dropdown searchable. The native <select> stays as the source of
+ * truth (hidden), so the rest of the page keeps reading and setting it as
+ * before; this draws a button that opens a list with a search box on top.
  */
 function addSelectFilter(id) {
   const select = $(id);
-  const box = document.createElement('input');
-  box.type = 'search';
-  box.className = 'selfilter';
-  box.placeholder = 'Type to search...';
-  box.setAttribute('aria-label', 'Search the list below');
-  select.parentNode.insertBefore(box, select);
+  const wrap = document.createElement('div');
+  wrap.className = 'ss';
+  wrap.innerHTML =
+    '<button type="button" class="ss-btn"></button>' +
+    '<div class="ss-panel" hidden>' +
+    '<input type="text" class="ss-search" placeholder="Type to search..." aria-label="Search the list">' +
+    '<div class="ss-list" role="listbox"></div></div>';
+  select.parentNode.insertBefore(wrap, select);
+  select.style.display = 'none';
+  const btn = wrap.querySelector('.ss-btn');
+  const panel = wrap.querySelector('.ss-panel');
+  const search = wrap.querySelector('.ss-search');
+  const list = wrap.querySelector('.ss-list');
+  let shown = [];
+  let active = 0;
 
-  const apply = () => {
-    const words = box.value.toLowerCase().split(/\\s+/).filter(Boolean);
-    let first = null;
-    for (const o of Array.from(select.options)) {
-      const text = o.textContent.toLowerCase();
-      o.hidden = !words.every((w) => text.indexOf(w) !== -1);
-      if (!o.hidden && !first && (words.length === 0 || o.value !== '')) first = o;
-    }
-    const current = select.selectedOptions[0];
-    if (words.length && first && (!current || current.hidden)) {
-      select.value = first.value;
-      select.dispatchEvent(new Event('change'));
-    }
+  const syncLabel = () => {
+    const o = select.selectedOptions[0];
+    btn.textContent = o ? o.textContent : '';
+    btn.disabled = select.disabled;
   };
-  box.addEventListener('input', apply);
-  // The lists are rebuilt when the project changes; keep the filter applied.
-  new MutationObserver(() => { if (box.value) apply(); }).observe(select, { childList: true });
+  const render = () => {
+    const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+    shown = Array.from(select.options).filter((o) => {
+      const text = o.textContent.toLowerCase();
+      return words.every((w) => text.indexOf(w) !== -1);
+    });
+    if (active >= shown.length) active = 0;
+    list.innerHTML = shown.length
+      ? shown.map((o, i) => '<div class="ss-item' + (o.selected ? ' on' : '') + (i === active ? ' hot' : '') +
+          '" role="option" data-i="' + i + '">' + esc(o.textContent) + '</div>').join('')
+      : '<div class="ss-none">Nothing matches</div>';
+    const hot = list.querySelector('.hot');
+    if (hot) hot.scrollIntoView({ block: 'nearest' });
+  };
+  const close = () => { panel.hidden = true; };
+  const open = () => {
+    search.value = '';
+    active = Math.max(0, Array.from(select.options).indexOf(select.selectedOptions[0]));
+    panel.hidden = false;
+    render();
+    search.focus();
+  };
+  const choose = (o) => {
+    close();
+    if (!o) return;
+    const changed = select.value !== o.value;
+    select.value = o.value;
+    if (changed) select.dispatchEvent(new Event('change'));
+  };
+
+  btn.addEventListener('click', () => { if (panel.hidden) open(); else close(); });
+  search.addEventListener('input', () => { active = 0; render(); });
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { active = Math.min(shown.length - 1, active + 1); render(); e.preventDefault(); }
+    else if (e.key === 'ArrowUp') { active = Math.max(0, active - 1); render(); e.preventDefault(); }
+    else if (e.key === 'Enter') { choose(shown[active]); e.preventDefault(); }
+    else if (e.key === 'Escape') { close(); btn.focus(); }
+  });
+  list.addEventListener('click', (e) => {
+    const item = e.target.closest('.ss-item');
+    if (item) choose(shown[Number(item.dataset.i)]);
+  });
+  document.addEventListener('mousedown', (e) => { if (!wrap.contains(e.target)) close(); });
+
+  // Keep the button in step when the page rebuilds the list or sets the value.
+  new MutationObserver(() => { syncLabel(); if (!panel.hidden) render(); })
+    .observe(select, { childList: true, attributes: true, attributeFilter: ['disabled'] });
+  const proto = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+  Object.defineProperty(select, 'value', {
+    configurable: true,
+    get() { return proto.get.call(this); },
+    set(v) { proto.set.call(this, v); syncLabel(); },
+  });
+  syncLabel();
 }
 addSelectFilter('ffModule');
 addSelectFilter('ffNavA');
