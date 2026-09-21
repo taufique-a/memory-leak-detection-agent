@@ -75,7 +75,7 @@ describe('IOSense picker shapes (preset-date-time-picker)', () => {
   }
 }
 `);
-    expect(newContent).toContain("document.querySelector('#main-panel')?.removeEventListener('scroll', this.onscrollListener, { passive: true });");
+    expect(newContent).toContain("document.querySelector('#main-panel')?.removeEventListener('scroll', this.onscrollListener);");
     expect(newContent).not.toContain('scrollContainer.removeEventListener');
   });
 
@@ -167,6 +167,18 @@ describe('event listeners', () => {
 }
 `);
     expect(newContent).toContain(`window.removeEventListener('scroll', this.onscrollListener, true);`);
+  });
+
+  it('drops passive/once from the remove call (TS2769: only capture is allowed there)', () => {
+    const { newContent } = apply(`${HEADER}export class DemoComponent {
+  ngOnInit(): void {
+    window.addEventListener('scroll', () => this.onScroll(), { passive: true });
+    window.addEventListener('resize', () => this.onResize(), { capture: true, passive: true });
+  }
+}
+`);
+    expect(newContent).toContain("window.removeEventListener('scroll', this.onscrollListener);");
+    expect(newContent).toContain("window.removeEventListener('resize', this.onresizeListener, { capture: true });");
   });
 
   it('keeps the element target verbatim when it is a property chain', () => {

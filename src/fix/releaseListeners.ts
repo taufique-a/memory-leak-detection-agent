@@ -167,6 +167,24 @@ function resolveLocalTarget(expr: ts.Expression, sourceFile: ts.SourceFile): str
   return found;
 }
 
+/**
+ * What removeEventListener gets from the add call's options. Removal only looks
+ * at `capture`; `passive` and `once` exist only on the ADD options, and
+ * TypeScript rejects them in an object literal there (TS2769). So a literal
+ * keeps just its `capture`, and is dropped when it has none.
+ */
+function removalOptions(optionsArg: ts.Expression | undefined, sourceFile: ts.SourceFile): string | undefined {
+  if (optionsArg === undefined) return undefined;
+  if (!ts.isObjectLiteralExpression(optionsArg)) return optionsArg.getText(sourceFile);
+  for (const p of optionsArg.properties) {
+    if (ts.isPropertyAssignment(p) && p.name.getText(sourceFile) === 'capture') {
+      return `{ capture: ${p.initializer.getText(sourceFile)} }`;
+    }
+    if (ts.isShorthandPropertyAssignment(p) && p.name.text === 'capture') return '{ capture }';
+  }
+  return undefined;
+}
+
 const safeOptions = (optionsArg: ts.Expression | undefined): boolean =>
   optionsArg === undefined ||
   optionsArg.kind === ts.SyntaxKind.TrueKeyword ||
@@ -221,7 +239,7 @@ export function collectEventListeners(
       ) {
         const targetText = lookedUp ?? targetExpr.getText(sourceFile);
         const optionalTarget = lookedUp !== undefined;
-        const optionsText = optionsArg?.getText(sourceFile);
+        const optionsText = removalOptions(optionsArg, sourceFile);
 
         if (
           (ts.isPropertyAccessExpression(handlerArg) && isThisRooted(handlerArg)) ||
