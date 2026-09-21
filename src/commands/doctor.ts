@@ -9,7 +9,7 @@
 import { execFileSync } from 'node:child_process';
 import * as ts from 'typescript';
 
-import { findDevToolsMcpBin } from '../mcp/devtools';
+import { findDevToolsMcpBin, sdkInstalled } from '../mcp/devtools';
 import { isChromeAvailable } from '../runtime/browser';
 import { colour, field, heading, info, warn } from '../utils/logger';
 import { AGENT_VERSION } from '../version';
@@ -110,10 +110,13 @@ export async function runDoctor(args: string[]): Promise<number> {
   const mcpBin = findDevToolsMcpBin();
   checks.push({
     name: 'Chrome DevTools MCP',
-    ok: mcpBin !== undefined,
-    detail: mcpBin !== undefined ? 'installed - run `memory-agent devtools` to prove it works live' : 'chrome-devtools-mcp is not installed',
+    ok: mcpBin !== undefined && sdkInstalled(),
+    detail:
+      mcpBin !== undefined && sdkInstalled()
+        ? 'installed - run `memory-agent devtools` to prove it works live'
+        : 'chrome-devtools-mcp or the MCP SDK is not installed here',
     advisory: true,
-    ...(mcpBin !== undefined ? {} : { remedy: 'npm install --save-exact chrome-devtools-mcp @modelcontextprotocol/sdk. Without it the agent uses the raw DevTools protocol.' }),
+    ...(mcpBin !== undefined && sdkInstalled() ? {} : { remedy: 'Run "npm install" in the agent folder (a git pull can add packages). Without it the agent uses the raw DevTools protocol.' }),
   });
 
   /* ---- report ---- */

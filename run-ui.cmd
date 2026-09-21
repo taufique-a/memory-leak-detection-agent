@@ -85,15 +85,21 @@ if %NODE_MAJOR% LSS 20 (
     exit /b 1
 )
 
+REM Keep dependencies in step with package.json on every start - after a
+REM git pull that added a package, a stale node_modules is otherwise a crash.
+REM Quick when nothing changed. A failure only blocks the very first install.
 if not exist "node_modules" (
     echo Dependencies not installed yet - running npm install ^(one-time, may take a minute^)...
-    call npm install
+    call npm install --no-audit --no-fund
     if errorlevel 1 (
         echo.
         echo   npm install failed - see the output above.
         pause
         exit /b 1
     )
+) else (
+    call npm install --no-audit --no-fund --prefer-offline >nul 2>nul
+    if errorlevel 1 echo   ^(could not refresh dependencies - continuing with what is installed^)
 )
 
 echo.

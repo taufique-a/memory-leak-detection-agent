@@ -25,9 +25,29 @@ import * as net from 'node:net';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { ListRootsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+/**
+ * The MCP SDK is loaded when a connection is made, not when this file is
+ * imported. A checkout whose dependencies are out of date (a pull without
+ * `npm install`) must not stop the whole tool from starting; only the
+ * DevTools MCP features are unavailable, and every caller already falls back
+ * to the raw protocol and says why.
+ */
+async function loadSdk(): Promise<{
+  Client: typeof import('@modelcontextprotocol/sdk/client/index.js').Client;
+  StdioClientTransport: typeof import('@modelcontextprotocol/sdk/client/stdio.js').StdioClientTransport;
+  ListRootsRequestSchema: typeof import('@modelcontextprotocol/sdk/types.js').ListRootsRequestSchema;
+}> {
+  try {
+    const [client, stdio, types] = await Promise.all([
+      import('@modelcontextprotocol/sdk/client/index.js'),
+      import('@modelcontextprotocol/sdk/client/stdio.js'),
+      import('@modelcontextprotocol/sdk/types.js'),
+    ]);
+    return { Client: client.Client, StdioClientTransport: stdio.StdioClientTransport, ListRootsRequestSchema: types.ListRootsRequestSchema };
+  } catch {
+    throw new Error('the MCP SDK (@modelcontextprotocol/sdk) is not installed here. Run "npm install" in the agent folder.');
+  }
+}
 
 export interface ConsoleEntry {
   id?: number;
@@ -86,6 +106,21 @@ export function findDevToolsMcpBin(): string | undefined {
     dir = parent;
   }
   return undefined;
+}
+
+/** Is the MCP SDK installed next to this code? */
+export function sdkInstalled(): boolean {
+  try {
+    require.resolve('@modelcontextprotocol/sdk/package.json');
+    return true;
+  } catch {
+    try {
+      require.resolve('@modelcontextprotocol/sdk/client/index.js');
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 export async function freePort(): Promise<number> {
@@ -153,6 +188,7 @@ export async function connectDevToolsMcp(options: ConnectOptions): Promise<DevTo
     throw new Error('chrome-devtools-mcp is not installed. Run: npm install --save-exact chrome-devtools-mcp');
   }
   const timeoutMs = options.timeoutMs ?? 60_000;
+  const { Client, StdioClientTransport, ListRootsRequestSchema } = await loadSdk();
 
   const transport = new StdioClientTransport({
     command: process.execPath,
