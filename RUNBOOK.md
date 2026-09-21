@@ -252,16 +252,17 @@ it would throw away minutes of work that is about to finish. The PID and the
 `taskkill` line to stop it are printed.
 ### The layout
 
-**Three pages, one sidebar.** One long scroll held setup, searching, fixing and
+**Four pages, one sidebar.** One long scroll held setup, searching, fixing and
 the report together, so you could never tell where you were in the process:
 
 | Page | What is on it |
 |---|---|
 | **1. Set up** | Your app's address, the environment checks, the demo, signing in |
 | **2. Find &amp; fix** | The search, reading the code, measuring, heap, correlation, fixes |
-| **3. Report** | Writing the document, and every file the run produced |
+| **3. Live watch** | Your app in a real Chrome window with DevTools, the heap drawn live, and a check that the page you left was destroyed |
+| **4. Report** | Writing the document, and every file the run produced |
 
-The **live console stays on the right on all three**, so a five-minute run is
+The **live console stays on the right on all four**, so a five-minute run is
 still watchable while you move between them. The page you were on is remembered
 across reloads.
 
@@ -425,6 +426,51 @@ The same flow from a terminal is `memory-agent findfix <find|apply|undo>
 --session <id>`; the UI writes the session for it, so you normally never type
 it.
 
+### Live watch — see your real app, in real time
+
+Use this when you want the answer from **your running application**, not from a
+scripted loop. It needs your app running, and the address set on the Set up page.
+
+1. Press **Open Chrome and start watching**. A real Chrome window opens on your
+   app **with DevTools** (open its **Memory** tab to look at the same heap the
+   tool is reading). It uses your saved sign-in when one fits the address; if
+   not, sign in inside that window.
+2. The page shows the heap **live**: a chart with the route changes marked,
+   the current heap, the heap right after a garbage collection (the number that
+   reveals a leak), page elements and event listeners.
+3. Move around your app. Click links in Chrome as you normally would, or type a
+   route into **Go to page** (the routes are suggested from your project). That
+   moves Chrome inside the app without reloading it, exactly like following a
+   link.
+4. On the page you want to test press **Take snapshot**. Navigate somewhere
+   else, press **Take snapshot** again, then **Check the page I left**.
+
+The answer is a table: every component that was on the page you left and not on
+the page you are on now, with how many objects of it were in memory **before**
+and **after**, and the verdict **destroyed**, **still in memory**, or **not in
+heap**. For anything still in memory it shows **what holds it**. A second table
+lists what grew and whose it is.
+
+**How it knows what belongs to a page.** Only from what was really there. While
+you sit on a route the tool records which custom elements (`<io-matrix-v3>` and
+so on) are in the page, and a component counts as "on that page" only if its tag
+was. A tag that two classes in your project claim is shown as ambiguous and **not
+counted**, so a look-alike component (another "Matrix") is never blamed. The
+layout that is on both pages is skipped on purpose, because it is meant to stay.
+
+Good to know:
+
+- **Use the dev server (`ng serve`).** A production build renames classes, so the
+  heap can no longer be matched to your components; those rows say
+  "not in heap" and explain why.
+- Snapshots go through **Chrome DevTools MCP** and are saved under
+  `artifacts/live/<session>/` (they are large; the Report page's cleanup buttons
+  cover them).
+- Closing the Chrome window, or pressing **Stop**, ends the watch.
+- From a terminal: `npm run dev -- live --base-url http://localhost:7200 --project "C:\Users\Taufique\IOSense"`
+  reads instructions from the keyboard: `snapshot A`, `goto /overview`,
+  `analyse`, `stop`.
+
 **Security.** The server executes commands, so it is locked down: bound to
 `127.0.0.1` only, a random token required on every request (it is in the URL
 printed at startup), the `Host` header checked to defeat DNS rebinding, no CORS
@@ -464,6 +510,7 @@ npm run dev -- selftest --headed        # watch it happen in a real window
 ```powershell
 npm run dev -- devtools                                  # live proof: heap, console, network via DevTools MCP
 npm run dev -- deps "C:\Users\Taufique\IOSense"        # read package.json: which libraries change the verdicts
+npm run dev -- live --base-url http://localhost:7200 --project "C:\Users\Taufique\IOSense"   # watch your real app (see "Live watch")
 ```
 
 `devtools` opens Chrome on a page with a known answer, attaches the

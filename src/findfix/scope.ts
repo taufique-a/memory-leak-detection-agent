@@ -21,29 +21,64 @@ export interface Scope {
 
 interface Lookup {
   byName: Map<string, Entity[]>;
-  bySelector: Map<string, Entity>;
+  /** Every class claiming a tag. More than one is common (IOSense has many copies of similar widgets). */
+  bySelector: Map<string, Entity[]>;
 }
 
 function lookup(index: EntityIndex): Lookup {
   const byName = new Map<string, Entity[]>();
-  const bySelector = new Map<string, Entity>();
+  const bySelector = new Map<string, Entity[]>();
   for (const e of index.entities) {
     const list = byName.get(e.name) ?? [];
     list.push(e);
     byName.set(e.name, list);
     for (const sel of (e.selector ?? '').split(',')) {
       const tag = sel.trim();
-      if (/^[a-z][a-z0-9-]*$/.test(tag)) bySelector.set(tag, e);
+      if (/^[a-z][a-z0-9-]*$/.test(tag)) bySelector.set(tag, [...(bySelector.get(tag) ?? []), e]);
     }
   }
   return { byName, bySelector };
 }
 
+/** How many leading folders two files share. */
+function sharedFolders(a: string, b: string): number {
+  const x = a.split('/');
+  const y = b.split('/');
+  let n = 0;
+  while (n < x.length - 1 && n < y.length - 1 && x[n] === y[n]) n++;
+  return n;
+}
+
+/**
+ * Which of several classes a template tag or constructor parameter means.
+ *
+ * One candidate is unambiguous. With several, the one whose folder is clearly
+ * closest to the file that uses it wins; a tie means nobody can tell, and the
+ * answer is "none" - never the last one that happened to be read.
+ */
+function pickNearest(candidates: Entity[], usedFrom: string): Entity | undefined {
+  if (candidates.length <= 1) return candidates[0];
+  const ranked = candidates
+    .map((c) => ({ c, shared: sharedFolders(c.file, usedFrom) }))
+    .sort((p, q) => q.shared - p.shared);
+  return (ranked[0] as { shared: number; c: Entity }).shared > (ranked[1] as { shared: number }).shared
+    ? (ranked[0] as { c: Entity }).c
+    : undefined;
+}
+
 /**
  * Everything a set of starting classes pulls in: child components from
  * their templates and services from their constructors, a few levels deep.
+ * Tags and names that more than one class could own are not guessed; they
+ * are returned in `skipped` so the scan can say so.
  */
-function expand(index: EntityIndex, start: Entity[], look: Lookup, maxDepth = 3): Entity[] {
+function expand(
+  index: EntityIndex,
+  start: Entity[],
+  look: Lookup,
+  maxDepth = 3,
+): { entities: Entity[]; skipped: string[] } {
+  const skipped = new Set<string>();
   const seen = new Map<string, Entity>();
   let frontier = start;
   for (let depth = 0; depth <= maxDepth && frontier.length > 0; depth++) {
@@ -55,19 +90,30 @@ function expand(index: EntityIndex, start: Entity[], look: Lookup, maxDepth = 3)
       const rel = index.relations.get(e.file);
       if (rel === undefined) continue;
       for (const tag of rel.usesTags) {
-        const child = look.bySelector.get(tag);
+        const owners = look.bySelector.get(tag) ?? [];
+        const child = pickNearest(owners, e.file);
         if (child !== undefined) next.push(child);
+        else if (owners.length > 1) skipped.add(`<${tag}> (${owners.length} classes)`);
       }
       for (const name of rel.injects) {
-        for (const dep of look.byName.get(name) ?? []) {
-          if (dep.kind === 'Injectable') next.push(dep);
-        }
+        const services = (look.byName.get(name) ?? []).filter((d) => d.kind === 'Injectable');
+        const dep = pickNearest(services, e.file);
+        if (dep !== undefined) next.push(dep);
+        else if (services.length > 1) skipped.add(`${name} (${services.length} classes)`);
       }
     }
     frontier = next;
   }
-  return [...seen.values()];
+  return { entities: [...seen.values()], skipped: [...skipped] };
 }
+
+const skippedNote = (skipped: string[]): string[] =>
+  skipped.length === 0
+    ? []
+    : [
+        `Not counted, because more than one class could be meant and none is clearly the nearest: ${skipped.slice(0, 6).join(', ')}` +
+          `${skipped.length > 6 ? ` and ${skipped.length - 6} more` : ''}. Live watch shows what is really on the page.`,
+      ];
 
 export function routeScope(
   index: EntityIndex,
@@ -82,7 +128,8 @@ export function routeScope(
     });
 
   const start = componentsOnRoutes(module !== undefined ? module.routes : [targetRoute]);
-  const all = expand(index, start, look);
+  const expanded = expand(index, start, look);
+  const all = expanded.entities;
   const services = all.filter((e) => e.kind === 'Injectable');
   const components = all.filter((e) => e.kind !== 'Injectable');
 
@@ -97,6 +144,7 @@ export function routeScope(
       : `Page ${targetRoute}.`,
     `${components.length} component(s) and ${services.length} service(s) are connected to it ` +
       '(pages, the child components their templates render, and what they inject).',
+    ...skippedNote(expanded.skipped),
   ];
 
   return { classes: [...new Set(all.map((e) => e.name))], directories, notes };
@@ -175,7 +223,8 @@ export function componentScope(index: EntityIndex, picked: Entity): ComponentSco
     };
   }
 
-  const all = expand(index, hostChain, look, 2);
+  const expanded = expand(index, hostChain, look, 2);
+  const all = expanded.entities;
   const host = hostChain[hostChain.length - 1] as Entity;
   const notes =
     hostChain.length === 1
@@ -187,6 +236,7 @@ export function componentScope(index: EntityIndex, picked: Entity): ComponentSco
         ];
   notes.push(
     `${all.filter((e) => e.kind === 'Injectable').length} service(s) it depends on are included.`,
+    ...skippedNote(expanded.skipped),
   );
 
   return {

@@ -277,6 +277,16 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 .files{overflow:auto;min-height:0;flex:1 1 auto;padding:.4rem .6rem}
 .fgroup{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
   padding:.5rem .4rem .25rem;position:sticky;top:0;background:var(--card)}
+.livebar{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;padding:.2rem .9rem .6rem}
+.livebar input{max-width:11rem}
+.livestats{display:flex;flex-wrap:wrap;gap:1.2rem;padding:.2rem .9rem .5rem;font-size:.8rem;color:var(--muted)}
+.livestats b{display:block;font-size:1.15rem;color:var(--fg);font-variant-numeric:tabular-nums}
+.chartwrap{padding:0 .9rem .8rem}
+#liveChart{width:100%;height:auto;display:block;background:var(--code);border-radius:6px}
+#liveChart text{font-size:15px;fill:var(--muted)}
+.live-hint{padding:0 .9rem .6rem;font-size:.85rem;color:var(--muted)}
+.heldby{font-size:.75rem;color:var(--muted);white-space:normal;padding-top:.15rem;max-width:34rem}
+.rtable td.wrap{white-space:normal}
 .rtable{width:100%;border-collapse:collapse;font-size:.85rem}
 .rtable th{text-align:left;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
   font-weight:600;padding:.4rem .6rem;border-bottom:1px solid var(--line)}
@@ -524,8 +534,12 @@ a{color:var(--accent)}
         <span class="num">2</span>
         <span class="lbl">Find &amp; fix<small>Search, measure, repair</small></span>
       </button>
-      <button class="navitem" data-page="report">
+      <button class="navitem" data-page="live">
         <span class="num">3</span>
+        <span class="lbl">Live watch<small>See the heap as you navigate</small></span>
+      </button>
+      <button class="navitem" data-page="report">
+        <span class="num">4</span>
         <span class="lbl">Report<small>Write it up, take the files</small></span>
       </button>
     </nav>
@@ -669,7 +683,57 @@ a{color:var(--accent)}
       <div id="ffResult"></div>
     </div>
 
-    <!-- ============ 3. REPORT ============ -->
+    <!-- ============ 3. LIVE WATCH ============ -->
+    <div class="page" id="page-live">
+      <div class="pagehead">
+        <h2>Live watch</h2>
+        <p>Open your own app in Chrome with DevTools, browse it yourself, and see the real heap and the real
+          routes as you go. Nothing here is guessed from code.</p>
+      </div>
+
+      <div class="panel" id="livePanel">
+        <h2><span>Watch my app</span><span class="sub" id="liveState">not running</span></h2>
+        <div class="live-hint" id="liveHint">
+          1. Press <b>Open Chrome and start watching</b> (it uses the address and sign-in from Set up).<br>
+          2. On the page you want to test, press <b>Take snapshot</b>.<br>
+          3. In Chrome, navigate to another page.<br>
+          4. Press <b>Take snapshot</b> again, then <b>Check the page I left</b>.
+        </div>
+        <div class="livebar">
+          <button id="liveStart">Open Chrome and start watching</button>
+          <input type="text" id="liveLabel" placeholder="snapshot name (optional)" maxlength="24" disabled>
+          <button id="liveSnap" class="ghost" disabled>Take snapshot</button>
+          <button id="liveAnalyse" class="ghost" disabled>Check the page I left</button>
+          <button id="liveStop" class="ghost" disabled>Stop</button>
+        </div>
+        <div class="livebar">
+          <input type="text" id="liveGo" list="liveRouteList" placeholder="/route to open in Chrome" disabled style="max-width:18rem">
+          <datalist id="liveRouteList"></datalist>
+          <button id="liveGoBtn" class="ghost" disabled>Go to page</button>
+          <span class="sub">Moves Chrome to that route inside your app (no reload). You can also just click around in Chrome.</span>
+        </div>
+        <div class="livestats" id="liveStats"></div>
+        <div class="chartwrap"><svg id="liveChart" viewBox="0 0 800 220" role="img"
+          aria-label="JavaScript heap over time, with the routes you visited"></svg></div>
+      </div>
+
+      <div class="panel" id="liveResult" style="display:none">
+        <h2><span>Was the page you left destroyed?</span><span class="sub" id="liveResultSub"></span></h2>
+        <div class="rwrap" id="liveResultBody"></div>
+      </div>
+
+      <div class="panel">
+        <h2><span>Where you have been</span></h2>
+        <div class="rwrap" id="liveRoutes"><div class="status">Nothing yet. Start watching, then move around your app.</div></div>
+      </div>
+
+      <div class="panel">
+        <h2><span>Snapshots</span></h2>
+        <div class="rwrap" id="liveSnaps"><div class="status">No snapshots yet.</div></div>
+      </div>
+    </div>
+
+    <!-- ============ 4. REPORT ============ -->
     <div class="page" id="page-report">
       <div class="pagehead">
         <h2>Report</h2>
@@ -1106,6 +1170,7 @@ function attachRun(result, action) {
       finish(data.exitCode);
       return;
     }
+    if (currentActionId === 'live' && data.line.indexOf('@@LIVE ') === 0) { handleLive(data.line); return; }
     const out = $('out');
     const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
     out.textContent += data.line + '\\n';
@@ -1117,6 +1182,7 @@ function attachRun(result, action) {
 
 async function finish(exitCode) {
   const finishedAction = currentActionId;
+  if (finishedAction === 'live') liveEnded();
   if (source) { source.close(); source = null; }
   currentRun = null;
   if (runTimer) { clearInterval(runTimer); runTimer = null; }
@@ -2117,6 +2183,225 @@ window.renderVerify = renderVerify;
 window.openFixModal = openFixModal;
 window.watchFindFixLine = watchFindFixLine;
 
+/* ================================================================== */
+/* Live watch                                                           */
+/* ================================================================== */
+
+const live = { running: false, samples: [], routes: [], snaps: [], tags: {}, last: null };
+const BELONGS = {
+  'left-page': 'the page you left', 'current-page': 'the page you are on', 'both-pages': 'both pages',
+  'other-project-class': 'your project, not on either page', 'not-your-code': 'not your code',
+};
+
+function liveSay(html) { $('liveHint').innerHTML = html; }
+
+async function startLive() {
+  if (currentRun) { liveSay('Something is already running. Wait for it to finish first.'); return; }
+  if (!appUrl) { liveSay('Set the address of your app on the Set up page first.'); return; }
+  const action = ACTIONS.find((a) => a.id === 'live');
+  const wanted = originOfUrl(appUrl);
+  const usable = (state.sessions || []).filter((x) => matchesOrigin(x, wanted));
+  const params = { url: appUrl };
+  if (sourcePath) params.project = sourcePath;
+  if (usable.length) params.authFile = usable[0].file;
+  live.samples = []; live.routes = []; live.snaps = []; live.tags = {}; live.last = null;
+  $('liveResult').style.display = 'none';
+  $('out').textContent = '';
+  const result = await api('/api/run', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'live', params: params }),
+  });
+  if (result.error) { liveSay(esc(result.error)); return; }
+  attachRun(result, action);
+  liveSay('Opening Chrome' + (usable.length ? ' with your saved sign-in' : ' (sign in inside the window if your app asks)') + '...');
+  $('liveStart').disabled = true;
+  $('liveState').textContent = 'starting...';
+  renderLive();
+}
+
+async function liveSend(text) {
+  if (!currentRun || currentActionId !== 'live') return;
+  await api('/api/input?id=' + currentRun, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: text }),
+  });
+}
+
+function liveEnded() {
+  live.running = false;
+  $('liveStart').disabled = false;
+  for (const id of ['liveSnap', 'liveAnalyse', 'liveStop', 'liveLabel', 'liveGo', 'liveGoBtn']) $(id).disabled = true;
+  $('liveState').textContent = 'stopped';
+  renderLive();
+}
+
+function handleLive(line) {
+  const m = /^@@LIVE (\\w+) (.*)$/.exec(line);
+  if (!m) return;
+  let data;
+  try { data = JSON.parse(m[2]); } catch { return; }
+  switch (m[1]) {
+    case 'started':
+      live.running = true;
+      for (const id of ['liveSnap', 'liveStop', 'liveLabel', 'liveGo', 'liveGoBtn']) $(id).disabled = false;
+      fillLiveRoutes();
+      $('liveState').textContent = 'watching';
+      liveSay('Chrome is open' + (data.devtools ? ' with DevTools (open its <b>Memory</b> tab to watch alongside)' : '') +
+        '. Browse your app there. When you are on the page you want to test, press <b>Take snapshot</b>.');
+      break;
+    case 'sample':
+      live.samples.push(data);
+      if (live.samples.length > 400) live.samples.shift();
+      live.last = data;
+      break;
+    case 'route':
+      live.routes.unshift(data);
+      break;
+    case 'tags':
+      live.tags[data.route] = data.tags;
+      break;
+    case 'snapshot':
+      live.snaps.push(data);
+      $('liveAnalyse').disabled = live.snaps.length < 2;
+      liveSay(live.snaps.length < 2
+        ? 'Snapshot ' + esc(data.label) + ' taken on <b>' + esc(data.route) + '</b>. Now navigate to another page in Chrome, then take a second snapshot.'
+        : 'Snapshot ' + esc(data.label) + ' taken on <b>' + esc(data.route) + '</b>. Press <b>Check the page I left</b> to compare the last two.');
+      break;
+    case 'analysis':
+      loadLiveAnalysis(data.file);
+      break;
+    case 'error':
+      liveSay('<span style="color:var(--bad)">' + esc(data.text) + '</span>');
+      break;
+  }
+  scheduleLiveRender();
+}
+
+let liveRenderQueued = false;
+function scheduleLiveRender() {
+  if (liveRenderQueued) return;
+  liveRenderQueued = true;
+  requestAnimationFrame(() => { liveRenderQueued = false; renderLive(); });
+}
+
+function renderLive() {
+  if (page !== 'live') return;
+  const l = live.last;
+  const gc = live.samples.filter((x) => x.gc).slice(-1)[0];
+  $('liveStats').innerHTML = l
+    ? '<div>Page<b>' + esc(l.route || '/') + '</b></div>' +
+      '<div>Heap now<b>' + l.heapMb.toFixed(1) + ' MB</b></div>' +
+      '<div>Heap after clean-up<b>' + (gc ? gc.heapMb.toFixed(1) + ' MB' : '-') + '</b></div>' +
+      '<div>Page elements<b>' + l.domNodes.toLocaleString() + '</b></div>' +
+      '<div>Event listeners<b>' + l.listeners.toLocaleString() + '</b></div>'
+    : '';
+  renderLiveChart();
+
+  $('liveRoutes').innerHTML = live.routes.length
+    ? '<table class="rtable"><thead><tr><th>When</th><th>Page</th><th>Came from</th><th class="num">Custom elements seen</th></tr></thead><tbody>' +
+      live.routes.slice(0, 12).map((r) => '<tr><td>' + humanDuration(r.t) + ' in</td><td>' + esc(r.to) + '</td><td>' +
+        esc(r.from || '-') + '</td><td class="num">' + ((live.tags[r.to] || []).length) + '</td></tr>').join('') +
+      '</tbody></table>'
+    : '<div class="status">Nothing yet. Start watching, then move around your app.</div>';
+
+  $('liveSnaps').innerHTML = live.snaps.length
+    ? '<table class="rtable"><thead><tr><th>Name</th><th>Taken on</th><th class="num">Size</th><th>Taken with</th></tr></thead><tbody>' +
+      live.snaps.map((x) => '<tr><td>' + esc(x.label) + '</td><td>' + esc(x.route) + '</td><td class="num">' +
+        humanBytes(x.bytes) + '</td><td>' + (x.source === 'chrome-devtools-mcp' ? 'Chrome DevTools MCP' : 'DevTools protocol') + '</td></tr>').join('') +
+      '</tbody></table>'
+    : '<div class="status">No snapshots yet.</div>';
+}
+
+/** Heap over time: the line is what Chrome reports; dots are readings taken after a garbage collection. */
+function renderLiveChart() {
+  const svg = $('liveChart');
+  const W = 800, H = 220, L = 66, R = 10, T = 22, B = 26;
+  const pts = live.samples;
+  if (pts.length < 2) {
+    svg.innerHTML = '<text x="' + (W / 2) + '" y="' + (H / 2) + '" text-anchor="middle">The heap will appear here once Chrome is open.</text>';
+    return;
+  }
+  const t0 = pts[0].t, t1 = pts[pts.length - 1].t || 1;
+  let lo = Math.min.apply(null, pts.map((p) => p.heapMb)), hi = Math.max.apply(null, pts.map((p) => p.heapMb));
+  if (hi - lo < 1) { hi += 0.5; lo = Math.max(0, lo - 0.5); }
+  const x = (t) => L + ((t - t0) / Math.max(1, t1 - t0)) * (W - L - R);
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  let out = '';
+  for (let i = 0; i <= 3; i++) {
+    const v = lo + ((hi - lo) * i) / 3;
+    out += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="var(--line)"/>' +
+      '<text x="' + (L - 4) + '" y="' + (y(v) + 3) + '" text-anchor="end">' + v.toFixed(hi - lo < 6 ? 1 : 0) + ' MB</text>';
+  }
+  for (const r of live.routes) {
+    if (r.t < t0 || r.t > t1) continue;
+    out += '<line x1="' + x(r.t) + '" x2="' + x(r.t) + '" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--accent)" stroke-dasharray="3 3"/>' +
+      '<text x="' + (x(r.t) + 3) + '" y="' + (T + 9) + '">' + esc(r.to.length > 22 ? r.to.slice(0, 21) + '...' : r.to) + '</text>';
+  }
+  out += '<polyline fill="none" stroke="var(--muted)" stroke-width="1.5" points="' +
+    pts.map((p) => x(p.t).toFixed(1) + ',' + y(p.heapMb).toFixed(1)).join(' ') + '"/>';
+  for (const p of pts) if (p.gc) out += '<circle cx="' + x(p.t) + '" cy="' + y(p.heapMb) + '" r="3.5" fill="var(--accent)"/>';
+  out += '<text x="' + L + '" y="' + (H - 6) + '">' + humanDuration(t0) + '</text>' +
+    '<text x="' + (W - R) + '" y="' + (H - 6) + '" text-anchor="end">' + humanDuration(t1) + '  (dots = after garbage collection)</text>';
+  svg.innerHTML = out;
+}
+
+async function loadLiveAnalysis(file) {
+  let a;
+  try {
+    const res = await fetch('/api/download?path=' + encodeURIComponent(file) + '&token=' + TOKEN);
+    a = JSON.parse(await res.text());
+  } catch { liveSay('The comparison was made but could not be read back.'); return; }
+  $('liveResult').style.display = 'block';
+  $('liveResultSub').textContent = a.fromRoute + '  to  ' + a.toRoute;
+  const pill = { destroyed: '<span class="pill ok">destroyed</span>', 'still-alive': '<span class="pill bad">still in memory</span>', 'not-in-heap': '<span class="pill warn">not in heap</span>' };
+  const rows = a.destroy.rows;
+  let html = rows.length
+    ? '<table class="rtable"><thead><tr><th>Component on the page you left</th><th>File</th><th class="num">Before</th><th class="num">After</th><th>Result</th></tr></thead><tbody>' +
+      rows.map((r) => '<tr><td>' + esc(r.component) + (r.sharedName ? ' <span class="pill warn">shared name</span>' : '') + '</td><td class="wrap" style="word-break:break-all">' + esc(r.file) +
+        '</td><td class="num">' + r.before + '</td><td class="num">' + r.after + '</td><td>' + pill[r.status] + '</td></tr>' +
+        (r.heldBy ? '<tr><td colspan="5" class="wrap"><div class="heldby"><b>What holds it:</b> ' + esc(r.heldBy.split('\\n')[0]) + '<br>' + esc(r.heldBy.split('\\n')[1] || '') + '</div></td></tr>' : '')).join('') +
+      '</tbody></table>'
+    : '<div class="status">No component that was only on the page you left could be checked.</div>';
+  for (const amb of a.destroy.ambiguousTags || []) {
+    html += '<div class="status">The element <b>&lt;' + esc(amb.tag) + '&gt;</b> could be any of ' + amb.candidates.length +
+      ' classes (' + amb.candidates.map((c) => esc(c.name)).join(', ') + '), so it was not counted.</div>';
+  }
+  const grown = (a.growth || []).filter((g) => g.belongs !== 'not-your-code').slice(0, 12);
+  if (grown.length) {
+    html += '<h3 style="margin:.8rem .6rem .2rem;font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">What grew, and whose it is</h3>' +
+      '<table class="rtable"><thead><tr><th>Class</th><th class="num">More objects</th><th class="num">More memory kept</th><th>Belongs to</th></tr></thead><tbody>' +
+      grown.map((g) => '<tr><td>' + esc(g.constructorName) + '</td><td class="num">+' + g.countDelta + '</td><td class="num">' +
+        (g.retainedBytesDelta !== undefined ? humanBytes(g.retainedBytesDelta) : humanBytes(g.bytesDelta)) + '</td><td class="wrap">' +
+        esc(BELONGS[g.belongs] || g.belongs) + '</td></tr>').join('') + '</tbody></table>';
+  }
+  const others = (a.growth || []).length - (a.growth || []).filter((g) => g.belongs !== 'not-your-code').length;
+  if (others > 0) html += '<div class="status">' + others + ' browser or library object type(s) also grew. They are not your code, so they are not blamed on either page.</div>';
+  for (const n of a.notes || []) html += '<div class="status">' + esc(n) + '</div>';
+  $('liveResultBody').innerHTML = html;
+  $('liveResult').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  liveSay('Done. The result is shown above the route list, from the two snapshots you took.');
+}
+
+/** Offer the routes read from your project's router as suggestions. */
+function fillLiveRoutes() {
+  const list = ffOptions && ffOptions.routes ? ffOptions.routes.slice(0, 1500) : [];
+  $('liveRouteList').innerHTML = list.map((r) => '<option value="' + esc(r.path) + '">' + esc(r.component) + '</option>').join('');
+}
+function liveGo() {
+  const route = ($('liveGo').value || '').trim();
+  if (!route) return;
+  liveSend('goto ' + route);
+}
+$('liveGoBtn').addEventListener('click', liveGo);
+$('liveGo').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); liveGo(); } });
+
+$('liveStart').addEventListener('click', startLive);
+$('liveSnap').addEventListener('click', () => liveSend('snapshot ' + ($('liveLabel').value || '').replace(/[^A-Za-z0-9_-]/g, '')));
+$('liveAnalyse').addEventListener('click', () => { liveSay('Comparing the two snapshots (a big app can take a minute)...'); liveSend('analyse'); });
+$('liveStop').addEventListener('click', () => liveSend('stop'));
+
 /* ---- answering a prompt ---- */
 async function reply(text) {
   if (!currentRun) return;
@@ -3051,6 +3336,7 @@ function showPage(name) {
   // A page switch is a new view, so start it at the top.
   window.scrollTo({ top: 0, behavior: 'instant' });
   if (name === 'fix' && !ffOptions) void loadRouteOptions(false);
+  if (name === 'live') renderLive();
 }
 
 for (const btn of document.querySelectorAll('.navitem')) {

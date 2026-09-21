@@ -17,6 +17,7 @@ import { runFix } from './commands/fix';
 import { runCompile } from './commands/compile';
 import { runDeps } from './commands/deps';
 import { runDevTools } from './commands/devtools';
+import { runLive } from './commands/live';
 import { runServe } from './commands/serve';
 import { runVerify } from './commands/verify';
 import { runHeap } from './commands/heap';
@@ -59,6 +60,7 @@ COMMANDS
   ${'selftest'.padEnd(28)} Prove memory measurement works, on a known leak
   ${'deps <project>'.padEnd(28)} Read package.json: which libraries change how leaks are judged
   ${'devtools'.padEnd(28)} Prove Chrome DevTools MCP works (heap, console, network), live
+  ${'live --base-url <url>'.padEnd(28)} Watch your running app in Chrome: live heap, routes, what a page left behind
   ${'scenario <sub>'.padEnd(28)} init | login | validate | run | demo
   ${'routes <sub>'.padEnd(28)} list | sweep - check cleanup on every route, not just one
   ${'investigate <project>'.padEnd(28)} Static + runtime in one investigation report
@@ -270,6 +272,10 @@ export function run(argv: string[]): number | Promise<number> {
 
   if (first === 'devtools') {
     return runDevTools(args.slice(1));
+  }
+
+  if (first === 'live') {
+    return runLive(args.slice(1));
   }
 
   if (first === 'serve') {

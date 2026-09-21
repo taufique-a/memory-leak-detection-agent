@@ -177,7 +177,13 @@ export function parsePageList(text: string): Array<{ id: number; url: string }> 
   const pages: Array<{ id: number; url: string }> = [];
   for (const line of text.split(/\r?\n/)) {
     const m = /^\s*(\d+):\s*(.*?)\s\((.*)\)(?:\s\[selected\])?(?:\s+isolatedContext=\S+)?\s*$/.exec(line);
-    if (m) pages.push({ id: Number(m[1]), url: m[3] as string });
+    if (m) {
+      pages.push({ id: Number(m[1]), url: m[3] as string });
+      continue;
+    }
+    // A page with no <title> is listed by its bare URL: "1: http://host/path [selected]".
+    const bare = /^\s*(\d+):\s+(\S+)(?:\s+\[selected\])?(?:\s+isolatedContext=\S+)?\s*$/.exec(line);
+    if (bare) pages.push({ id: Number(bare[1]), url: bare[2] as string });
   }
   return pages;
 }

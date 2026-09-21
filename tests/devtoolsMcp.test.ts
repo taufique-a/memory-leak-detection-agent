@@ -25,6 +25,15 @@ describe('parsing what chrome-devtools-mcp prints', () => {
       { id: 2, url: 'data:text/html,<script>f("x")</script>' },
     ]);
   });
+  it('reads a page with no title, which the server lists by its bare URL (captured from 1.9.0)', () => {
+    const text =
+      '## Pages\n1: http://127.0.0.1:55124/alpha [selected] isolatedContext=isolated-context-1\n' +
+      '2: Hello (http://127.0.0.1:55124/titled) isolatedContext=isolated-context-1';
+    expect(parsePageList(text)).toEqual([
+      { id: 1, url: 'http://127.0.0.1:55124/alpha' },
+      { id: 2, url: 'http://127.0.0.1:55124/titled' },
+    ]);
+  });
   it('reads console messages and drops the argument count', () => {
     const text = 'Showing 1-2 of 2\nmsgid=1 [error] boom (1 args)\nmsgid=2 [log] hi (1 args)';
     expect(parseConsoleList(text)).toEqual([

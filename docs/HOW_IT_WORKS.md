@@ -12,6 +12,8 @@ Written in plain English. Every statement here is taken from the real code in th
 4. **It fixes only what the browser proved**, and only what is safe. Anything meant to stay alive is left alone, with the reason shown.
 5. **It rebuilds, re-tests and repeats the same navigation** to prove the fix worked. **Undo** puts every file back.
 
+Prefer to see it in your own running app? **Live watch** opens your app in Chrome with DevTools, draws the heap live while you navigate, and checks from two real snapshots whether the page you left was destroyed (section 16).
+
 Everything it tells you comes from your code or from real Chrome data. Where it is guessing, it says so.
 
 ---
@@ -195,7 +197,21 @@ Still not covered: components created purely at runtime from a config map (widge
 
 The heap snapshot lists detached DOM (elements removed from the page but still in memory), plus instances of a component class still alive after leaving. The retaining path (what points at what, back to a root) shows the holder: a timer, a listener, a service field, a chart object. The agent names that holder and links it to the code that started it.
 
-## 16. What it cannot do yet (known limits)
+## 16. Live watch: your real app, real navigation, real heap
+
+Everything above can also be done by hand-driven navigation, so the answer comes from what really happens in *your* running app (`src/live/`, page 3 in the UI, `memory-agent live`).
+
+1. **Real Chrome, real app.** A visible Chrome window opens on your app with DevTools. You browse it yourself; a "Go to page" box can also move it to a route inside the app (the address is changed and the router told, like the back button, with no reload).
+2. **Live heap.** Every 1.5 seconds it reads the JS heap, page elements and event listeners from Chrome. Once a route has settled it forces a garbage collection and takes one more reading; that "after clean-up" number is the one that shows a leak.
+3. **What was really on each page.** While the browser sits on a route it records the custom-element tags in the DOM. A component belongs to a page only if its tag was there. Same-selector look-alikes are listed as ambiguous and not counted.
+4. **Two real snapshots** (through Chrome DevTools MCP, saved as `.heapsnapshot`). For every component that was on the page you left and not on the page you are on, it counts that class in both snapshots: none left = **destroyed**, some left = **still in memory** with the retaining chain from a GC root to one surviving instance.
+5. **What grew** is compared by class and each grown class is tied to a page by the same real-tag rule, or to "your project, not on either page", or to "not your code" (browser and library objects).
+
+This is why the result can be trusted more than a guess from code: nothing is attributed to a route unless it was seen there. Its limits: it needs class names in the heap (use the dev server, not a minified build), and two classes with the *same name* share one heap count, which the table flags.
+
+The Find & Fix scope no longer guesses either: a template tag or injected class that more than one class could own is taken from the nearest folder if that is clear, and skipped (with a note) if not, instead of using whichever was read last.
+
+## 17. What it cannot do yet (known limits)
 
 Found by checking it against 28 IOSense components read independently; the tool and the reviewers agreed on the clear leaks, and these are where they differed:
 
@@ -205,7 +221,7 @@ Found by checking it against 28 IOSense components read independently; the tool 
 - **Medium and low findings are suspicions.** Static findings are a reason to look, never a verdict; only findings the browser confirmed get a fix.
 - **Widgets created at runtime** from a config map are reached only through the code that opens them (see section 14).
 
-## 17. How the parts connect
+## 18. How the parts connect
 
 `analyze` (code) → `entities` (components, routes, modules) → `scenario runner` (Chrome, trend) → `heap` (snapshots, retained size, paths) → `correlate` (browser evidence + code findings) → `issues` (what you see) → `fix` (decision-aware changes) → `apply` → `verify` (build, tests, re-run) → `report`/`undo`.
 

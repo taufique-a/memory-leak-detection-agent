@@ -409,7 +409,7 @@ describe('page', () => {
   it("shows exactly one page at a time", () => {
     const markup = page.slice(page.indexOf('<main>'), page.indexOf('</main>'));
     const open = [...markup.matchAll(/class="page( on)?"/g)].map((m) => m[1] ?? '');
-    expect(open).toHaveLength(3);
+    expect(open).toHaveLength(4); // Set up, Find & fix, Live watch, Report
     expect(open.filter((x) => x.trim() === 'on')).toHaveLength(1);
   });
 

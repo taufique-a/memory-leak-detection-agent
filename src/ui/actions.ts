@@ -304,6 +304,32 @@ export const ACTIONS: readonly ActionDefinition[] = [
     driven: true,
   },
   {
+    id: 'live',
+    step: 2,
+    title: 'Watch my app live',
+    summary: 'Opens your app in Chrome with DevTools and shows the heap as you navigate',
+    why:
+      'You browse your own application; this watches. It reads the heap while you move around, ' +
+      'notes each route, and from two real heap snapshots tells you whether the page you left was ' +
+      'destroyed and what is still holding it. Nothing is guessed from code: a component only ' +
+      'counts as belonging to a page if it was really in the DOM there.',
+    expect: 'until you press Stop',
+    params: [
+      { name: 'url', type: 'url', required: true, label: 'App URL' },
+      { name: 'project', type: 'project', required: false, label: 'Project folder' },
+      { name: 'authFile', type: 'authFile', required: false, label: 'Saved sign-in' },
+    ],
+    build: (v) => [
+      'live',
+      '--base-url',
+      v['url'] ?? '',
+      ...(v['project'] !== undefined && v['project'] !== '' ? ['--project', v['project']] : []),
+      ...(v['authFile'] !== undefined && v['authFile'] !== '' ? ['--auth', v['authFile']] : []),
+    ],
+    needsApp: true,
+    driven: true,
+  },
+  {
     id: 'findfixApply',
     step: 2,
     title: 'Apply the selected fixes and verify them',

@@ -53,6 +53,9 @@ export interface BrowserOptions {
    */
   storageStateFile?: string;
 
+  /** Open Chrome DevTools for every tab (forces a visible window). Off by default. */
+  devtools?: boolean;
+
   /**
    * Open Chrome's remote-debugging port (loopback only) on this port, so the
    * Chrome DevTools MCP server can attach to this same browser. Pass 0 to
@@ -86,7 +89,8 @@ export async function launchBrowser(options: BrowserOptions = {}): Promise<Brows
   const debugPort = options.debugPort === undefined ? undefined : options.debugPort === 0 ? await freePort() : options.debugPort;
   const browser = await chromium.launch({
     channel: 'chrome',
-    headless: options.headed !== true,
+    headless: options.headed !== true && options.devtools !== true,
+    ...(options.devtools === true ? { devtools: true } : {}),
     ...(options.slowMoMs !== undefined ? { slowMo: options.slowMoMs } : {}),
     args: [
       // Required for HeapProfiler.collectGarbage to actually collect.
