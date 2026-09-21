@@ -274,8 +274,13 @@ function buildEntityIndex(projectRoot: string): EntityIndex {
       provenByName.set(e.name, [...(provenByName.get(e.name) ?? []), e]);
     }
   }
+  // Same class name is only a problem when two of them claim the SAME route.
+  // OverviewComponent at /overview and OverviewComponent at /overview-v2 are
+  // two proven pages that happen to share a name - each is told apart by its route.
   for (const group of provenByName.values()) {
-    if (group.length > 1) for (const e of group) e.ambiguousName = true;
+    for (const e of group) {
+      if (group.some((o) => o !== e && o.routes.some((r) => e.routes.includes(r)))) e.ambiguousName = true;
+    }
   }
 
   /**
@@ -324,10 +329,15 @@ function collectRoutesAndModules(
   roots: RouteNode[],
   entities: Entity[],
 ): { routes: RouteOption[]; modules: LazyModule[] } {
-  const drivable = new Map<string, Entity>();
+  const drivable = new Map<string, Entity[]>();
   for (const e of entities) {
-    if (e.investigable && e.ambiguousName !== true) drivable.set(e.name, e);
+    if (e.investigable && e.ambiguousName !== true) drivable.set(e.name, [...(drivable.get(e.name) ?? []), e]);
   }
+  /** The class of that name whose own route this is (or the only one there is). */
+  const drivableFor = (name: string, route: string): Entity | undefined => {
+    const list = drivable.get(name) ?? [];
+    return list.find((e) => e.routes.includes(route)) ?? (list.length === 1 ? list[0] : undefined);
+  };
 
   const routes = new Map<string, RouteOption>();
   const modules: LazyModule[] = [];
@@ -348,7 +358,7 @@ function collectRoutesAndModules(
     }
 
     const componentName = node.componentName ?? node.lazyComponentName;
-    const entity = componentName !== undefined ? drivable.get(componentName) : undefined;
+    const entity = componentName !== undefined ? drivableFor(componentName, node.fullPath) : undefined;
     if (entity !== undefined && !node.fullPath.includes(':') && !routes.has(node.fullPath)) {
       const innermost = stack[stack.length - 1];
       routes.set(node.fullPath, {

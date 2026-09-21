@@ -80,6 +80,10 @@ describe('subscriber outlives the source vs. shares its lifetime', () => {
     const [d] = decide(comp('ngOnInit() { this.form.valueChanges.subscribe(() => {}); }'));
     expect(d).toMatchObject({ need: 'no', rule: 'own-form' });
   });
+  it('leaves an Angular 15 UntypedFormGroup the component built', () => {
+    const [d] = decide(comp('f = new UntypedFormGroup({}); ngOnInit() { this.f.valueChanges.subscribe(() => {}); }'));
+    expect(d).toMatchObject({ need: 'no', rule: 'own-form' });
+  });
   it('flags a component subscribing to a module-provided service BehaviorSubject', () => {
     const [d] = decide(comp('ngOnInit() { this.devices.devices$.subscribe(() => {}); }'));
     expect(d).toMatchObject({ need: 'yes', rule: 'root-subject' });
@@ -87,6 +91,34 @@ describe('subscriber outlives the source vs. shares its lifetime', () => {
   it('leaves a service method that returns an HTTP call', () => {
     const [d] = decide(comp('ngOnInit() { this.devices.getDevices().subscribe(() => {}); }'));
     expect(d).toMatchObject({ need: 'no', rule: 'service-http' });
+  });
+  it('leaves a service method that keeps its HTTP call in a variable and a cache (IOSense getDevices)', () => {
+    const svc = `
+@Injectable({ providedIn: 'root' })
+export class CachedService {
+  private cache$: any;
+  getDevices(useCache?: boolean) {
+    if (useCache) { if (this.cache$) { return this.cache$; } }
+    const req$ = this.http.get('/api/account/devices').pipe(tap(console.log), shareReplay(1));
+    this.cache$ = req$;
+    return req$;
+  }
+  constructor(private http: HttpClient) {}
+}`;
+    const src = comp('ngOnInit() { this.cached.getDevices().subscribe(() => {}); }', 'private cached: CachedService');
+    const [d] = decide(src, knowledgeFor(SERVICES, MODULE, svc, src));
+    expect(d).toMatchObject({ need: 'no', rule: 'service-http' });
+  });
+  it('still flags a service method that returns a long-lived subject-backed stream', () => {
+    const svc = `
+@Injectable({ providedIn: 'root' })
+export class LiveService {
+  private subject = new BehaviorSubject(null);
+  getLive() { const s$ = this.subject.asObservable(); return s$; }
+}`;
+    const src = comp('ngOnInit() { this.live.getLive().subscribe(() => {}); }', 'private live: LiveService');
+    const decisions = decide(src, knowledgeFor(SERVICES, MODULE, svc, src));
+    expect(decisions[0]?.rule).not.toBe('service-http');
   });
   it('leaves a component-provided service (dies with the component)', () => {
     const src = comp('ngOnInit() { this.store.changes$.subscribe(() => {}); }', 'private store: LocalStore').replace(

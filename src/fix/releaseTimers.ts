@@ -54,12 +54,30 @@ export function collectGlobalTimerCalls(
     );
   };
 
+  /**
+   * A setTimeout started from a @HostListener runs once per event and frees
+   * itself when it fires. Keeping every handle for ngOnDestroy would make the
+   * array grow with each click or key press for as long as the component lives.
+   */
+  const inHostListener = (node: ts.Node): boolean => {
+    for (let n: ts.Node | undefined = node; n !== undefined; n = n.parent) {
+      if (ts.isMethodDeclaration(n)) {
+        return (ts.getDecorators(n) ?? []).some(
+          (d) => ts.isCallExpression(d.expression) && d.expression.expression.getText() === 'HostListener',
+        );
+      }
+    }
+    return false;
+  };
+
   const walk = (node: ts.Node, rebindsThis: boolean): void => {
     if (refusal !== undefined) return;
 
     if (ts.isCallExpression(node) && isTargetGlobal(node)) {
       const parent = node.parent;
-      if (ts.isExpressionStatement(parent)) {
+      if (ts.isExpressionStatement(parent) && globalName === 'setTimeout' && inHostListener(node)) {
+        // left alone on purpose - see inHostListener
+      } else if (ts.isExpressionStatement(parent)) {
         if (rebindsThis) {
           refusal = {
             reason:

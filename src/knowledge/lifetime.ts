@@ -120,11 +120,33 @@ function returnsHttp(method: ts.MethodDeclaration): boolean {
   if (method.body === undefined) return false;
   let http = false;
   let stream = false;
+  const isHttpCall = (t: string): boolean => /\bthis\.(http|httpClient|_http)\b\s*\./.test(t) && !/\b\w+\$\b/.test(t);
+  // `const req$ = this.http.get(..); this.cache$ = req$; return req$;` (or a
+  // cached `return this.cache$`) is still one HTTP request, just kept in a variable.
+  const httpNames = new Set<string>();
+  const collect = (n: ts.Node): void => {
+    if (ts.isFunctionLike(n) && n !== method) return;
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer !== undefined && isHttpCall(n.initializer.getText())) {
+      httpNames.add(n.name.text);
+    }
+    ts.forEachChild(n, collect);
+  };
+  collect(method.body);
+  const cached = new Set<string>();
+  const collectCache = (n: ts.Node): void => {
+    if (ts.isFunctionLike(n) && n !== method) return;
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isPropertyAccessExpression(n.left)) {
+      const right = n.right.getText();
+      if (isHttpCall(right) || httpNames.has(right)) cached.add(n.left.getText());
+    }
+    ts.forEachChild(n, collectCache);
+  };
+  collectCache(method.body);
   const visit = (n: ts.Node): void => {
     if (ts.isFunctionLike(n) && n !== method) return;
     if (ts.isReturnStatement(n) && n.expression !== undefined) {
       const t = n.expression.getText();
-      if (/\bthis\.(http|httpClient|_http)\b\s*\./.test(t) && !/\b\w+\$\b/.test(t)) http = true;
+      if (httpNames.has(t) || cached.has(t) || isHttpCall(t)) http = true;
       else if (/\bthis\.\w+\$?\b\s*\.(asObservable|pipe)\(|\$/.test(t)) stream = true;
     }
     ts.forEachChild(n, visit);
@@ -317,7 +339,7 @@ function injectedTypes(cls: ts.ClassDeclaration): Map<string, string> {
 /** Fields this class builds itself: `this.form = this.fb.group(...)`, `new FormControl()`. */
 function ownedForms(cls: ts.ClassDeclaration): Set<string> {
   const owned = new Set<string>();
-  const isMaker = (t: string): boolean => /(\.group\(|\.control\(|\.array\(|new Form(Group|Control|Array)\b)/.test(t);
+  const isMaker = (t: string): boolean => /(\.group\(|\.control\(|\.array\(|new (Untyped)?Form(Group|Control|Array)\b)/.test(t);
   const visit = (n: ts.Node): void => {
     if (ts.isPropertyDeclaration(n) && n.initializer !== undefined && n.name !== undefined && isMaker(n.initializer.getText())) {
       owned.add(n.name.getText());

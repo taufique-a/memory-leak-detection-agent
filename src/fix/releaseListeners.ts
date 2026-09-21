@@ -37,6 +37,8 @@ export interface ListenerFix {
   /** `this.foo` / `window` / etc - repeated verbatim in the remove call. */
   targetText: string;
   eventName: string;
+  /** True when the target is a fresh lookup that may be gone by now, so removal uses `?.`. */
+  optionalTarget?: boolean;
   /** The exact expression removeEventListener should be given. */
   handlerText: string;
   /**
@@ -116,6 +118,55 @@ function isOwnMember(target: ts.ClassDeclaration, name: string): boolean {
   return target.members.some((m) => m.name !== undefined && ts.isIdentifier(m.name) && m.name.text === name);
 }
 
+/**
+ * The target's first name must exist inside ngOnDestroy: `this`, a global such
+ * as window/document, or a member of this class. A local variable (for example
+ * `const el = document.querySelector(...)` in ngAfterViewInit) is out of scope
+ * there, and copying it into ngOnDestroy would not compile.
+ */
+function targetIsReachable(target: ts.ClassDeclaration, expr: ts.Expression): boolean {
+  let root: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(root) || ts.isNonNullExpression(root) || ts.isPropertyAccessExpression(root)) {
+    root = root.expression;
+  }
+  if (root.kind === ts.SyntaxKind.ThisKeyword) return true;
+  return ts.isIdentifier(root) && (SAFE_GLOBALS.has(root.text) || isOwnMember(target, root.text));
+}
+
+/**
+ * `const box = document.querySelector('#main-panel')` in ngAfterViewInit, then
+ * `box.addEventListener(...)`. ngOnDestroy cannot see `box`, but it can look the
+ * same fixed selector up again. Only a const bound to a query with a string
+ * literal qualifies, so the second lookup reaches the same element.
+ */
+function resolveLocalTarget(expr: ts.Expression, sourceFile: ts.SourceFile): string | undefined {
+  if (!ts.isIdentifier(expr)) return undefined;
+  let scope: ts.Node | undefined = expr.parent;
+  while (scope !== undefined && !ts.isFunctionLike(scope)) scope = scope.parent;
+  if (scope === undefined) return undefined;
+  let found: string | undefined;
+  const visit = (n: ts.Node): void => {
+    if (
+      found === undefined &&
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.name.text === expr.text &&
+      ts.isVariableDeclarationList(n.parent) &&
+      (n.parent.flags & ts.NodeFlags.Const) !== 0 &&
+      n.initializer !== undefined &&
+      ts.isCallExpression(n.initializer) &&
+      /^document.(querySelector|getElementById)$/.test(n.initializer.expression.getText(sourceFile)) &&
+      n.initializer.arguments.length === 1 &&
+      ts.isStringLiteralLike(n.initializer.arguments[0] as ts.Expression)
+    ) {
+      found = n.initializer.getText(sourceFile);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(scope);
+  return found;
+}
+
 const safeOptions = (optionsArg: ts.Expression | undefined): boolean =>
   optionsArg === undefined ||
   optionsArg.kind === ts.SyntaxKind.TrueKeyword ||
@@ -159,13 +210,17 @@ export function collectEventListeners(
           ? eventArg.text
           : undefined;
 
+      const reachable = isSimpleRepeatableExpression(targetExpr) && targetIsReachable(target, targetExpr);
+      const lookedUp = reachable ? undefined : resolveLocalTarget(targetExpr, sourceFile);
+
       if (
         eventName !== undefined &&
         handlerArg !== undefined &&
-        isSimpleRepeatableExpression(targetExpr) &&
+        (reachable || lookedUp !== undefined) &&
         safeOptions(optionsArg)
       ) {
-        const targetText = targetExpr.getText(sourceFile);
+        const targetText = lookedUp ?? targetExpr.getText(sourceFile);
+        const optionalTarget = lookedUp !== undefined;
         const optionsText = optionsArg?.getText(sourceFile);
 
         if (
@@ -175,6 +230,7 @@ export function collectEventListeners(
           fixes.push({
             targetText,
             eventName,
+            ...(optionalTarget ? { optionalTarget } : {}),
             handlerText: handlerArg.getText(sourceFile),
             ...(optionsText !== undefined ? { optionsText } : {}),
           });
@@ -183,6 +239,7 @@ export function collectEventListeners(
           fixes.push({
             targetText,
             eventName,
+            ...(optionalTarget ? { optionalTarget } : {}),
             handlerText: `this.${name}`,
             newField: { name, arrowText: handlerArg.getText(sourceFile), handlerNode: handlerArg },
             ...(optionsText !== undefined ? { optionsText } : {}),

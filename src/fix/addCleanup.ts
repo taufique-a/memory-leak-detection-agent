@@ -268,7 +268,7 @@ export function addCleanup(
       edits.push({ start: node.getStart(sourceFile), end: node.getEnd(), text: fix.handlerText });
     }
     statements.push(
-      `${fix.targetText}.removeEventListener(${quote(fix.eventName)}, ${fix.handlerText}` +
+      `${fix.targetText}${fix.optionalTarget === true ? '?.' : '.'}removeEventListener(${quote(fix.eventName)}, ${fix.handlerText}` +
         `${fix.optionsText !== undefined ? `, ${fix.optionsText}` : ''});`,
     );
   }

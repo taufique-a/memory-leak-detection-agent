@@ -394,3 +394,54 @@ describe('generated scenarios', () => {
     expect(JSON.stringify(scenario.steps)).toContain('/energy/alt');
   });
 });
+
+describe('same class name, different routes (IOSense OverviewComponent)', () => {
+  let root: string;
+  const put = (rel: string, text: string): void => {
+    const full = path.join(root, rel);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, text, 'utf8');
+  };
+
+  beforeAll(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-agent-samename-'));
+    put('package.json', JSON.stringify({ name: 'samename', dependencies: {} }));
+    put(
+      'angular.json',
+      JSON.stringify({ version: 1, projects: { app: { root: '', sourceRoot: 'src', projectType: 'application' } } }),
+    );
+    put(
+      'src/app/app.routing.ts',
+      `export const routes = [
+         { path: 'overview', loadChildren: () => import('./one/one.module').then((m) => m.OneModule) },
+         { path: 'overview-v2', loadChildren: () => import('./two/two.module').then((m) => m.TwoModule) },
+       ];`,
+    );
+    for (const dir of ['one', 'two']) {
+      put(
+        `src/app/${dir}/${dir}.routing.ts`,
+        `import { OverviewComponent } from './overview.component';
+         export const routes = [{ path: '', component: OverviewComponent }];`,
+      );
+      put(`src/app/${dir}/${dir}.module.ts`, `export class ${dir === 'one' ? 'One' : 'Two'}Module {}`);
+      put(
+        `src/app/${dir}/overview.component.ts`,
+        `import { Component } from '@angular/core';
+         @Component({ selector: 'overview', template: '' })
+         export class OverviewComponent {}`,
+      );
+    }
+  });
+
+  afterAll(() => {
+    if (root && fs.existsSync(root)) fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('offers both pages, each tied to its own file', () => {
+    const index = getEntityIndex(root, true);
+    const one = index.routes.find((r) => r.path === '/overview');
+    const two = index.routes.find((r) => r.path === '/overview-v2');
+    expect(one?.file).toBe('src/app/one/overview.component.ts');
+    expect(two?.file).toBe('src/app/two/overview.component.ts');
+  });
+});

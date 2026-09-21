@@ -66,6 +66,58 @@ describe('setTimeout', () => {
   });
 });
 
+describe('IOSense picker shapes (preset-date-time-picker)', () => {
+  it('re-queries a fixed selector in ngOnDestroy instead of copying the out-of-scope local', () => {
+    const { newContent } = apply(`${HEADER}export class DemoComponent {
+  ngAfterViewInit(): void {
+    const scrollContainer = document.querySelector('#main-panel');
+    scrollContainer?.addEventListener('scroll', () => { this.update(); }, { passive: true });
+  }
+}
+`);
+    expect(newContent).toContain("document.querySelector('#main-panel')?.removeEventListener('scroll', this.onscrollListener, { passive: true });");
+    expect(newContent).not.toContain('scrollContainer.removeEventListener');
+  });
+
+  it('REFUSES a local target that is not a fixed-selector lookup (it would not compile in ngOnDestroy)', () => {
+    const reason = refuse(`${HEADER}export class DemoComponent {
+  ngAfterViewInit(): void {
+    const el = this.pickElement();
+    el.addEventListener('scroll', () => { this.update(); });
+  }
+}
+`);
+    expect(reason).toBeTruthy();
+  });
+
+  it('still fixes a window listener beside a refused local-target one, without naming the local', () => {
+    const { newContent } = apply(`${HEADER}export class DemoComponent {
+  ngAfterViewInit(): void {
+    const box = document.querySelector(this.selector);
+    box?.addEventListener('scroll', () => { this.update(); });
+    window.addEventListener('resize', () => { this.update(); });
+  }
+}
+`);
+    expect(newContent).toContain("window.removeEventListener('resize'");
+    expect(newContent).not.toContain('box.removeEventListener');
+    expect(newContent).not.toContain('box?.removeEventListener');
+  });
+
+  it('does not keep a handle for a one-shot setTimeout started from a @HostListener', () => {
+    const { newContent } = apply(`import { Component, HostListener } from '@angular/core';
+@Component({ selector: 'app-demo', template: '' })
+export class DemoComponent {
+  @HostListener('document:click', ['$event'])
+  onDocumentClick(e: MouseEvent): void { setTimeout(() => this.close(e), 0); }
+  ngOnInit(): void { setTimeout(() => this.tick(), 1000); }
+}
+`);
+    expect(newContent).toContain('this.timeouts.push(setTimeout(() => this.tick(), 1000));');
+    expect(newContent).not.toContain('this.timeouts.push(setTimeout(() => this.close(e), 0));');
+  });
+});
+
 describe('requestAnimationFrame', () => {
   it('keeps a discarded handle and cancels it', () => {
     const { newContent, wrapped } = apply(`${HEADER}export class DemoComponent {
