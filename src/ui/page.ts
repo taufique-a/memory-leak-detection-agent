@@ -1236,7 +1236,11 @@ function applyRouteOptions(data) {
     '<option value="">Any page in the app (' + data.routes.length + ' pages)</option>' +
     data.modules.map((m) =>
       '<option value="' + esc(m.id) + '">' + esc(m.name) + ' — ' + esc(m.path) + ' (lazy-loaded, ' +
-      m.routes.length + (m.routes.length === 1 ? ' page)' : ' pages)') + '</option>').join('');
+      m.routes.length + (m.routes.length === 1 ? ' page)' : ' pages)') + '</option>').join('') +
+    // Pages declared straight in app-routing (or standalone components), not inside a lazy module.
+    data.routes.filter((r) => !r.moduleId).map((r) =>
+      '<option value="route:' + esc(r.path) + '">' + esc(r.component) + ' — ' + esc(r.path) +
+      ' (page)</option>').join('');
   pick('ffModule', keep.module);
   fillNavA();
   pick('ffNavA', keep.a);
@@ -1344,10 +1348,19 @@ function selectedModule() {
   return ffOptions ? ffOptions.modules.find((m) => m.id === $('ffModule').value) : undefined;
 }
 
+/** The value of ffModule when a single page, not a module, was picked. */
+function pickedPage() {
+  const v = $('ffModule').value;
+  return v.indexOf('route:') === 0 ? v.slice(6) : '';
+}
+
 function fillNavA() {
   if (!ffOptions) return;
   const mod = selectedModule();
-  const list = mod ? ffOptions.routes.filter((r) => mod.routes.indexOf(r.path) !== -1) : ffOptions.routes;
+  const page = pickedPage();
+  const list = page
+    ? ffOptions.routes.filter((r) => r.path === page)
+    : mod ? ffOptions.routes.filter((r) => mod.routes.indexOf(r.path) !== -1) : ffOptions.routes;
   $('ffNavA').innerHTML = list
     .map((r) => '<option value="' + esc(r.path) + '">' + esc(routeLabel(r.path)) + '</option>')
     .join('');
@@ -1471,7 +1484,7 @@ async function startFind() {
 $('ffRouteGo').addEventListener('click', () => {
   startScan({
     mode: 'route',
-    moduleId: $('ffModule').value,
+    moduleId: pickedPage() ? '' : $('ffModule').value,
     targetRoute: $('ffNavA').value,
     controlRoute: $('ffNavB').value,
     iterations: timesOf('ffTimesRoute'),
