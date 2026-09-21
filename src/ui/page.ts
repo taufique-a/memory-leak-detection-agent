@@ -1358,12 +1358,12 @@ function fillNavA() {
   if (!ffOptions) return;
   const mod = selectedModule();
   const page = pickedPage();
-  const list = page
-    ? ffOptions.routes.filter((r) => r.path === page)
-    : mod ? ffOptions.routes.filter((r) => mod.routes.indexOf(r.path) !== -1) : ffOptions.routes;
-  $('ffNavA').innerHTML = list
+  // Every route is always offered; the module above only chooses which one starts selected.
+  $('ffNavA').innerHTML = ffOptions.routes
     .map((r) => '<option value="' + esc(r.path) + '">' + esc(routeLabel(r.path)) + '</option>')
     .join('');
+  const first = page || (mod && mod.routes[0]);
+  if (first) $('ffNavA').value = first;
   fillNavB('ffNavB', $('ffNavA').value, mod);
 }
 
@@ -1484,7 +1484,10 @@ async function startFind() {
 $('ffRouteGo').addEventListener('click', () => {
   startScan({
     mode: 'route',
-    moduleId: pickedPage() ? '' : $('ffModule').value,
+    // Only pass the module when Navigation A is actually one of its pages.
+    moduleId: selectedModule() && selectedModule().routes.indexOf($('ffNavA').value) !== -1
+      ? $('ffModule').value
+      : '',
     targetRoute: $('ffNavA').value,
     controlRoute: $('ffNavB').value,
     iterations: timesOf('ffTimesRoute'),
