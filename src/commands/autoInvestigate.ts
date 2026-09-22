@@ -37,6 +37,7 @@ import { askLine } from '../utils/prompt';
 import { runVerification } from '../verify/checks';
 import { compareBeforeAfter, deriveVerificationStatus } from '../verify/compare';
 import type { CorrelationResult } from '../types/correlation';
+import { isRuntimeEstablished } from '../types/index';
 import { extractBaseUrlArg, loadScenarioFile } from '../scenario/load';
 import {
   clearProgressLine,
@@ -256,7 +257,7 @@ export async function runAuto(args: string[]): Promise<number> {
 
   /* ---- 5. propose ---- */
   const candidates = correlation.findings
-    .filter((f) => f.confidence === 'PROVEN' || f.confidence === 'LIKELY')
+    .filter((f) => isRuntimeEstablished(f.confidence))
     .slice(0, parsed.maxFixes);
 
   const proposals: ProposedFix[] = [];

@@ -7,6 +7,7 @@
  */
 
 import type { Finding } from '../types/finding';
+import { CONFIDENCE_LEVELS } from '../types/index';
 import type { Investigation, MemoryEvidence, Section } from '../types/investigation';
 import type { RouteSweepResult } from '../types/routeSweep';
 
@@ -100,10 +101,7 @@ export function renderMarkdown(inv: Investigation): string {
   p();
   p('| Confidence | Count |');
   p('|---|---|');
-  p(`| PROVEN | ${inv.summary.byConfidence.PROVEN} |`);
-  p(`| LIKELY | ${inv.summary.byConfidence.LIKELY} |`);
-  p(`| POSSIBLE | ${inv.summary.byConfidence.POSSIBLE} |`);
-  p(`| UNKNOWN | ${inv.summary.byConfidence.UNKNOWN} |`);
+  for (const level of CONFIDENCE_LEVELS) p(`| ${level} | ${inv.summary.byConfidence[level]} |`);
   p();
   p(`- Total findings: **${inv.summary.totalFindings}**`);
   if (inv.summary.includedFindings < inv.summary.totalFindings) {

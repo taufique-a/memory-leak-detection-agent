@@ -1832,7 +1832,9 @@ function renderRound(r) {
   if (r.watchList.length) {
     html += '<details class="banner"><summary>Also worth a look: ' + r.watchList.length +
       ' place(s) the agent could not tie a working automatic fix to</summary>' +
-      '<ul class="state">' + r.watchList.map((w) => '<li>' + esc(w.issue) + ' — ' + openLink(w.file, w.line) + '</li>').join('') +
+      '<ul class="state">' + r.watchList.map((w) => '<li>' + esc(w.issue) + ' — ' + openLink(w.file, w.line) +
+        (w.action ? ' <span class="sub" title="' + esc(w.actionReason || '') + '">' + esc(w.action) + '</span>' : '') +
+        '</li>').join('') +
       '</ul></details>';
   }
 
@@ -1868,10 +1870,19 @@ function updateSelectBar() {
   }
 }
 
+/* The six confidence levels, as a person reads them. */
+const CONFIDENCE_PILL = {
+  PROVEN: ['bad', 'proven'],
+  HIGH: ['bad', 'high confidence'],
+  MEDIUM: ['warn', 'medium confidence'],
+  LOW: ['warn', 'low confidence'],
+  UNKNOWN: ['', 'unknown'],
+  INCONCLUSIVE: ['ok', 'inconclusive'],
+};
+
 function issueCard(issue) {
-  const sure = issue.confidence === 'PROVEN'
-    ? '<span class="pill bad">confirmed</span>'
-    : '<span class="pill warn">likely</span>';
+  const pill = CONFIDENCE_PILL[issue.confidence] || ['', String(issue.confidence).toLowerCase()];
+  const sure = '<span class="pill ' + pill[0] + '">' + esc(pill[1]) + '</span>';
   const applied = appliedChange(issue.id);
   return '<div class="issue">' +
     (applied
@@ -1888,6 +1899,10 @@ function issueCard(issue) {
           issue.code.map((c) => esc('line ' + c.line + ':  ' + c.snippet)).join('\\n') + '</div></details>'
         : '')) +
     section('Suggested change', '<p>' + esc(issue.suggestedChange) + '</p>') +
+    (issue.action
+      ? section('Recommended action', '<p><strong>' + esc(issue.action) + '</strong></p>' +
+          '<p class="sub">' + esc(issue.actionReason || '') + '</p>')
+      : '') +
     '<div class="sec fixrow">' +
     (applied
       ? '<span class="pill ok">fix applied</span><span class="sub">' + esc(applied.title) + ' — see the result above.</span>'

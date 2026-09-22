@@ -24,6 +24,7 @@ import { assessRisk } from '../risk';
 import { runScenario, type ScenarioRun } from '../scenario/runner';
 import { majorVersion, readWorkspace, supportedCleanupIdioms } from '../scanner/workspace';
 import { extractBaseUrlArg, loadScenarioFile } from '../scenario/load';
+import { isRuntimeEstablished } from '../types/index';
 import { runVerification } from '../verify/checks';
 import { colour, duration, field, heading, info, num, warn } from '../utils/logger';
 
@@ -237,14 +238,14 @@ export async function runFix(args: string[]): Promise<number> {
 
   /* ---- propose ---- */
   const candidates = correlation.findings
-    .filter((f) => f.confidence === 'PROVEN' || f.confidence === 'LIKELY')
+    .filter((f) => isRuntimeEstablished(f.confidence))
     .slice(0, parsed.maxFixes);
 
   if (candidates.length === 0) {
     heading('NO FIX CANDIDATES');
     info(
       colour.dim(
-        'No finding reached LIKELY once runtime evidence was applied. Fixes are only\n' +
+        'No finding reached HIGH once runtime evidence was applied. Fixes are only\n' +
           '  generated for findings the browser actually corroborated - changing source on\n' +
           '  the strength of a static guess is how a tool loses trust.',
       ),

@@ -62,8 +62,8 @@ describe('version', () => {
 });
 
 describe('core vocabulary', () => {
-  it('exposes the four confidence levels', () => {
-    expect(CONFIDENCE_LEVELS).toEqual(['PROVEN', 'LIKELY', 'POSSIBLE', 'UNKNOWN']);
+  it('exposes the six confidence levels', () => {
+    expect(CONFIDENCE_LEVELS).toEqual(['PROVEN', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN', 'INCONCLUSIVE']);
   });
 
   it('separates evidence level from confidence', () => {

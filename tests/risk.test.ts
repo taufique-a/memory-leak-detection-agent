@@ -75,6 +75,19 @@ describe('invariants', () => {
     }
   });
 
+  it('static analysis can NEVER return HIGH either', () => {
+    // HIGH is the fix engine's gate. If reading source could reach it, the
+    // agent would rewrite code the browser never showed to be leaking.
+    const cases = [
+      `class C { ngOnInit() { setInterval(() => {}, 1000); } }`,
+      `class C { ngOnInit() { window.addEventListener('resize', () => {}); } }`,
+      `class C { ngOnInit() { this.a$.pipe(takeUntil(this.d$)).subscribe(); } }`,
+    ];
+    for (const code of cases) {
+      expect(score(code, routed())?.confidence).not.toBe('HIGH');
+    }
+  });
+
   it('always reports evidence as STATIC_SUSPICION', () => {
     const finding = score(`class C { ngOnInit() { setInterval(() => {}, 1000); } }`, routed());
     expect(finding?.evidence).toBe('STATIC_SUSPICION');
@@ -126,7 +139,7 @@ describe('invariants', () => {
     );
     expect(finding).toBeDefined();
     expect(finding?.factors.some((f) => f.key === 'broken-takeuntil')).toBe(true);
-    expect(finding?.confidence).toBe('LIKELY');
+    expect(finding?.confidence).toBe('MEDIUM');
   });
 });
 
@@ -177,9 +190,9 @@ describe('ranking', () => {
     expect(guessed?.factors.some((f) => f.key === 'all-likely-finite-by-name')).toBe(true);
   });
 
-  it('downgrades confidence to POSSIBLE when everything rests on a naming guess', () => {
+  it('downgrades confidence to LOW when everything rests on a naming guess', () => {
     const finding = score(`class C { ngOnInit() { this.svc.getThings().subscribe(); } }`, routed());
-    expect(finding?.confidence).toBe('POSSIBLE');
+    expect(finding?.confidence).toBe('LOW');
   });
 
   it('adds a blast-radius factor when a class holds several heavy resources', () => {
@@ -236,16 +249,16 @@ describe('confidence derivation', () => {
     explanation: '',
   });
 
-  it('gives LIKELY when release is provably impossible', () => {
-    expect(deriveConfidence(pairing('impossible'), 1, 0)).toBe('LIKELY');
+  it('gives MEDIUM - the static ceiling - when release is provably impossible', () => {
+    expect(deriveConfidence(pairing('impossible'), 1, 0)).toBe('MEDIUM');
   });
 
-  it('gives POSSIBLE when a release is merely absent', () => {
-    expect(deriveConfidence(pairing('none'), 1, 0)).toBe('POSSIBLE');
+  it('gives LOW when a release is merely absent', () => {
+    expect(deriveConfidence(pairing('none'), 1, 0)).toBe('LOW');
   });
 
-  it('caps at POSSIBLE when every acquire is a naming guess', () => {
-    expect(deriveConfidence(pairing('impossible'), 3, 3)).toBe('POSSIBLE');
+  it('caps at LOW when every acquire is a naming guess', () => {
+    expect(deriveConfidence(pairing('impossible'), 3, 3)).toBe('LOW');
   });
 });
 

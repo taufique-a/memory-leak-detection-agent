@@ -7,9 +7,11 @@
 
 import type { HeapInvestigationResult } from '../heap/investigate';
 import type { RiskResult } from '../risk';
+import type { TrendVerdict } from '../runtime/trend';
 import type { ScenarioRun } from '../scenario/runner';
 import type { Scenario } from '../scenario/types';
 import type { Finding } from '../types/finding';
+import { emptyConfidenceTally } from '../types/index';
 import type { Confidence, EvidenceLevel } from '../types/index';
 import type {
   CorrelatedFinding,
@@ -183,7 +185,7 @@ export function correlate(input: CorrelateInput): CorrelationResult {
       });
     }
 
-    const { confidence, rationale } = deriveConfidence(finding, support, run !== undefined);
+    const { confidence, rationale } = deriveConfidence(finding, support, run?.trend.verdict);
 
     return {
       finding,
@@ -294,18 +296,33 @@ function collectRoutePaths(scenario: Scenario | undefined): string[] {
 function deriveConfidence(
   finding: Finding,
   support: RuntimeSupport[],
-  hadRun: boolean,
+  /** The measured trend, or undefined when no browser run happened. */
+  trend: TrendVerdict | undefined,
 ): { confidence: Confidence; rationale: string[] } {
   const rationale: string[] = [];
   const strong = support.filter((s) => s.weight === 'strong');
   const moderate = support.filter((s) => s.weight === 'moderate');
 
-  if (!hadRun) {
+  if (trend === undefined) {
     rationale.push(
       'No runtime evidence was gathered, so this remains a static finding at its ' +
         'original confidence.',
     );
     return { confidence: finding.confidence, rationale };
+  }
+
+  if (support.length === 0 && (trend === 'STABLE' || trend === 'SHRINKING')) {
+    /* The one place INCONCLUSIVE comes from. The browser ran the journey,
+       forced collections, and memory did not keep climbing - and nothing it
+       saw points at this code. That does not make the code harmless; it
+       means the evidence we hold does not establish a leak, which is
+       exactly what the word says. */
+    rationale.push(
+      'The browser measured this journey and memory did not keep growing, and nothing on ' +
+        'the run points at this code. The evidence does not establish a leak. It is not ' +
+        'proof the code is harmless either - the journey may never have run this path.',
+    );
+    return { confidence: 'INCONCLUSIVE', rationale };
   }
 
   if (support.length === 0) {
@@ -329,10 +346,10 @@ function deriveConfidence(
 
   if (strong.length === 1) {
     rationale.push(
-      'One strong observation names this finding specifically. Raised to LIKELY; a ' +
+      'One strong observation names this finding specifically. Raised to HIGH; a ' +
         'second independent signal would be needed for PROVEN.',
     );
-    return { confidence: 'LIKELY', rationale };
+    return { confidence: 'HIGH', rationale };
   }
 
   if (moderate.length > 0) {
@@ -340,7 +357,7 @@ function deriveConfidence(
       'Moderate corroboration only - the evidence is consistent with this finding but ' +
         'does not single it out from others on the same journey.',
     );
-    return { confidence: raise(finding.confidence, 'POSSIBLE'), rationale };
+    return { confidence: raise(finding.confidence, 'MEDIUM'), rationale };
   }
 
   rationale.push(
@@ -350,9 +367,14 @@ function deriveConfidence(
   return { confidence: finding.confidence, rationale };
 }
 
-/** Never downgrade a static conclusion; only raise it. */
+/**
+ * Never downgrade a static conclusion; only raise it.
+ *
+ * INCONCLUSIVE is not on this ladder: it is not "less sure than LOW", it is
+ * "measured, and not established". Nothing raises into it or out of it here.
+ */
 function raise(current: Confidence, floor: Confidence): Confidence {
-  const order: Confidence[] = ['UNKNOWN', 'POSSIBLE', 'LIKELY', 'PROVEN'];
+  const order: Confidence[] = ['UNKNOWN', 'LOW', 'MEDIUM', 'HIGH', 'PROVEN'];
   return order.indexOf(current) >= order.indexOf(floor) ? current : floor;
 }
 
@@ -427,12 +449,7 @@ function summarise(
   findings: CorrelatedFinding[],
   unexplained: UnexplainedEvidence[],
 ): CorrelationSummary {
-  const byConfidence: Record<Confidence, number> = {
-    PROVEN: 0,
-    LIKELY: 0,
-    POSSIBLE: 0,
-    UNKNOWN: 0,
-  };
+  const byConfidence = emptyConfidenceTally();
   let corroborated = 0;
 
   for (const f of findings) {

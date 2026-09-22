@@ -38,7 +38,8 @@ import {
 import { isTestFile, toRelativePosix, walkDirectory } from '../scanner/walk';
 import { readWorkspace } from '../scanner/workspace';
 import type { ClassAnalysis } from '../types/analysis';
-import type { Confidence, Risk } from '../types/index';
+import { emptyConfidenceTally } from '../types/index';
+import type { Risk } from '../types/index';
 import type { Finding, FindingsResult, FindingsSummary } from '../types/finding';
 import { AGENT_VERSION } from '../version';
 import { scoreFinding } from './score';
@@ -260,12 +261,7 @@ export function assessRisk(projectPath: string, options: RiskOptions = {}): Risk
 
 function summarise(findings: Finding[], total: number): FindingsSummary {
   const byRisk: Record<Risk, number> = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
-  const byConfidence: Record<Confidence, number> = {
-    PROVEN: 0,
-    LIKELY: 0,
-    POSSIBLE: 0,
-    UNKNOWN: 0,
-  };
+  const byConfidence = emptyConfidenceTally();
   const byKind: Record<string, number> = {};
   let inRoutedComponents = 0;
 
@@ -291,7 +287,7 @@ function buildLimitations(typesUsed: boolean, total: number, shown: number): str
     'This is STATIC analysis. Nothing here has been observed at runtime - no ' +
       'application was launched and no memory was measured. A finding is a reason ' +
       'to investigate, not a confirmed leak.',
-    'Confidence never exceeds LIKELY. Reaching PROVEN requires runtime evidence ' +
+    'Confidence never exceeds MEDIUM. Reaching HIGH or PROVEN requires runtime evidence ' +
       'from the investigation phases.',
     'Pairing does not follow dataflow. When a release call exists we report that it ' +
       'exists, not that it covers every acquire.',

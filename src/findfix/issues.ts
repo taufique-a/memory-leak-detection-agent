@@ -12,12 +12,14 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { classifyAction, type ChangeShape } from '../core/diagnosis/action';
 import { proposeFix, type ProposedFix } from '../fix/propose';
 import type { HeapInvestigationResult } from '../heap/investigate';
 import { explainPath } from '../heap/retainers';
 import type { ScenarioRun } from '../scenario/runner';
 import { majorVersion, readWorkspace } from '../scanner/workspace';
 import type { CorrelatedFinding, CorrelationResult } from '../types/correlation';
+import { isRuntimeEstablished } from '../types/index';
 import { contentHash } from './session';
 import type { FindFixIssue, FindFixMeasurement, RetainedObject } from './types';
 
@@ -108,11 +110,20 @@ export function buildIssues(input: BuildIssuesInput): { issues: FindFixIssue[]; 
     (cf) => !input.exclude.has(cf.finding.id) && (inScope(cf) || implicated(cf)),
   );
 
+  /**
+   * The class name is shared by several files and the page's own folders
+   * do not say which one this is. A heap match on such a name cannot tell
+   * the files apart, so whatever this finding says about "the" file is a
+   * best guess - and the action has to say so.
+   */
+  const attributionUnresolved = (cf: CorrelatedFinding): boolean =>
+    (filesByName.get(cf.finding.location.className)?.size ?? 1) > 1 && !inDirectory(cf);
+
   const angularMajor = angularMajorOf(input.projectRoot);
   const toIssue = (cf: CorrelatedFinding): FindFixIssue =>
-    describe(cf, input, angularMajor);
+    describe(cf, input, angularMajor, attributionUnresolved(cf));
 
-  const confirmed = relevant.filter((cf) => cf.confidence === 'PROVEN' || cf.confidence === 'LIKELY').map(toIssue);
+  const confirmed = relevant.filter((cf) => isRuntimeEstablished(cf.confidence)).map(toIssue);
 
   /**
    * Only ever show an issue the agent can actually act on.
@@ -126,9 +137,14 @@ export function buildIssues(input: BuildIssuesInput): { issues: FindFixIssue[]; 
    * button that does nothing.
    */
   const issues = confirmed.filter((i) => i.canFix).slice(0, 6);
+  /* Suspicions the browser did not establish: shown so nothing is hidden,
+     never offered for fixing. INCONCLUSIVE belongs here too - the run
+     looked, and the evidence did not hold up; that is worth seeing. */
+  const notEstablished = (cf: CorrelatedFinding): boolean =>
+    cf.confidence === 'MEDIUM' || cf.confidence === 'LOW' || cf.confidence === 'INCONCLUSIVE';
   const watchList = confirmed
     .filter((i) => !i.canFix)
-    .concat(relevant.filter((cf) => cf.confidence === 'POSSIBLE' && inScope(cf)).map(toIssue))
+    .concat(relevant.filter((cf) => notEstablished(cf) && inScope(cf)).map(toIssue))
     .slice(0, 5);
 
   return { issues, watchList };
@@ -140,13 +156,35 @@ export function constructorMatches(constructorName: string, className: string): 
   return new RegExp(`(^|[^A-Za-z0-9_$])${escaped}($|[^A-Za-z0-9_$])`).test(constructorName);
 }
 
-function describe(cf: CorrelatedFinding, input: BuildIssuesInput, angularMajor: number | undefined): FindFixIssue {
+function describe(
+  cf: CorrelatedFinding,
+  input: BuildIssuesInput,
+  angularMajor: number | undefined,
+  attributionUnresolved: boolean,
+): FindFixIssue {
   const f = cf.finding;
   const proposal = proposeFix(cf, {
     projectRoot: input.projectRoot,
     ...(angularMajor !== undefined ? { angularMajor } : {}),
   });
   const canFix = proposal?.newContent !== undefined;
+
+  const change: ChangeShape =
+    proposal === undefined
+      ? 'none'
+      : canFix && proposal.safety !== 'manual-only'
+        ? proposal.safety
+        : 'manual-only';
+  const run = input.measurement;
+  const decision = classifyAction({
+    confidence: cf.confidence,
+    risk: f.risk,
+    change,
+    // Verification repeats this same journey. If this run did not finish
+    // it, there is no complete "before" to compare an "after" with.
+    verifiable: run.iterationsCompleted === run.iterationsRequested && run.abortedReason === undefined,
+    attributionUnresolved,
+  });
 
   const evidence: string[] = [];
   const m = input.measurement;
@@ -186,6 +224,8 @@ function describe(cf: CorrelatedFinding, input: BuildIssuesInput, angularMajor: 
     className: f.location.className,
     ...(f.location.angularKind !== undefined ? { angularKind: f.location.angularKind } : {}),
     confidence: cf.confidence,
+    action: decision.action,
+    actionReason: decision.reason,
     evidence: [...new Set(evidence)],
     code: acquires.slice(0, 6).map((o) => ({ line: o.line, snippet: o.snippet.trim() })),
     suggestedChange:

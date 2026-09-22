@@ -102,7 +102,7 @@ function correlatedFor(repo: string): CorrelatedFinding {
   return {
     finding,
     support: [],
-    confidence: 'LIKELY',
+    confidence: 'HIGH',
     staticConfidence: finding.confidence,
     evidence: 'RUNTIME',
     risk: finding.risk,

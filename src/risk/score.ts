@@ -369,12 +369,15 @@ export function deriveRisk(score: number): Risk {
 /**
  * Map evidence quality to confidence.
  *
- * THE HARD CEILING: static analysis can never return PROVEN.
+ * THE HARD CEILING: static analysis can never return PROVEN or HIGH.
  *
  * We have not run the application, taken a heap snapshot, or watched memory
- * grow. The strongest honest claim from reading source is LIKELY. Only
- * Phase 9+ runtime evidence can reach PROVEN, and letting a static pass
- * claim it would destroy the distinction the whole project rests on.
+ * grow. The strongest honest claim from reading source is MEDIUM - and that
+ * only where the code provably cannot release the resource as written.
+ * Everything softer than that is LOW, which is what "weak, or resting
+ * mostly on reading the source" means. Only runtime evidence raises a
+ * finding to HIGH or PROVEN, and letting a static pass claim either would
+ * destroy the distinction the whole project rests on.
  */
 export function deriveConfidence(
   pairing: ResourcePairing,
@@ -388,17 +391,17 @@ export function deriveConfidence(
    * nothing ever fires that signal. No naming guess is involved, so this
    * outranks the name-guess penalty below.
    */
-  if (brokenMitigationCount > 0) return 'LIKELY';
+  if (brokenMitigationCount > 0) return 'MEDIUM';
 
   // Everything rests on a naming guess we explicitly do not trust.
-  if (nameGuessCount === actionableCount && actionableCount > 0) return 'POSSIBLE';
+  if (nameGuessCount === actionableCount && actionableCount > 0) return 'LOW';
 
   if (pairing.coverage === 'impossible') {
     // We can prove the code CANNOT release it. Whether that retains memory
-    // at runtime still depends on the source's lifetime, so: LIKELY.
-    return 'LIKELY';
+    // at runtime still depends on the source's lifetime, so: MEDIUM.
+    return 'MEDIUM';
   }
-  if (pairing.coverage === 'none') return 'POSSIBLE';
+  if (pairing.coverage === 'none') return 'LOW';
   return 'UNKNOWN';
 }
 

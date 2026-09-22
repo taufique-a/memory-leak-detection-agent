@@ -8,7 +8,9 @@
  * applied with a copy of the original, and each verification.
  */
 
+import type { RecommendedAction } from '../core/diagnosis/action';
 import type { CorrelatedFinding } from '../types/correlation';
+import type { Confidence } from '../types/index';
 import type { FixSafety } from '../fix/propose';
 import type { TrendAnalysis, TrendVerdict } from '../runtime/trend';
 import type { VerificationComparison } from '../verify/compare';
@@ -54,7 +56,11 @@ export interface FindFixIssue {
   className: string;
   angularKind?: string;
   /** How sure the agent is, from the evidence. */
-  confidence: 'PROVEN' | 'LIKELY' | 'POSSIBLE' | 'UNKNOWN';
+  confidence: Confidence;
+  /** What to do about it - one of the six standard levels, never a score. */
+  action: RecommendedAction;
+  /** Why that action, in one sentence a person can argue with. */
+  actionReason: string;
   evidence: string[];
   /** The lines of code that start what is never stopped. */
   code: Array<{ line: number; snippet: string }>;

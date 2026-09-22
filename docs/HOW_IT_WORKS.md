@@ -151,7 +151,7 @@ When nothing is certain the agent gives no opinion and the normal rules apply. I
 
 Before writing anything (`src/fix/`):
 
-- Only findings the browser actually showed are fixed (LIKELY or PROVEN).
+- Only findings the browser actually showed are fixed (HIGH or PROVEN). Reading the code alone never goes above MEDIUM.
 - Subscriptions decided `no` or `review` are **left as they are**, and the change notes list each one with its reason. If every subscription in a class is intentional, no change is made and the reason is shown.
 - A subscribe inside a plain `function` (where `this` changes) makes the agent refuse the class instead of half-fixing it.
 - The fix is regenerated from the file as it is now; the reviewed content is bound to a hash, and the write is refused if the file changed.
@@ -226,3 +226,32 @@ Found by checking it against 28 IOSense components read independently; the tool 
 `analyze` (code) → `entities` (components, routes, modules) → `scenario runner` (Chrome, trend) → `heap` (snapshots, retained size, paths) → `correlate` (browser evidence + code findings) → `issues` (what you see) → `fix` (decision-aware changes) → `apply` → `verify` (build, tests, re-run) → `report`/`undo`.
 
 Everything the agent tells you comes from either the code or real Chrome data; where it is a guess, it says so.
+
+## 19. How sure it is, and what it tells you to do
+
+Every finding gets **one confidence level** (`src/types/index.ts`):
+
+| Level | Means |
+|---|---|
+| PROVEN | Repeated visits, memory kept after forced clean-up, a retaining path, and the object belongs to your code |
+| HIGH | Strong browser evidence names this finding; one link is inferred |
+| MEDIUM | Suspicious, but not singled out — or the code provably cannot release what it starts |
+| LOW | Weak, or mostly from reading the code |
+| UNKNOWN | Not enough to say |
+| INCONCLUSIVE | The browser measured this journey, memory did not keep growing, and nothing pointed at this code |
+
+Reading the code alone never goes above **MEDIUM**. Only the browser can make a finding HIGH or PROVEN, and only those are ever fixed. INCONCLUSIVE is not "safe": it means the evidence did not establish a leak, and the journey may simply not have run that code.
+
+Every Find & Fix issue also gets **one recommended action** (`src/core/diagnosis/action.ts`): NO CHANGE REQUIRED, MONITOR, RECOMMENDED CHANGE, SAFE FIX, NEEDS DEVELOPER REVIEW, or HIGH-RISK CHANGE - DO NOT APPLY AUTOMATICALLY, with a one-line reason. It comes from four facts: how sure it is, how bad it would be, what kind of change is possible, and whether the same journey can be measured again afterwards. It is never a number. **SAFE FIX** needs all of: HIGH or PROVEN, a purely additive change, a complete measurement to compare against, and a class name that points at one file.
+
+## 20. Frameworks: the adapter seam
+
+The browser, heap and verification code does not know which framework it is looking at. Framework questions — what is a component, what is a route, where does clean-up belong, which file is this heap object — go through one contract, `FrameworkAdapter` (`src/core/framework/adapter.ts`), in a framework-free vocabulary (`src/core/framework/types.ts`).
+
+- **Angular** is the only adapter today (`src/adapters/angular/`). It answers from the same scanner, entity index and fix engine as before; nothing about Angular results changed.
+- **React and plain JavaScript** are not built yet. An application of either kind reports **Unknown**, with the reason, rather than being mislabelled.
+- Anything an adapter cannot do comes back as *not available, because…*, never as an empty list that reads like "0 components".
+- A heap name owned by two classes comes back as **ambiguous** with both files, never as one confident guess.
+- A test checks that nothing under `src/core/` imports an adapter.
+
+`memory-agent discover <project>` shows the result: framework, version (installed beats declared, and it says which it used), what each answer was based on, and every adapter's yes or no. Discovery from a URL alone needs the browser session and is not built yet; the command says so.

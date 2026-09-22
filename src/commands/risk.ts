@@ -201,11 +201,11 @@ function printReport(r: RiskResult, detail: number): void {
   field('LOW', num(s.byRisk.LOW));
   console.log('');
   info(colour.dim('Confidence:'));
-  field('  LIKELY', num(s.byConfidence.LIKELY));
-  field('  POSSIBLE', num(s.byConfidence.POSSIBLE));
+  field('  MEDIUM', num(s.byConfidence.MEDIUM));
+  field('  LOW', num(s.byConfidence.LOW));
   field('  UNKNOWN', num(s.byConfidence.UNKNOWN));
-  if (s.byConfidence.PROVEN > 0) {
-    warn('PROVEN appeared in static analysis - that is a bug. Static cannot prove a leak.');
+  if (s.byConfidence.PROVEN > 0 || s.byConfidence.HIGH > 0) {
+    warn('PROVEN or HIGH appeared in static analysis - that is a bug. Only the browser can establish a leak.');
   }
 
   const shown = r.findings.slice(0, detail);

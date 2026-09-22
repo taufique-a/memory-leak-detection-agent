@@ -630,7 +630,7 @@ npm run dev -- auto <project> --scenario <file>
 - Changes always land on a `memory-agent/<id>` branch, never yours, with the
   baseline commit recorded so rollback is one command.
 - Fixes are only generated for findings the **runtime evidence supports**
-  (LIKELY or PROVEN). A static guess never edits your source.
+  (HIGH or PROVEN). A static guess never edits your source.
 - `VERIFIED` requires **both** passing project checks **and** a measured
   improvement.
 
@@ -1036,7 +1036,8 @@ future diff.
 |---|---|
 | **Status** | `OPEN` → `INVESTIGATING` → `SUSPECTED` → `CONFIRMED` → `VERIFIED` |
 | **Strongest evidence** | `STATIC_SUSPICION` → `RUNTIME_EVIDENCE` → `STRONG_EVIDENCE` |
-| **Confidence** (per finding) | `POSSIBLE` / `LIKELY` — static analysis can never emit `PROVEN` |
+| **Confidence** (per finding) | `PROVEN` / `HIGH` / `MEDIUM` / `LOW` / `UNKNOWN` / `INCONCLUSIVE` — static analysis never goes above `MEDIUM`; `INCONCLUSIVE` means the browser measured and the evidence did not establish a leak |
+| **Recommended action** (per issue) | `NO CHANGE REQUIRED` / `MONITOR` / `RECOMMENDED CHANGE` / `SAFE FIX` / `NEEDS DEVELOPER REVIEW` / `HIGH-RISK CHANGE - DO NOT APPLY AUTOMATICALLY` — never a score |
 | **Verdict** (runtime) | `GROWING` / `STABLE` / `SHRINKING` / `INCONCLUSIVE` |
 | **R²** | Line-fit quality. `> 0.9` = steady accumulation. `< 0.7` = too erratic to call |
 

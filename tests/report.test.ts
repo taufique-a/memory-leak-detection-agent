@@ -121,11 +121,10 @@ describe('summary consistency', () => {
 
   it('confidence breakdown also covers all findings', () => {
     const inv = buildFixtureInvestigation(1);
-    const sum =
-      inv.summary.byConfidence.PROVEN +
-      inv.summary.byConfidence.LIKELY +
-      inv.summary.byConfidence.POSSIBLE +
-      inv.summary.byConfidence.UNKNOWN;
+    const sum = Object.values(inv.summary.byConfidence).reduce((a, b) => a + b, 0);
+    expect(Object.keys(inv.summary.byConfidence).sort()).toEqual(
+      ['HIGH', 'INCONCLUSIVE', 'LOW', 'MEDIUM', 'PROVEN', 'UNKNOWN'],
+    );
     expect(sum).toBe(inv.summary.totalFindings);
   });
 });

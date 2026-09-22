@@ -14,6 +14,7 @@ import { assessRisk, RiskError } from '../risk';
 import { extractBaseUrlArg, loadScenarioFile as load } from '../scenario/load';
 import { runScenario, ScenarioError, type ScenarioRun } from '../scenario/runner';
 import type { CorrelationResult } from '../types/correlation';
+import { CONFIDENCE_LEVELS } from '../types/index';
 import {
   clearProgressLine,
   colour,
@@ -199,9 +200,7 @@ function printReport(r: CorrelationResult, detail: number): void {
   field('No runtime support', num(r.summary.unsupported));
   field('Unexplained runtime evidence', num(r.summary.unexplained));
   console.log('');
-  field('PROVEN', num(r.summary.byConfidence.PROVEN));
-  field('LIKELY', num(r.summary.byConfidence.LIKELY));
-  field('POSSIBLE', num(r.summary.byConfidence.POSSIBLE));
+  for (const level of CONFIDENCE_LEVELS) field(level, num(r.summary.byConfidence[level]));
 
   const supported = r.findings.filter((f) => f.support.length > 0).slice(0, detail);
 
@@ -211,7 +210,7 @@ function printReport(r: CorrelationResult, detail: number): void {
       const conf =
         f.confidence === 'PROVEN'
           ? colour.red(f.confidence)
-          : f.confidence === 'LIKELY'
+          : f.confidence === 'HIGH'
             ? colour.yellow(f.confidence)
             : colour.dim(f.confidence);
       console.log('');

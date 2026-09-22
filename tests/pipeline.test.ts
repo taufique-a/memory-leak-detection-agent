@@ -30,6 +30,7 @@ import { parseVerifyArgs } from '../src/commands/verify';
 import { parseCorrelateArgs } from '../src/commands/correlate';
 import { parseAutoArgs } from '../src/commands/autoInvestigate';
 import type { Finding } from '../src/types/finding';
+import { isRuntimeEstablished } from '../src/types/index';
 import type { CorrelatedFinding } from '../src/types/correlation';
 import type { RiskResult } from '../src/risk';
 import type { ScenarioRun } from '../src/scenario/runner';
@@ -56,7 +57,7 @@ function finding(over: Partial<Finding> = {}): Finding {
       routed: true,
     },
     risk: 'HIGH',
-    confidence: 'LIKELY',
+    confidence: 'MEDIUM',
     evidence: 'STATIC_SUSPICION',
     score: 80,
     factors: [{ key: 'x', points: 80, reason: 'because' }],
@@ -79,7 +80,7 @@ function riskResult(findings: Finding[]): RiskResult {
     summary: {
       total: findings.length,
       byRisk: { CRITICAL: 0, HIGH: findings.length, MEDIUM: 0, LOW: 0 },
-      byConfidence: { PROVEN: 0, LIKELY: findings.length, POSSIBLE: 0, UNKNOWN: 0 },
+      byConfidence: { PROVEN: 0, HIGH: 0, MEDIUM: findings.length, LOW: 0, UNKNOWN: 0, INCONCLUSIVE: 0 },
       byKind: {},
       inRoutedComponents: findings.length,
     },
@@ -148,7 +149,7 @@ const scenario: Scenario = {
 describe('correlation', () => {
   it('leaves confidence unchanged when there is no runtime run', () => {
     const r = correlate({ risk: riskResult([finding()]) });
-    expect(r.findings[0]?.confidence).toBe('LIKELY');
+    expect(r.findings[0]?.confidence).toBe('MEDIUM');
     expect(r.limitations.join(' ')).toContain('No browser run');
   });
 
@@ -158,7 +159,7 @@ describe('correlation', () => {
     const r = correlate({ risk: riskResult([finding()]), scenario, run: scenarioRun() });
     const f = r.findings[0];
     expect(f?.support.every((s) => s.weight === 'weak')).toBe(true);
-    expect(f?.confidence).toBe('LIKELY'); // unchanged
+    expect(f?.confidence).toBe('MEDIUM'); // unchanged
     expect(f?.rationale.join(' ')).toContain('Weak signals apply equally');
   });
 
@@ -170,11 +171,11 @@ describe('correlation', () => {
 
   it('never DOWNGRADES a static conclusion', () => {
     const r = correlate({
-      risk: riskResult([finding({ confidence: 'LIKELY' })]),
+      risk: riskResult([finding({ confidence: 'MEDIUM' })]),
       scenario,
       run: scenarioRun({ trend: trend({ verdict: 'STABLE' }) }),
     });
-    expect(r.findings[0]?.confidence).toBe('LIKELY');
+    expect(r.findings[0]?.confidence).toBe('MEDIUM');
   });
 
   it('says an unsupported finding is NOT cleared', () => {
@@ -187,6 +188,43 @@ describe('correlation', () => {
     expect(r.limitations.join(' ')).toContain('does NOT clear them');
   });
 
+  it('calls it INCONCLUSIVE when the browser measured no growth and nothing points here', () => {
+    const off = finding({
+      location: { ...finding().location, routePaths: ['/somewhere-else'] },
+    });
+    const r = correlate({
+      risk: riskResult([off]),
+      scenario,
+      run: scenarioRun({ trend: trend({ verdict: 'STABLE' }) }),
+    });
+    expect(r.findings[0]?.support).toHaveLength(0);
+    expect(r.findings[0]?.confidence).toBe('INCONCLUSIVE');
+    expect(r.findings[0]?.rationale.join(' ')).toContain('does not establish a leak');
+    // INCONCLUSIVE is not "cleared": the wording must keep that door open.
+    expect(r.findings[0]?.rationale.join(' ')).toContain('not proof the code is harmless');
+  });
+
+  it('does NOT call it inconclusive while memory is still growing somewhere', () => {
+    // Nothing points at this finding, but the journey IS leaking. The growth
+    // may come from code the run cannot attribute - that is not a clean bill.
+    const off = finding({
+      location: { ...finding().location, routePaths: ['/somewhere-else'] },
+    });
+    const r = correlate({ risk: riskResult([off]), scenario, run: scenarioRun() });
+    expect(r.findings[0]?.confidence).toBe('MEDIUM');
+  });
+
+  it('does not let a static finding reach the fix engine on weak runtime support', () => {
+    // Before the six-level vocabulary, a strong static finding was LIKELY -
+    // the same word the browser used - and weak route-membership support
+    // left it there, so the fixer would write a change the browser never
+    // established. Static now caps at MEDIUM, and only runtime evidence
+    // crosses into HIGH.
+    const r = correlate({ risk: riskResult([finding()]), scenario, run: scenarioRun() });
+    expect(r.findings[0]?.support.every((s) => s.weight === 'weak')).toBe(true);
+    expect(isRuntimeEstablished(r.findings[0]?.confidence ?? 'UNKNOWN')).toBe(false);
+  });
+
   it('treats listener growth as strong support for a listener finding', () => {
     const listener = finding({ kind: 'dom.eventListener' });
     const r = correlate({
@@ -196,7 +234,7 @@ describe('correlation', () => {
     });
     const support = r.findings[0]?.support ?? [];
     expect(support.some((s) => s.kind === 'listener-growth' && s.weight === 'strong')).toBe(true);
-    expect(r.findings[0]?.confidence).toBe('LIKELY');
+    expect(r.findings[0]?.confidence).toBe('HIGH');
   });
 
   it('ties a console error to the library the finding is about', () => {
@@ -281,7 +319,7 @@ describe('fix proposal', () => {
       finding: f,
       support: [],
       confidence,
-      staticConfidence: 'LIKELY',
+      staticConfidence: 'MEDIUM',
       evidence: 'STRONG_EVIDENCE',
       risk: 'HIGH',
       correlatedScore: 100,
@@ -289,12 +327,12 @@ describe('fix proposal', () => {
     };
   }
 
-  it('REFUSES to generate a change below LIKELY confidence', () => {
+  it('REFUSES to generate a change below HIGH confidence', () => {
     // Editing source on a static guess is how a tool loses trust for good.
-    const fix = proposeFix(correlatedWith('POSSIBLE'), { projectRoot });
+    const fix = proposeFix(correlatedWith('MEDIUM'), { projectRoot });
     expect(fix?.safety).toBe('manual-only');
     expect(fix?.newContent).toBeUndefined();
-    expect(fix?.rationale).toContain('below LIKELY');
+    expect(fix?.rationale).toContain('below HIGH');
   });
 
   it('generates an additive fix for a never-completed destroy subject', () => {
@@ -318,7 +356,7 @@ describe('fix proposal', () => {
   });
 
   it('gives manual instructions when it cannot generate a change', () => {
-    const fix = proposeFix(correlatedWith('POSSIBLE'), { projectRoot });
+    const fix = proposeFix(correlatedWith('MEDIUM'), { projectRoot });
     expect(fix?.manualInstructions?.length).toBeGreaterThan(0);
   });
 });
@@ -656,8 +694,8 @@ describe('AI evidence bundle', () => {
   const correlated: CorrelatedFinding = {
     finding: finding(),
     support: [{ kind: 'measured-growth', detail: 'grew', weight: 'weak' }],
-    confidence: 'LIKELY',
-    staticConfidence: 'LIKELY',
+    confidence: 'MEDIUM',
+    staticConfidence: 'MEDIUM',
     evidence: 'RUNTIME_EVIDENCE',
     risk: 'HIGH',
     correlatedScore: 90,

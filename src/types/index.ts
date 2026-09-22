@@ -20,20 +20,57 @@
 /**
  * Confidence in a root-cause conclusion.
  *
- * PROVEN   - We reproduced it, measured it, fixed it, and the measurement
- *            changed. Heap/runtime evidence directly supports the claim.
- * LIKELY   - Strong runtime evidence, but one link in the chain is inferred.
- * POSSIBLE - Static suspicion only, or ambiguous runtime data.
- * UNKNOWN  - We genuinely do not know. This is a valid, honest answer.
+ * PROVEN       - Repeated lifecycle, retention that survives a forced
+ *                collection, a specific retaining path, an object the
+ *                application owns, and a lifetime that should have ended.
+ * HIGH         - Strong runtime evidence, but one link in the chain is
+ *                inferred rather than observed.
+ * MEDIUM       - Suspicious evidence that does not single this finding out,
+ *                or a static conclusion the code cannot escape.
+ * LOW          - Weak, or resting mostly on reading the source.
+ * UNKNOWN      - We genuinely do not know. A valid, honest answer.
+ * INCONCLUSIVE - We looked, and the evidence does not establish a leak.
+ *                Different from UNKNOWN: here the measurement happened.
+ *
+ * WHY THE LAST TWO ARE SEPARATE
+ * -----------------------------
+ * "I never checked" and "I checked and it does not hold up" lead to
+ * opposite actions. Collapsing them into one word is how a tool ends up
+ * recommending a change on the strength of a run that found nothing.
  */
-export type Confidence = 'PROVEN' | 'LIKELY' | 'POSSIBLE' | 'UNKNOWN';
+export type Confidence = 'PROVEN' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN' | 'INCONCLUSIVE';
 
 export const CONFIDENCE_LEVELS: readonly Confidence[] = [
   'PROVEN',
-  'LIKELY',
-  'POSSIBLE',
+  'HIGH',
+  'MEDIUM',
+  'LOW',
   'UNKNOWN',
+  'INCONCLUSIVE',
 ] as const;
+
+/**
+ * A zeroed count per confidence level.
+ *
+ * Every summary that tallies findings starts here rather than writing the
+ * levels out again. When the vocabulary changes, it changes in one place,
+ * and a report cannot end up missing a column it never knew about.
+ */
+export function emptyConfidenceTally(): Record<Confidence, number> {
+  return { PROVEN: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0, INCONCLUSIVE: 0 };
+}
+
+/**
+ * Did the browser establish this, rather than the source suggest it?
+ *
+ * The gate for everything that changes code. Only runtime evidence can
+ * reach HIGH or PROVEN (static analysis is capped at MEDIUM), so this is
+ * the one question the fix engine asks before writing anything, asked in
+ * one place so it cannot drift between callers.
+ */
+export function isRuntimeEstablished(confidence: Confidence): boolean {
+  return confidence === 'PROVEN' || confidence === 'HIGH';
+}
 
 /* ------------------------------------------------------------------ */
 /* What kind of evidence do we actually hold?                          */
@@ -41,7 +78,7 @@ export const CONFIDENCE_LEVELS: readonly Confidence[] = [
 
 /**
  * The kind of proof backing a finding. This is deliberately separate from
- * Confidence: you can be POSSIBLE with runtime evidence, or LIKELY from
+ * Confidence: you can be MEDIUM with runtime evidence, or MEDIUM from
  * static analysis alone. Keeping them apart stops us from conflating
  * "I found a pattern in the source" with "I watched memory grow".
  */

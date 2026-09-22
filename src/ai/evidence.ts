@@ -253,7 +253,7 @@ Respond in exactly this structure:
    cannot think of an alternative, say why the evidence rules them out.
 
 4. CONFIDENCE
-   Exactly one of PROVEN, LIKELY, POSSIBLE, UNKNOWN, with one sentence of
+   Exactly one of PROVEN, HIGH, MEDIUM, LOW, UNKNOWN, INCONCLUSIVE, with one sentence of
    justification. Use PROVEN only if a retaining chain ties observed retained
    bytes to this specific code. Note that ${
      bundle.heapEvidence === undefined

@@ -14,6 +14,7 @@
  */
 
 import type { Finding } from '../types/finding';
+import { CONFIDENCE_LEVELS } from '../types/index';
 import type {
   Investigation,
   MemoryEvidence,
@@ -186,13 +187,18 @@ export function renderHtml(inv: Investigation): string {
   p('<div class="table-wrap"><table><thead><tr><th>Risk</th><th>Count</th>');
   p('<th>Confidence</th><th>Count</th></tr></thead><tbody>');
   const riskKeys = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const;
-  const confKeys = ['PROVEN', 'LIKELY', 'POSSIBLE', 'UNKNOWN'] as const;
-  for (let i = 0; i < 4; i++) {
-    const rk = riskKeys[i] as (typeof riskKeys)[number];
-    const ck = confKeys[i] as (typeof confKeys)[number];
+  // Four risk bands beside six confidence levels: the shorter column is
+  // padded with empty cells rather than one list being cut to fit the other.
+  for (let i = 0; i < Math.max(riskKeys.length, CONFIDENCE_LEVELS.length); i++) {
+    const rk = riskKeys[i];
+    const ck = CONFIDENCE_LEVELS[i];
     p(
-      `<tr><td><span class="badge ${rk}">${rk}</span></td><td>${inv.summary.byRisk[rk]}</td>` +
-        `<td>${ck}</td><td>${inv.summary.byConfidence[ck]}</td></tr>`,
+      '<tr>' +
+        (rk !== undefined
+          ? `<td><span class="badge ${rk}">${rk}</span></td><td>${inv.summary.byRisk[rk]}</td>`
+          : '<td></td><td></td>') +
+        (ck !== undefined ? `<td>${ck}</td><td>${inv.summary.byConfidence[ck]}</td>` : '<td></td><td></td>') +
+        '</tr>',
     );
   }
   p('</tbody></table></div>');

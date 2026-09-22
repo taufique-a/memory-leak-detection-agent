@@ -204,8 +204,10 @@ export function deriveStatus(
   }
 
   if (risk.findings.length === 0) return 'OPEN';
-  const hasLikely = risk.findings.some((f) => f.confidence === 'LIKELY');
-  return hasLikely ? 'SUSPECTED' : 'INVESTIGATING';
+  // MEDIUM is the ceiling for a static finding: the code provably cannot
+  // release what it acquires. That is worth "suspected"; anything softer is not.
+  const hasStrongStatic = risk.findings.some((f) => f.confidence === 'MEDIUM');
+  return hasStrongStatic ? 'SUSPECTED' : 'INVESTIGATING';
 }
 
 /* ------------------------------------------------------------------ */

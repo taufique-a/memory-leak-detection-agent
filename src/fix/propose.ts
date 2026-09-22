@@ -31,6 +31,7 @@ import { addCleanup } from './addCleanup';
 import { DEFINITION_BY_KIND } from '../analyzer/resources';
 import type { CorrelatedFinding } from '../types/correlation';
 import type { Finding } from '../types/finding';
+import { isRuntimeEstablished } from '../types/index';
 
 /** How safe is this change to make automatically? */
 export type FixSafety =
@@ -105,8 +106,8 @@ export function proposeFix(
    * trust permanently. If the browser never showed the problem, the fix is
    * a suggestion for a human, not a change to apply.
    */
-  if (correlated.confidence !== 'PROVEN' && correlated.confidence !== 'LIKELY') {
-    return describeManualFix(finding, 'Confidence is below LIKELY, so no change is generated.');
+  if (!isRuntimeEstablished(correlated.confidence)) {
+    return describeManualFix(finding, 'Confidence is below HIGH, so no change is generated.');
   }
 
   const brokenTakeUntil = finding.lifecycleIssues?.find(
