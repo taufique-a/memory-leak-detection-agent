@@ -233,7 +233,7 @@ describe('AdapterRegistry', () => {
   });
 
   it('ships exactly the adapters this build supports', () => {
-    expect(defaultRegistry().list().map((a) => a.id)).toEqual(['angular', 'javascript']);
+    expect(defaultRegistry().list().map((a) => a.id)).toEqual(['angular', 'react', 'javascript']);
   });
 });
 

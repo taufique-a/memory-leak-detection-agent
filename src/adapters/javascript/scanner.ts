@@ -25,6 +25,7 @@ import * as path from 'node:path';
 import * as ts from 'typescript';
 
 import { toRelativePosix, walkDirectory } from '../../scanner/walk';
+import { countResourceHints } from '../generic-web/resourceHints';
 
 export interface JsDeclaration {
   name: string;
@@ -60,20 +61,6 @@ function shouldSkip(relativePath: string): boolean {
     p.includes('/__mocks__/') ||
     p.endsWith('.min.js')
   );
-}
-
-/**
- * A crude count of resource-acquiring calls in a file's raw text.
- *
- * Text-level, not AST-scoped - the same honesty limit `Entity.resourceCount`
- * already documents for Angular: this orders "worth a look first", it is
- * never evidence of anything on its own.
- */
-const RESOURCE_HINT_PATTERN =
-  /\b(setInterval|setTimeout|requestAnimationFrame|addEventListener|new\s+WebSocket|new\s+EventSource|new\s+Worker|new\s+SharedWorker|new\s+MutationObserver|new\s+ResizeObserver|new\s+IntersectionObserver|new\s+PerformanceObserver)\b/g;
-
-function countResourceHints(text: string): number {
-  return (text.match(RESOURCE_HINT_PATTERN) ?? []).length;
 }
 
 /** Record one declaration, however it was written. */

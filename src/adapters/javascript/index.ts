@@ -53,6 +53,7 @@ import {
   type VersionDetection,
 } from '../../core/framework/types';
 import { analyzeGenericResource, GENERIC_KINDS_BY_CATEGORY } from '../generic-web/resources';
+import { REACT_FIBER_MARKER_SCRIPT } from '../generic-web/reactMarker';
 import { readProjectProfile } from '../../knowledge/projectProfile';
 import { getJsProjectScan, type JsDeclaration } from './scanner';
 
@@ -98,12 +99,16 @@ interface RuntimeMarkers {
  * KNOWN framework marker exist, and did a real page actually render. Two
  * round trips would double the chance of hitting a page that navigated away
  * between them.
+ *
+ * `hasReact` embeds the shared fiber-marker check (`reactMarker.ts`) rather
+ * than restating a weaker one - the React adapter uses the exact same
+ * check to detect, so the two can never disagree about what counts as React.
  */
 const RUNTIME_MARKERS_SCRIPT = `(() => {
   const w = window;
   return {
     hasAngular: document.querySelector('[ng-version]') !== null,
-    hasReact: typeof w.__REACT_DEVTOOLS_GLOBAL_HOOK__ !== 'undefined' || document.querySelector('[data-reactroot]') !== null,
+    hasReact: ${REACT_FIBER_MARKER_SCRIPT},
     hasVue: typeof w.Vue !== 'undefined' || typeof w.__VUE__ !== 'undefined' || document.querySelector('[data-v-app]') !== null,
     hasAngularJs: typeof w.angular !== 'undefined',
     hasRenderedContent: document.body !== null && document.body.children.length > 0,

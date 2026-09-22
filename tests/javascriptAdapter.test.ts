@@ -286,7 +286,7 @@ describe('JavaScriptAdapter resource knowledge', () => {
 
 describe('registered in the default registry', () => {
   it('is offered alongside Angular', () => {
-    expect(defaultRegistry().list().map((a) => a.id)).toEqual(['angular', 'javascript']);
+    expect(defaultRegistry().list().map((a) => a.id)).toEqual(['angular', 'react', 'javascript']);
   });
 
   it('an Angular project is still detected as Angular, with javascript correctly declining', async () => {

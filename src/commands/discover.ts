@@ -114,9 +114,6 @@ export async function runDiscover(args: string[]): Promise<number> {
     const verdict = d.detected ? colour.dim('detected') : colour.dim(d.reason ?? 'not detected');
     field(d.framework, verdict);
   }
-  if (outcome.considered.length < 3) {
-    info('The React adapter is not built yet, so a React application reports Unknown.');
-  }
 
   const adapter = outcome.adapter;
   if (adapter === undefined) {
