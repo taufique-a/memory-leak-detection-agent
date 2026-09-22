@@ -17,6 +17,7 @@ import { runFix } from './commands/fix';
 import { runCompile } from './commands/compile';
 import { runDeps } from './commands/deps';
 import { runDevTools } from './commands/devtools';
+import { runDiscover } from './commands/discover';
 import { runLive } from './commands/live';
 import { runServe } from './commands/serve';
 import { runVerify } from './commands/verify';
@@ -52,6 +53,7 @@ USAGE
 
 COMMANDS
   ${'ui'.padEnd(28)} Guided local interface - start here if unsure
+  ${'discover <project>'.padEnd(28)} What is this application? Framework, version, and the evidence
   ${'scan <project>'.padEnd(28)} Discover the Angular project structure
   ${'analyze <project>'.padEnd(28)} Find resource acquire/release operations (AST)
   ${'risk <project>'.padEnd(28)} Rank and explain static memory risks
@@ -212,6 +214,10 @@ export function run(argv: string[]): number | Promise<number> {
   if (first === '-v' || first === '--version' || first === 'version') {
     console.log(versionString());
     return 0;
+  }
+
+  if (first === 'discover') {
+    return runDiscover(args.slice(1));
   }
 
   if (first === 'scan') {
