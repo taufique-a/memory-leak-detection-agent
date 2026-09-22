@@ -1038,6 +1038,19 @@ function renderDiscoverResult(target, r) {
       (auth.required ? '<span class="pill warn">appears to be required</span>' : '<span class="pill ok">not detected</span>') +
       '</div>' + evidenceList(auth.evidence) +
       (auth.limitation ? '<div class="sub">' + esc(auth.limitation) + '</div>' : '');
+
+    if (auth.required) {
+      // Skip straight to the safe, already-built sign-in flow (step 3): a
+      // real Chrome window opens, the person signs in themselves, and only
+      // the resulting session is saved - this tool never sees the password.
+      // No new credential handling here, just a shortcut to it.
+      html += '<div class="banner warn" style="margin-top:.6rem">' +
+        '<strong>Authentication required</strong>' +
+        '<p class="sub" style="margin:.3rem 0 .6rem">This application appears to need signing in before it can be ' +
+        'investigated. A real Chrome window opens for you to sign in yourself - the password never reaches this tool.</p>' +
+        '<button data-action="login">sign in now</button>' +
+        '</div>';
+    }
   }
 
   if (r.mode === 'project') {

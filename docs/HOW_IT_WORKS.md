@@ -270,3 +270,5 @@ Everything in section 20 also has a button. The **Set up** page opens with **Wha
 - What could not be established is shown, not hidden: "also detected" when two adapters both matched, and a collapsible "what this could not tell you" list naming every unavailable capability and why.
 
 The endpoint calls the exact same adapter registry the CLI does - there is no framework logic living in the UI layer, only rendering of what the adapters decided.
+
+When a URL discovery finds `auth.required: true`, the card adds one thing: a **sign in now** button. It does not open a credential form - it is a shortcut into the sign-in step that already existed (`scenario login`, driven from the UI): a real Chrome window opens, the person signs in themselves, and only the resulting session is saved. This tool never renders a password field anywhere in its own page, and the shortcut does not change that - it just saves a click. If discovery finds no sign-in requirement, the button does not appear at all.

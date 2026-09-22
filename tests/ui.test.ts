@@ -279,6 +279,20 @@ describe('page', () => {
     expect(page).toContain("$('sourcePath').value = target");
   });
 
+  it('when auth is detected, offers to sign in through the existing safe login action - not a new credential form', () => {
+    // Master flow section 4: authentication is detected automatically and
+    // offered as the next step. This must not invent new credential
+    // handling - it should be a shortcut to the "login" action that already
+    // opens a real Chrome for the person to sign in themselves.
+    expect(page).toContain('auth.required');
+    expect(page).toContain('data-action="login"');
+    expect(page).toContain('Authentication required');
+    expect(page).toContain('password never reaches this tool');
+    // The tool never collects a password anywhere in its own UI - signing
+    // in happens in the separate Chrome window the login action opens.
+    expect(page).not.toContain('type="password"');
+  });
+
   it('lets the user set any app URL rather than assuming a port', () => {
     expect(page).toContain('id="appUrl"');
     expect(page).toContain('id="checkUrl"');
@@ -926,8 +940,12 @@ describe('server security', () => {
         'class WidgetController { constructor() { this.t = setInterval(() => {}, 1000); } }',
       );
 
-      angularServer = http.createServer((_req, res) => {
+      angularServer = http.createServer((req, res) => {
         res.writeHead(200, { 'content-type': 'text/html' });
+        if (req.url === '/login') {
+          res.end('<html><body><app-root ng-version="16.2.4"></app-root><input type="password"></body></html>');
+          return;
+        }
         res.end('<html><body><app-root ng-version="16.2.4"></app-root></body></html>');
       });
       await new Promise<void>((resolve) => angularServer.listen(0, '127.0.0.1', resolve));
@@ -978,6 +996,13 @@ describe('server security', () => {
       expect(json.auth.required).toBe(false);
       // A URL cannot list entities/routes - that must be stated, not shown as zero.
       expect(json.unavailable.some((u: string) => u.startsWith('Entities:'))).toBe(true);
+    });
+
+    it('flags a real login page as requiring authentication - what the "sign in now" shortcut depends on', async () => {
+      if (!chrome) return;
+      const { json } = await post({ target: `${angularBaseUrl}/login` });
+      expect(json.auth.required).toBe(true);
+      expect(json.auth.evidence.some((e: { kind: string }) => e.kind === 'dom-marker')).toBe(true);
     });
 
     it('reports a clear error for a folder that does not exist, never a crash', async () => {
