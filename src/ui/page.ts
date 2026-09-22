@@ -556,6 +556,20 @@ a{color:var(--accent)}
         <p>Tell it where your app is, check the tools are there, and sign in once.</p>
       </div>
 
+      <div class="banner" id="discoverBanner">
+        <strong>What is this application?</strong>
+        <div class="row" style="margin-top:.5rem">
+          <input type="text" id="discoverTarget" placeholder="https://your-app.com or E:\\path\\to\\your\\project">
+          <button id="discoverBtn">discover</button>
+        </div>
+        <div class="sub" style="margin-top:.4rem">
+          Paste the app's address to open it in a real Chrome and read the framework
+          straight off the running page, or point at the project folder for a source-only
+          answer. Either way this fills in the fields below.
+        </div>
+        <div id="discoverResult"></div>
+      </div>
+
       <div class="banner" id="sourceBanner">
         <strong>Which code are you investigating?</strong>
         <div class="row" style="margin-top:.5rem">
@@ -968,6 +982,113 @@ async function checkApp() {
   renderReady();
   render();
   void checkServed();
+}
+
+/* ---- Application step: what is this, from a URL or a project folder ---- */
+
+function evidenceLabel(kind) {
+  return {
+    'source-file': 'file',
+    'package-manifest': 'declared',
+    'installed-package': 'installed',
+    'runtime-global': 'running page',
+    'dom-marker': 'live DOM',
+    'loaded-script': 'loaded script',
+  }[kind] || kind;
+}
+
+function evidenceList(items) {
+  if (!items || !items.length) return '';
+  return '<ul class="state">' + items.map((e) =>
+    '<li><strong>' + esc(evidenceLabel(e.kind)) + '</strong> ' + esc(e.detail) +
+    (e.value !== undefined ? ' &mdash; <code>' + esc(e.value) + '</code>' : '') + '</li>'
+  ).join('') + '</ul>';
+}
+
+function renderDiscoverResult(target, r) {
+  if (r.error) {
+    $('discoverResult').innerHTML = '<div class="banner warn" style="margin-top:.6rem">' + esc(r.error) + '</div>';
+    return;
+  }
+
+  const frameworkPill = r.framework === 'unknown'
+    ? '<span class="pill warn">Unknown</span>'
+    : '<span class="pill ok">' + esc(r.frameworkLabel) + '</span>';
+  const version = r.version ? esc(r.version) : '<span class="sub">unknown' + (r.versionReason ? ' &mdash; ' + esc(r.versionReason) : '') + '</span>';
+
+  let html = '<div class="facts2" style="margin-top:.6rem">' +
+    '<span><b>Framework</b> ' + frameworkPill + '</span>' +
+    '<span><b>Version</b> ' + version + '</span>' +
+    (r.mode === 'url' ? '<span><b>Chrome</b> ' + esc(r.chromeVersion || '') + '</span>' : '') +
+    '</div>';
+
+  if (r.alsoDetected && r.alsoDetected.length) {
+    html += '<div class="sub" style="margin-top:.4rem">Also detected: ' + esc(r.alsoDetected.join(', ')) +
+      '. The strongest evidence decided.</div>';
+  }
+
+  html += evidenceList(r.evidence);
+
+  if (r.mode === 'url') {
+    if (r.finalUrl && r.finalUrl !== target) {
+      html += '<div class="sub">Redirected to <code>' + esc(r.finalUrl) + '</code></div>';
+    }
+    const auth = r.auth || { required: false, evidence: [] };
+    html += '<div style="margin-top:.5rem"><strong>Sign-in</strong> ' +
+      (auth.required ? '<span class="pill warn">appears to be required</span>' : '<span class="pill ok">not detected</span>') +
+      '</div>' + evidenceList(auth.evidence) +
+      (auth.limitation ? '<div class="sub">' + esc(auth.limitation) + '</div>' : '');
+  }
+
+  if (r.mode === 'project') {
+    if (r.entities || r.routes || r.lifecycle) {
+      html += '<div class="facts2" style="margin-top:.5rem">' +
+        (r.entities ? '<span><b>Entities</b> ' + r.entities.total + '</span><span><b>Views</b> ' + r.entities.views + ' (' + r.entities.routed + ' routed)</span>' : '') +
+        (r.routes ? '<span><b>Routes</b> ' + r.routes.total + '</span><span><b>Lazy boundaries</b> ' + r.routes.boundaries + '</span>' : '') +
+        (r.lifecycle ? '<span><b>' + esc(r.lifecycle.hook) + '</b> ' + r.lifecycle.withTeardown + ' with, ' + r.lifecycle.withoutTeardown + ' without</span>' : '') +
+        '</div>';
+    }
+  }
+
+  if (r.unavailable && r.unavailable.length) {
+    html += '<details class="banner" style="margin-top:.6rem"><summary>What this could not tell you</summary>' +
+      '<ul class="state">' + r.unavailable.map((u) => '<li>' + esc(u) + '</li>').join('') + '</ul></details>';
+  }
+
+  $('discoverResult').innerHTML = html;
+
+  // Feed the rest of the Set up page: a URL fills "where is your app
+  // running", a folder fills "which code" - so this step leads straight
+  // into the ones below it instead of being a dead end.
+  if (r.mode === 'url') {
+    $('appUrl').value = target;
+    void checkApp();
+  } else {
+    $('sourcePath').value = target;
+    void checkSource();
+  }
+}
+
+async function discoverApplication() {
+  const target = $('discoverTarget').value.trim();
+  if (!target) { $('discoverResult').innerHTML = '<div class="sub" style="margin-top:.5rem">Type an address or a folder first.</div>'; return; }
+  localStorage.setItem('memoryAgentDiscoverTarget', target);
+  const isUrl = /^https?:\/\//i.test(target);
+  $('discoverResult').innerHTML = '<div class="sub" style="margin-top:.5rem"><span class="spinner"></span>' +
+    (isUrl ? 'opening a real Chrome and reading the page...' : 'reading the project...') + '</div>';
+  $('discoverBtn').disabled = true;
+  let r;
+  try {
+    r = await api('/api/discover', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ target }),
+    });
+  } catch {
+    r = { error: 'Could not reach the server.' };
+  }
+  $('discoverBtn').disabled = false;
+  renderDiscoverResult(target, r);
 }
 
 /**
@@ -3362,6 +3483,15 @@ $('checkUrl').addEventListener('click', checkApp);
 $('appUrl').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); checkApp(); }
 });
+
+$('discoverBtn').addEventListener('click', discoverApplication);
+$('discoverTarget').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); discoverApplication(); }
+});
+{
+  const lastTarget = localStorage.getItem('memoryAgentDiscoverTarget');
+  if (lastTarget) $('discoverTarget').value = lastTarget;
+}
 
 /* Seed the URL box: last used, else the first scenario's baseUrl. */
 (async () => {

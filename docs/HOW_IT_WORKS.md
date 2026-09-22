@@ -259,3 +259,14 @@ The browser, heap and verification code does not know which framework it is look
 `memory-agent discover <project>` shows the result: framework, version (installed beats declared, and it says which it used), what each answer was based on, and every adapter's yes or no.
 
 `memory-agent discover <url>` does the same from a running page, with no checkout at all: it opens a real Chrome, loads the page once, and reads what the page itself declares. Angular writes `ng-version="X.Y.Z"` onto its root element in every build - JIT or AOT, dev or production - so that one DOM attribute is enough to name the framework and its exact version from the live page; a live answer wins over anything only declared or installed in a checkout. It also decides whether the application appears to need signing in, from two real signals: the address it ended up on looks like a login route, or the page has a password field. Neither is a guess from the URL text alone. What it cannot do from a URL is list entities, routes or teardown - those need source - and it says that plainly rather than showing zeros.
+
+## 21. The Application step, in the UI
+
+Everything in section 20 also has a button. The **Set up** page opens with **What is this application?** - one field, either an address or a project folder - before the existing "which code" and "where is it running" fields (`src/ui/page.ts`).
+
+- A URL calls `POST /api/discover` (`src/ui/discoverEndpoint.ts`), which opens a real Chrome, loads the page once, and returns framework, version, evidence, and whether it appears to need signing in - the same evidence the CLI prints, as JSON for the card instead of terminal text.
+- A project folder gets a source-only answer through the same call, plus a count of what can be investigated (entities, routes, teardown) when a framework was identified.
+- Either way, a successful discovery fills in the field below it - a URL sets "where is your app running", a folder sets "which code" - so the step leads into the rest of Set up rather than being a dead end.
+- What could not be established is shown, not hidden: "also detected" when two adapters both matched, and a collapsible "what this could not tell you" list naming every unavailable capability and why.
+
+The endpoint calls the exact same adapter registry the CLI does - there is no framework logic living in the UI layer, only rendering of what the adapters decided.

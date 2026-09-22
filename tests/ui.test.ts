@@ -6,6 +6,10 @@
  * unless every one of these holds.
  */
 
+import * as fs from 'node:fs';
+import * as http from 'node:http';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import * as vm from 'node:vm';
 import { isChromeAvailable } from '../src/runtime/browser';
 
@@ -246,6 +250,33 @@ describe('page', () => {
   it('drops sticky positioning on a narrow screen', () => {
     expect(page).toContain('max-width:900px');
     expect(page).toContain('position:static');
+  });
+
+  it('leads with an Application step that asks for a URL OR a project folder', () => {
+    // This is the master flow's first screen: enter an application URL,
+    // the agent understands it, before anything project-folder-specific is
+    // asked. It must appear ahead of "Which code are you investigating?",
+    // not after it.
+    const discoverAt = page.indexOf('id="discoverBanner"');
+    const sourceAt = page.indexOf('id="sourceBanner"');
+    expect(discoverAt).toBeGreaterThan(-1);
+    expect(sourceAt).toBeGreaterThan(-1);
+    expect(discoverAt).toBeLessThan(sourceAt);
+  });
+
+  it('wires the Application step to the discover endpoint, not a generic action', () => {
+    // Discovery is read-only and framework-agnostic - it goes through its
+    // own small endpoint (discoverEndpoint.ts), not the CLI-spawning
+    // action allowlist that the rest of the page uses.
+    expect(page).toContain('/api/discover');
+    expect(page).toContain('function discoverApplication');
+  });
+
+  it('feeds a successful discovery into the fields below it', () => {
+    // A URL fills "where is your app running"; a folder fills "which code" -
+    // so the step leads into the rest of Set up instead of being a dead end.
+    expect(page).toContain("$('appUrl').value = target");
+    expect(page).toContain("$('sourcePath').value = target");
   });
 
   it('lets the user set any app URL rather than assuming a port', () => {
@@ -875,6 +906,90 @@ describe('server security', () => {
       body: JSON.stringify({ action: 'doctor' }),
     });
     expect(res.status).toBe(403);
+  });
+
+  describe('the Application step\'s endpoint', () => {
+    let chrome = false;
+    let jsProject: string;
+    let angularServer: http.Server;
+    let angularBaseUrl: string;
+
+    beforeAll(async () => {
+      chrome = (await isChromeAvailable()).available;
+
+      jsProject = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-discover-'));
+      fs.writeFileSync(path.join(jsProject, 'package.json'), JSON.stringify({ name: 'app', dependencies: {} }));
+      fs.writeFileSync(path.join(jsProject, 'index.html'), '<!doctype html><body></body>');
+      fs.mkdirSync(path.join(jsProject, 'src'));
+      fs.writeFileSync(
+        path.join(jsProject, 'src', 'app.js'),
+        'class WidgetController { constructor() { this.t = setInterval(() => {}, 1000); } }',
+      );
+
+      angularServer = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end('<html><body><app-root ng-version="16.2.4"></app-root></body></html>');
+      });
+      await new Promise<void>((resolve) => angularServer.listen(0, '127.0.0.1', resolve));
+      const address = angularServer.address();
+      const port = typeof address === 'object' && address !== null ? address.port : 0;
+      angularBaseUrl = `http://127.0.0.1:${port}`;
+    });
+
+    afterAll(async () => {
+      fs.rmSync(jsProject, { recursive: true, force: true });
+      await new Promise<void>((resolve) => angularServer.close(() => resolve()));
+    });
+
+    const post = async (body: unknown): Promise<{ status: number; json: any }> => {
+      const res = await fetch(`http://127.0.0.1:${server.port}/api/discover?token=${server.token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return { status: res.status, json: await res.json() };
+    };
+
+    it('REFUSES without the token', async () => {
+      const res = await fetch(`http://127.0.0.1:${server.port}/api/discover`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target: jsProject }),
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('reads a real project folder through the same adapter registry as the CLI', async () => {
+      const { status, json } = await post({ target: jsProject });
+      expect(status).toBe(200);
+      expect(json.mode).toBe('project');
+      expect(json.framework).toBe('javascript');
+      expect(json.entities.total).toBe(1);
+      expect(json.unavailable.some((u: string) => u.startsWith('Routes:'))).toBe(true);
+    });
+
+    it('reads a real running page, including whether it needs a login', async () => {
+      if (!chrome) return;
+      const { status, json } = await post({ target: angularBaseUrl });
+      expect(status).toBe(200);
+      expect(json.mode).toBe('url');
+      expect(json.framework).toBe('angular');
+      expect(json.version).toBe('16.2.4');
+      expect(json.auth.required).toBe(false);
+      // A URL cannot list entities/routes - that must be stated, not shown as zero.
+      expect(json.unavailable.some((u: string) => u.startsWith('Entities:'))).toBe(true);
+    });
+
+    it('reports a clear error for a folder that does not exist, never a crash', async () => {
+      const { status, json } = await post({ target: 'C:/definitely/not/a/real/folder' });
+      expect(status).toBe(200);
+      expect(json.error).toContain('No such folder');
+    });
+
+    it('rejects an empty target', async () => {
+      const { json } = await post({ target: '  ' });
+      expect(json.error).toBeDefined();
+    });
   });
 
   it('REFUSES a non-loopback Host header (DNS rebinding)', async () => {

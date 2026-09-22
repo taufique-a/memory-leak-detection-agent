@@ -32,6 +32,7 @@ import { ACTIONS, buildArgs, findAction } from './actions';
 import { getEntityIndex, searchEntities } from './entities';
 import { renderPage } from './page';
 import { readSavedSession } from '../scenario/session';
+import { handleDiscover } from './discoverEndpoint';
 import { handleFindFix } from './findfixEndpoints';
 import { detailsPage, listReports, readReportHtml, renderPdf, validReportId } from './reports';
 import { browseFolder, findProjectsUnder } from '../project/browse';
@@ -184,6 +185,10 @@ async function handle(
     url.pathname.startsWith('/api/findfix/') &&
     (await handleFindFix(url, req, res, { agentRoot: ctx.options.agentRoot, readBody, sendJson }))
   ) {
+    return;
+  }
+
+  if (await handleDiscover(url, req, res, { readBody, sendJson })) {
     return;
   }
 

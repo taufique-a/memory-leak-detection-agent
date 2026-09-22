@@ -163,7 +163,7 @@ export class JavaScriptAdapter implements FrameworkAdapter {
           ]
             .filter((v): v is string => v !== false)
             .join(', ');
-          refusals.push(`a ${which} marker was found on the running page`);
+          refusals.push(`a framework marker was found on the running page: ${which}`);
         } else if (markers.hasRenderedContent) {
           evidence.push({
             kind: 'runtime-global',
