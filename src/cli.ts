@@ -22,6 +22,7 @@ import { runLive } from './commands/live';
 import { runServe } from './commands/serve';
 import { runVerify } from './commands/verify';
 import { runHeap } from './commands/heap';
+import { runInspect } from './commands/inspect';
 import { runInvestigate } from './commands/investigate';
 import { runReport } from './commands/report';
 import { runRisk } from './commands/risk';
@@ -69,7 +70,8 @@ COMMANDS
   ${'routes <sub>'.padEnd(28)} list | sweep - check cleanup on every route, not just one
   ${'investigate <project>'.padEnd(28)} Static + runtime in one investigation report
   ${'heap <scenario>'.padEnd(28)} Heap snapshots: what accumulated, and what holds it
-  ${'correlate <project>'.padEnd(28)} Join static findings to observed behaviour
+  ${'correlate <project>'.padEnd(28)} Join static findings to observed behaviour (Angular only)
+  ${'inspect <project>'.padEnd(28)} Framework-agnostic: heap growth correlated to source (Angular/React/JS)
   ${'fix <project>'.padEnd(28)} Propose fixes, show diffs, ask approval, apply
   ${'compile <project>'.padEnd(28)} Check the folder is a valid project, then build it
   ${'serve <project>'.padEnd(28)} Check the right project is served, and start it if not
@@ -156,6 +158,12 @@ CORRELATE OPTIONS
   --scenario <file>  The journey to run (required)
   --skip-heap        Skip heap snapshots (nothing can then reach PROVEN)
   --detail <n>       How many corroborated findings to print (default 10)
+  --json <file>      Write the full result as JSON
+
+INSPECT OPTIONS
+  --scenario <file>  The journey to run (required). Heap snapshots are not
+                     optional here - they are what this command reports on
+  --detail <n>       How many findings to print in full (default 10)
   --json <file>      Write the full result as JSON
 
 FIX OPTIONS
@@ -264,6 +272,10 @@ export function run(argv: string[]): number | Promise<number> {
 
   if (first === 'correlate') {
     return runCorrelate(args.slice(1));
+  }
+
+  if (first === 'inspect') {
+    return runInspect(args.slice(1));
   }
 
   if (first === 'fix') {

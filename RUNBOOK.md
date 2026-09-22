@@ -628,8 +628,13 @@ directly in Chrome DevTools → Memory → Load.
 ### Correlation, fixes and verification
 
 ```powershell
-# Join static findings to what the browser actually did
+# Join static findings to what the browser actually did (Angular only)
 npm run dev -- correlate <project> --scenario <file> --detail 10
+
+# Same idea, but framework-agnostic: Angular, React or plain JavaScript.
+# No static findings - it starts from real heap growth and asks the
+# adapter what each surviving object is. No fix is proposed here.
+npm run dev -- inspect <project> --scenario <file> --detail 10
 
 # Propose fixes. DRY RUN by default - nothing is written.
 npm run dev -- fix <project> --scenario <file>
@@ -1091,8 +1096,11 @@ src/
                  and the registry that picks an adapter by evidence
     discovery/   URL-first discovery: framework/version from a live page,
                  whether it appears to need signing in
-    diagnosis/   the six recommended actions (SAFE FIX, MONITOR, ...),
-                 derived from evidence - never a score
+    diagnosis/   the six recommended actions (SAFE FIX, MONITOR, ...)
+                 derived from evidence - never a score; and the
+                 cross-framework "worth a look" static heuristic
+    correlation/ the framework-agnostic join: real heap growth -> what the
+                 adapter says it is -> confidence -> recommended action
   adapters/
     angular/     Angular's answers - built from scanner/ and analyzer/ below,
                  nothing about Angular results changed by the adapter seam
@@ -1183,9 +1191,10 @@ Two constraints worth knowing before you edit:
 | — JavaScript adapter | ✅ | detection by evidence + absence of a known framework; declared classes/functions as entities |
 | — Six-level confidence | ✅ | `PROVEN`/`HIGH`/`MEDIUM`/`LOW`/`UNKNOWN`/`INCONCLUSIVE` — static analysis capped at `MEDIUM` |
 | — Recommended action | ✅ | one of six standard levels per Find & Fix issue, never a score (`src/core/diagnosis/action.ts`) |
-| — URL-first discovery | ◐ | `discover` (CLI + UI) does framework/version/login-detection from a URL; the rest of the pipeline (scan/analyze/risk/fix/correlate/investigate/Find & Fix) is still Angular-and-a-checkout only |
+| — URL-first discovery | ◐ | `discover` (CLI + UI) does framework/version/login-detection from a URL; `inspect` now covers detection for all three frameworks; static analysis, fixing, and Find & Fix (scan/analyze/risk/fix/Find & Fix) are still Angular-and-a-checkout only |
 | — Sign-in shortcut | ✅ | discovery's "sign in now" jumps straight into the existing safe `login` action - no new credential handling |
 | — Cross-framework static candidates | ✅ | `discover` flags a view with resources and no recognised teardown for Angular/React from facts the adapters already establish; never offered for plain JavaScript, which has no hook to be missing |
+| — `inspect` (route-aware investigation) | ✅ | Angular/React/JavaScript: real scenario + real heap comparison, correlated to source through the adapter, six-level confidence. Proven against a real leak. No fix is proposed - detection and fixing stay separate |
 
 **Phase 12 is deliberately partial.** The evidence bundle and analysis prompt
 are complete and usable today — `writeBundleForManualUse()` writes both to

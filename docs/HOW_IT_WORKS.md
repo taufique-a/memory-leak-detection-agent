@@ -280,3 +280,24 @@ Discovery (CLI and UI) adds one more thing when it has a checkout: `src/core/dia
 It is deliberately **not offered for plain JavaScript**. Angular and React each have a real, checkable place cleanup belongs; JavaScript has none, so "no teardown found" is true of every JavaScript file that has ever been written and means nothing on its own - reporting it would manufacture a suspicion out of nothing.
 
 Confidence never exceeds the static ceiling: **MEDIUM** when the resource count belongs to one entity alone, **LOW** when the file holds more than one view and the count cannot be attributed to just one of them - stated explicitly in the explanation, not hidden. Every candidate says plainly that this is a reason to look, not a confirmed leak.
+
+## 23. `inspect` - the framework-agnostic investigation
+
+Everything above this section either describes the browser/heap engine (already framework-neutral) or a source-side capability. `inspect` (`src/commands/inspect.ts`, `src/core/correlation/correlateGeneric.ts`) is the first command that runs the whole loop end to end for **any** of the three supported frameworks - not just Angular.
+
+```
+memory-agent inspect <project> --scenario <file>
+```
+
+What it does, in order:
+
+1. **Identify the framework** through the same adapter registry `discover` uses. No adapter, no run - it refuses cleanly rather than guessing.
+2. **Run the scenario** (`runScenario`) for an independent, multi-cycle memory trend - the same engine every other command already uses, framework-agnostic from the start.
+3. **Capture and compare two heap snapshots** (`investigateHeap`) around the same scenario - again, unchanged, already framework-agnostic.
+4. **Correlate.** For every constructor that grew, ask the adapter what it is (`correlateRuntimeObject`) instead of assuming from the name. One owner is a match; several is ambiguous and capped at LOW; no owner at all is reported as UNKNOWN, never silently dropped.
+
+Confidence follows the same six-level rule as everywhere else in this project: PROVEN needs an exact source match, a traced retaining path, real growth, **and** the independent trend agreeing; missing any one of those stops at HIGH, LOW or UNKNOWN. **No fix is proposed.** Every finding's recommended action is capped at NEEDS DEVELOPER REVIEW, because "detection and fixing must be separate" - `inspect` has no fix-generation code to point to, on purpose.
+
+This is proven against a real leak, not a mocked adapter: `tests/inspectCommand.test.ts` serves the same page the live-watch tests already trust (one class that leaks into a global list, one that cleans up), points a genuinely plain-JavaScript-shaped project root at it, and checks that the leaking class is found in its real source file while the clean one is not reported as growing.
+
+What it does not do: it does not pick a target route for you (that still needs an explicit `--scenario` file), and it does not carry the Angular-specific lifetime knowledge (`knowledge/lifetime.ts`) that decides a subscription is meant to outlive its component - that judgement has no generic equivalent yet.
