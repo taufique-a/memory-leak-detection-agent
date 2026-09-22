@@ -132,6 +132,7 @@ describe('the core does not depend on any framework', () => {
   it('only one file decides which adapters exist', () => {
     const src = path.join(__dirname, '..', 'src');
     const importers: string[] = [];
+    const pattern = /(?:from|import)\s*\(?\s*['"][^'"]*adapters\/(angular|javascript)/;
 
     const walk = (dir: string): void => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -142,17 +143,15 @@ describe('the core does not depend on any framework', () => {
           continue;
         }
         if (!entry.name.endsWith('.ts')) continue;
-        const importsAngularAdapter = fs
-          .readFileSync(full, 'utf8')
-          .split('\n')
-          .some((line) => /(?:from|import)\s*\(?\s*['"][^'"]*adapters\/angular/.test(line));
-        if (importsAngularAdapter) importers.push(path.relative(src, full).replace(/\\/g, '/'));
+        const importsAnAdapter = fs.readFileSync(full, 'utf8').split('\n').some((line) => pattern.test(line));
+        if (importsAnAdapter) importers.push(path.relative(src, full).replace(/\\/g, '/'));
       }
     };
     walk(src);
 
-    // The Angular adapter itself is reached through src/adapters/index.ts.
-    // Anything else importing it directly is the seam leaking.
+    // Every adapter is reached through src/adapters/index.ts. Anything else
+    // importing one directly - including one adapter reaching into another
+    // - is the seam leaking.
     expect(importers).toEqual([]);
   });
 });
@@ -234,7 +233,7 @@ describe('AdapterRegistry', () => {
   });
 
   it('ships exactly the adapters this build supports', () => {
-    expect(defaultRegistry().list().map((a) => a.id)).toEqual(['angular']);
+    expect(defaultRegistry().list().map((a) => a.id)).toEqual(['angular', 'javascript']);
   });
 });
 

@@ -21,6 +21,7 @@ const PAGES: Record<string, string> = {
   '/': page('<app-root ng-version="16.2.4"></app-root>'),
   '/login': page('<app-root ng-version="16.2.4"></app-root><form><input type="password"></form></form>'),
   '/plain': page('<div id="app">no framework marker here</div>'),
+  '/empty': page(''),
 };
 
 let server: http.Server;
@@ -79,13 +80,22 @@ describe('discoverFromUrl', () => {
     expect(result.framework.framework).toBe('angular');
   });
 
-  it('reports Unknown, with every adapter\'s reason, for a page with no framework marker', async () => {
+  it('reports plain JavaScript, not Unknown, for a real page with no component framework marker', async () => {
     if (!chrome) return;
 
     const result = await discoverFromUrl(`${baseUrl}/plain`);
 
+    expect(result.framework.framework).toBe('javascript');
+    expect(result.framework.detection.evidence[0]?.kind).toBe('runtime-global');
+  });
+
+  it('reports Unknown, with every adapter\'s reason, for a page with nothing rendered at all', async () => {
+    if (!chrome) return;
+
+    const result = await discoverFromUrl(`${baseUrl}/empty`);
+
     expect(result.framework.framework).toBe('unknown');
-    expect(result.framework.considered[0]?.reason).toBeDefined();
+    expect(result.framework.considered.every((d) => d.reason !== undefined)).toBe(true);
   });
 
   it('raises a clear error rather than hanging when the address cannot be reached', async () => {

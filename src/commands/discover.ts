@@ -115,7 +115,7 @@ export async function runDiscover(args: string[]): Promise<number> {
     field(d.framework, verdict);
   }
   if (outcome.considered.length < 3) {
-    info('React and plain JavaScript adapters are not built yet, so those applications report Unknown.');
+    info('The React adapter is not built yet, so a React application reports Unknown.');
   }
 
   const adapter = outcome.adapter;

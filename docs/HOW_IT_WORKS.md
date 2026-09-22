@@ -248,11 +248,13 @@ Every Find & Fix issue also gets **one recommended action** (`src/core/diagnosis
 
 The browser, heap and verification code does not know which framework it is looking at. Framework questions — what is a component, what is a route, where does clean-up belong, which file is this heap object — go through one contract, `FrameworkAdapter` (`src/core/framework/adapter.ts`), in a framework-free vocabulary (`src/core/framework/types.ts`).
 
-- **Angular** is the only adapter today (`src/adapters/angular/`). It answers from the same scanner, entity index and fix engine as before; nothing about Angular results changed.
-- **React and plain JavaScript** are not built yet. An application of either kind reports **Unknown**, with the reason, rather than being mislabelled.
+- **Angular** (`src/adapters/angular/`) answers from the same scanner, entity index and fix engine as before; nothing about Angular results changed.
+- **Plain JavaScript** (`src/adapters/javascript/`) detects a browser application with no framework: a genuine positive sign (an HTML entry file in source, or a real rendered page at runtime) AND the absence of every framework marker this tool knows. If it sees an Angular or React marker or dependency, it refuses outright and names which - it never claims a project some other adapter should own. It has no version (plain JavaScript is not versioned), no route table and no lifecycle hook to check - each reported as genuinely unavailable. What it does have: the classes and functions actually declared in the source, found with the TypeScript compiler across `.js`/`.jsx`/`.mjs`/`.cjs`/`.ts`/`.tsx`, matched to a heap constructor name by the same rule as Angular - one owner is a match, several is ambiguous, never resolved by guessing.
+- **React** is not built yet. A React application reports **Unknown**, with the reason - and is explicitly refused by the JavaScript adapter too, rather than being swept in as "no framework".
+- Resource teardown knowledge (a timer is freed by `clearInterval` whoever created it) is **shared**, not restated per adapter: `src/adapters/generic-web/resources.ts` holds the framework-neutral table, and Angular adds only what is genuinely its own on top (CDK/Material dialogs).
 - Anything an adapter cannot do comes back as *not available, because…*, never as an empty list that reads like "0 components".
 - A heap name owned by two classes comes back as **ambiguous** with both files, never as one confident guess.
-- A test checks that nothing under `src/core/` imports an adapter.
+- A test checks that nothing under `src/core/` imports an adapter, and that nothing outside `src/adapters/index.ts` imports an adapter directly.
 
 `memory-agent discover <project>` shows the result: framework, version (installed beats declared, and it says which it used), what each answer was based on, and every adapter's yes or no.
 

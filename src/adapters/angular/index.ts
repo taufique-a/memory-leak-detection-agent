@@ -43,7 +43,7 @@ import {
   type SourceCorrelation,
   type VersionDetection,
 } from '../../core/framework/types';
-import { DEFINITION_BY_KIND } from '../../analyzer/resources';
+import { analyzeGenericResource, GENERIC_KINDS_BY_CATEGORY } from '../generic-web/resources';
 import { proposeFix, type ProposedFix } from '../../fix/propose';
 import { constructorMatches } from '../../findfix/issues';
 import { effectiveVersion, readProjectProfile } from '../../knowledge/projectProfile';
@@ -62,35 +62,15 @@ const ROLE_BY_KIND: Readonly<Record<string, EntityRole>> = {
 };
 
 /**
- * The analyzer's fine-grained kinds, grouped under the core's coarse ones.
- *
- * The analyzer needs to know that `Highcharts.chart()` is freed by
- * `.destroy()` and an ECharts instance by `.dispose()`. A report does not:
- * it says "a chart was not torn down". This table is the join.
- *
- * It is Angular-flavoured only in its last two rows. Phase 5 moves the rest
- * into the generic-web adapter, where React and plain JavaScript will share
- * it rather than each restating it.
+ * The shared table plus the one thing that is genuinely Angular's own:
+ * CDK/Material dialogs, a real library resource with no plain-JS or React
+ * equivalent. Everything else - timers, listeners, observers, sockets,
+ * workers, charts, maps - is the same fact for every framework, so it lives
+ * once in generic-web/resources.ts and every adapter reads it from there.
  */
 const KINDS_BY_CATEGORY: Readonly<Record<RuntimeEntityKind, readonly ResourceKind[]>> = {
-  timer: ['timer.interval', 'timer.timeout', 'timer.animationFrame'],
-  'event-listener': ['dom.eventListener'],
-  observer: [
-    'dom.mutationObserver',
-    'dom.resizeObserver',
-    'dom.intersectionObserver',
-    'dom.performanceObserver',
-  ],
-  subscription: ['rxjs.subscription'],
-  websocket: ['net.webSocket', 'net.eventSource'],
-  worker: ['thread.worker'],
-  chart: ['chart.highcharts', 'chart.echarts', 'chart.amcharts', 'chart.apex', 'chart.d3Timer'],
-  map: ['map.here', 'map.leaflet'],
+  ...GENERIC_KINDS_BY_CATEGORY,
   dialog: ['angular.dialog', 'angular.overlay'],
-  'dom-node': [],
-  closure: [],
-  cache: [],
-  other: [],
 };
 
 const CLEANUP_SITE = 'ngOnDestroy';
@@ -355,33 +335,7 @@ export class AngularAdapter implements FrameworkAdapter {
     kind: RuntimeEntityKind,
     _context: AdapterContext,
   ): Promise<Capability<ResourceAnalysis>> {
-    const analyzerKinds = KINDS_BY_CATEGORY[kind];
-    if (analyzerKinds.length === 0) {
-      return unavailable(
-        `the analyzer has no teardown rules for "${kind}", so nothing can be said about how it is released`,
-      );
-    }
-
-    const definitions = analyzerKinds
-      .map((k) => DEFINITION_BY_KIND.get(k))
-      .filter((d): d is NonNullable<typeof d> => d !== undefined);
-
-    if (definitions.length === 0) {
-      return unavailable(`no resource definitions are registered for "${kind}"`);
-    }
-
-    const releaseCalls = [
-      ...new Set(definitions.flatMap((d) => [...d.releaseGlobals, ...d.releaseMethods])),
-    ].sort();
-
-    const first = definitions[0] as NonNullable<(typeof definitions)[0]>;
-    return available({
-      kind,
-      label: definitions.length === 1 ? first.label : definitions.map((d) => d.label).join(', '),
-      releaseCalls,
-      whyItLeaks: first.why,
-      expectedCleanupSite: CLEANUP_SITE,
-    });
+    return analyzeGenericResource(kind, KINDS_BY_CATEGORY, CLEANUP_SITE);
   }
 
   async correlateRuntimeObject(
