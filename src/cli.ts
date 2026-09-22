@@ -46,7 +46,9 @@ function printHelp(): void {
   const info = buildInfo();
   console.log(`
 ${versionString()}
-AI Memory Leak Investigation Agent for Angular applications
+AI Memory Leak Investigation Agent for Angular, React and plain JavaScript applications
+"discover" understands all three; the rest of the pipeline (scan/analyze/risk/fix/
+correlate/investigate/find & fix) is still Angular-only today.
 
 USAGE
   memory-agent <command> [options]

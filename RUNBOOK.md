@@ -97,6 +97,24 @@ A browser opens on a local page that walks you from **step 0 (see how it works)*
 through to **step 8 (write it up)**. Each step says what it does, why it matters
 and roughly how long it takes, in plain language.
 
+### Step zero: what is this application?
+
+The Set up page now opens with **What is this application?** — one field,
+either the app's URL or a project folder, and a **discover** button. A URL
+opens a real Chrome, reads the framework straight off the running page
+(Angular's `ng-version` marker today; React and plain JavaScript detect too,
+each with its own real signal — see [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)
+§20), reports the version and where that came from, and says whether the page
+appears to need signing in. A folder gets the same answer from source instead.
+Either way, a successful discovery **fills in the fields below it** — a URL
+sets "where is your app running", a folder sets "which code" — so this step
+leads straight into the rest of Set up rather than being a dead end.
+
+This is read-only and framework-agnostic. Everything after it in this guide —
+Find & Fix, the fix engine, correlation — still assumes an **Angular**
+project; `discover` is the one part of the tool that understands all three
+supported frameworks today.
+
 ### Step one: choosing the code
 
 The Set up page starts by asking **which code you are investigating**. Type the
@@ -721,7 +739,7 @@ For anything else, do not hand-write a scenario: use the search box in the UI
 ## 5. Testing
 
 ```powershell
-npm test                       # everything (~2-3 minutes, 30 test files)
+npm test                       # everything (~3-5 minutes, 41 test files)
 npm run typecheck              # types only, fast
 npm run build                  # compile to dist/
 
@@ -735,10 +753,14 @@ parallelism, workers each holding a ts-jest cache while one owns a browser died
 with *"Jest worker ran out of memory"*, surfacing as several suites "failing to
 run" with no useful error. Serial is also faster here.
 
-Two test files drive a **real Chrome** (`runtime.test.ts`, `scenario.test.ts`)
-and skip gracefully if Chrome is unavailable. Two tests in `ui.test.ts`
-("restricting a second serve") start a real server process and can time out
-when the whole suite is under load; they pass when run alone.
+**Ten test files drive a real Chrome** (`grep -l isChromeAvailable
+tests/*.test.ts` finds them - `runtime`, `scenario`, `urlDiscovery`,
+`reactUrlDiscovery`, the `live*` files and others) and skip gracefully if
+Chrome is unavailable. Under heavy load - many of these running back to back,
+or the machine doing something else at the same time - an occasional
+real-browser test can time out on a timing assertion rather than fail on
+substance; it passes when run alone. That is noise, not a regression: re-run
+the one file before assuming a change broke something.
 
 ### Before committing
 
@@ -1050,8 +1072,9 @@ future diff.
 
 Rules the tool enforces on itself, so you can trust the labels:
 
-- Static analysis **cannot** produce `PROVEN` or `CONFIRMED`. Reading source code
-  observes nothing.
+- Static analysis **cannot** produce `PROVEN` or `HIGH` confidence, or a
+  `CONFIRMED` status. Reading source code observes nothing; only the browser
+  can establish those.
 - `CONFIRMED` needs growth **and** a good fit **and** zero step failures.
 - `VERIFIED` needs a fix applied and re-measured (`verify`, and the Find & Fix verify stage).
 - Sections that have no data say **`NOT GATHERED — requires Phase N`** rather
@@ -1063,6 +1086,21 @@ Rules the tool enforces on itself, so you can trust the labels:
 
 ```
 src/
+  core/
+    framework/   FrameworkAdapter contract, the framework-neutral vocabulary,
+                 and the registry that picks an adapter by evidence
+    discovery/   URL-first discovery: framework/version from a live page,
+                 whether it appears to need signing in
+    diagnosis/   the six recommended actions (SAFE FIX, MONITOR, ...),
+                 derived from evidence - never a score
+  adapters/
+    angular/     Angular's answers - built from scanner/ and analyzer/ below,
+                 nothing about Angular results changed by the adapter seam
+    react/       component/JSX detection, useEffect-cleanup and
+                 componentWillUnmount teardown, react-router routes
+    javascript/  plain-JS/generic-web detection and declaration scanning
+    generic-web/ resource teardown knowledge and the React Fiber-marker
+                 check, shared by every adapter above
   scanner/     project discovery, file walk, AST parse, route graph
   analyzer/    resource catalog, AST visitor, pairing, lifecycle checks
   risk/        scoring and ranking
@@ -1073,7 +1111,7 @@ src/
   fix/         git safety, fix proposals, guarded apply
   heap/        snapshot capture, parsing, retaining paths
   verify/      the project's own build/lint/test, before-and-after compare
-  ui/          local server, action allowlist, page, entity search
+  ui/          local server, action allowlist, page, entity search, discovery endpoint
   project/     source folder browsing, validation, serving, and served-app checks
   findfix/     Find & Fix sessions, scope, issue cards, selection
   knowledge/   package.json profile, service catalogue, subscription-lifetime decisions
@@ -1083,12 +1121,19 @@ src/
 docs/          HOW_IT_WORKS.md - plain-English guide to the agent
 scripts/       setup-node.ps1 / .cmd - fetch the pinned Node into .node\
 .node/         Node 22, npm cache, Playwright browsers (gitignored; version in .node-version)
-tests/         30 test files, mirrors src/
+tests/         41 test files, mirrors src/ - eleven drive a real Chrome
+               (find them with `grep -l isChromeAvailable tests/*.test.ts`)
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
 artifacts/     JSON dumps, screenshots (gitignored)
 .auth/         saved sessions — CREDENTIALS, gitignored
 ```
+
+**`core/` never imports from `adapters/`, and nothing outside
+`adapters/index.ts` imports an adapter directly** — both are enforced by a
+test (`tests/frameworkAdapter.test.ts`), not just a convention. Adding a
+fourth framework means writing a new adapter under `adapters/`; it should
+never mean touching `core/`.
 
 Two constraints worth knowing before you edit:
 
@@ -1128,11 +1173,17 @@ Two constraints worth knowing before you edit:
 | 17 Professional reporting | ✅ | all sections render; ungathered ones say which phase |
 | 18 Autonomous investigation | ✅ | `auto` — the whole pipeline, with early vetoes |
 | 19 Advanced | ⬜ | CI, investigation history, IDE integration |
-| — Guided UI | ✅ | `ui` — local web interface, step 0 to step 8 |
+| — Guided UI | ✅ | `ui` — local web interface: Application step, step 0 (see how it works) to step 8 (write it up) |
 | — Dynamic targets | ✅ | search any component; scenario generated for the one you pick |
 | — Find & Fix | ✅ | agent-driven find → review → apply (several at once) → verify → undo |
 | — Knowledge | ✅ | `package.json` versions, service catalogue, keep-or-release decisions per subscription |
 | — Retained size | ✅ | dominator-tree retained size next to shallow size |
+| — Adapter seam | ✅ | `FrameworkAdapter` contract; `core/` never imports an adapter, enforced by a test |
+| — React adapter | ✅ | detection (source + live Fiber marker), components, `useEffect`/`componentWillUnmount` teardown, `react-router` routes |
+| — JavaScript adapter | ✅ | detection by evidence + absence of a known framework; declared classes/functions as entities |
+| — Six-level confidence | ✅ | `PROVEN`/`HIGH`/`MEDIUM`/`LOW`/`UNKNOWN`/`INCONCLUSIVE` — static analysis capped at `MEDIUM` |
+| — Recommended action | ✅ | one of six standard levels per Find & Fix issue, never a score (`src/core/diagnosis/action.ts`) |
+| — URL-first discovery | ◐ | `discover` (CLI + UI) does framework/version/login-detection from a URL; the rest of the pipeline (scan/analyze/risk/fix/correlate/investigate/Find & Fix) is still Angular-and-a-checkout only |
 
 **Phase 12 is deliberately partial.** The evidence bundle and analysis prompt
 are complete and usable today — `writeBundleForManualUse()` writes both to

@@ -1,7 +1,7 @@
 {
   "name": "memory-agent",
   "version": "0.1.0",
-  "description": "AI Memory Leak Investigation Agent for Angular applications",
+  "description": "AI Memory Leak Investigation Agent for Angular, React and plain JavaScript applications",
   "license": "UNLICENSED",
   "private": true,
   "engines": {
