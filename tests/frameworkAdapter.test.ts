@@ -265,11 +265,58 @@ describe('AngularAdapter detection', () => {
     expect(detection.reason).toContain('no angular.json');
   });
 
-  it('says it cannot look at a running page, rather than guessing from a URL', async () => {
+  it('refuses when there is neither a checkout nor a running page to look at', async () => {
     const detection = await angularAdapter.detect({ baseUrl: 'https://example.com' });
 
     expect(detection.detected).toBe(false);
-    expect(detection.reason).toMatch(/running page is not implemented/i);
+    expect(detection.reason).toContain('no project source was provided');
+  });
+
+  it('detects Angular from the [ng-version] marker on a live page, with no checkout at all', async () => {
+    const evaluate = async <T>(): Promise<T> => '17.0.2' as unknown as T;
+
+    const detection = await angularAdapter.detect({ baseUrl: 'https://example.com', evaluate });
+
+    expect(detection.detected).toBe(true);
+    expect(detection.evidence).toEqual([
+      { kind: 'dom-marker', detail: '[ng-version] attribute on the page', value: '17.0.2' },
+    ]);
+  });
+
+  it('says explicitly that the running page was checked too, when it still finds nothing', async () => {
+    const evaluate = async <T>(): Promise<T> => null as unknown as T;
+
+    const detection = await angularAdapter.detect({ baseUrl: 'https://example.com', evaluate });
+
+    expect(detection.detected).toBe(false);
+    expect(detection.reason).toMatch(/\[ng-version\].*running page/i);
+  });
+
+  it('combines a checkout with a live page, when both are given', async () => {
+    const root = project({ declared: '^15.0.0', installed: '15.2.10' });
+    const evaluate = async <T>(): Promise<T> => '15.2.10' as unknown as T;
+
+    const detection = await angularAdapter.detect({ projectRoot: root, evaluate });
+
+    expect(detection.detected).toBe(true);
+    expect(detection.evidence.map((e) => e.kind)).toEqual([
+      'dom-marker',
+      'source-file',
+      'package-manifest',
+      'installed-package',
+    ]);
+  });
+
+  it('ignores an evaluate that throws, rather than failing detection', async () => {
+    const root = project({ declared: '^15.0.0', installed: '15.2.10' });
+    const evaluate = async (): Promise<never> => {
+      throw new Error('execution context was destroyed');
+    };
+
+    const detection = await angularAdapter.detect({ projectRoot: root, evaluate });
+
+    expect(detection.detected).toBe(true);
+    expect(detection.evidence.some((e) => e.kind === 'dom-marker')).toBe(false);
   });
 
   it('reports the installed version, not the declared range', async () => {
@@ -300,6 +347,19 @@ describe('AngularAdapter detection', () => {
 
     expect(version.version).toBeUndefined();
     expect(version.reason).toContain('@angular/core');
+  });
+
+  it('prefers what the live page reports over what the checkout declares', async () => {
+    // The checkout says 15.0.0 is installed; the running page says 15.2.10
+    // is what actually loaded. What is running is what matters.
+    const root = project({ declared: '^15.0.0', installed: '15.0.0' });
+    const evaluate = async <T>(): Promise<T> => '15.2.10' as unknown as T;
+
+    const version = await angularAdapter.getVersion({ projectRoot: root, evaluate });
+
+    expect(version.version).toBe('15.2.10');
+    expect(version.evidence[0]?.kind).toBe('dom-marker');
+    expect(version.reason).toBeUndefined();
   });
 });
 

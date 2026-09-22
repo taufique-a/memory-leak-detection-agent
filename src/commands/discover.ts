@@ -13,12 +13,14 @@
  * works" is something you can run rather than something the tests assert
  * in private.
  *
- * WHAT IT CANNOT DO YET
- * ---------------------
- * A URL. Discovery from a running page - the flow the product is heading
- * for - needs the browser session to be handed to the adapter, which is the
- * next phase. Passing a URL today says exactly that instead of guessing
- * from the address.
+ * TWO INPUTS, TWO DIFFERENT KINDS OF ANSWER
+ * -------------------------------------------
+ * A project folder gives source-backed answers: entities, routes, teardown.
+ * A URL launches a real Chrome, loads the page once, and gives runtime-only
+ * answers: framework and version from what the page itself declares (the
+ * `ng-version` marker, today), and whether it appears to require signing
+ * in. It does not list entities or routes - those need a checkout - and it
+ * says so rather than printing zeros.
  */
 
 import * as fs from 'node:fs';
@@ -27,6 +29,7 @@ import * as path from 'node:path';
 import { defaultRegistry } from '../adapters';
 import type { AdapterContext } from '../core/framework/adapter';
 import type { Capability, EvidenceSource } from '../core/framework/types';
+import { discoverFromUrl } from '../core/discovery/runtime';
 import { colour, field, heading, info, warn } from '../utils/logger';
 
 function describeEvidence(e: EvidenceSource): string {
@@ -63,11 +66,7 @@ export async function runDiscover(args: string[]): Promise<number> {
   }
 
   if (/^https?:\/\//i.test(target)) {
-    console.error(
-      'Discovery from a URL is not implemented yet. It needs a browser session to read the\n' +
-        'running page, which arrives with the URL-first flow. Pass a project folder for now.',
-    );
-    return 2;
+    return runDiscoverUrl(target);
   }
 
   const root = path.resolve(target);
@@ -153,6 +152,66 @@ export async function runDiscover(args: string[]): Promise<number> {
     );
   }
 
+  console.log('');
+  return 0;
+}
+
+async function runDiscoverUrl(url: string): Promise<number> {
+  console.log('');
+  console.log(colour.dim(`Opening a real Chrome on ${url}...`));
+
+  let result;
+  try {
+    result = await discoverFromUrl(url);
+  } catch (err) {
+    console.error('');
+    console.error(colour.red('Could not discover this application: ') + (err as Error).message);
+    return 1;
+  }
+
+  heading('APPLICATION');
+  field('URL', result.url);
+  if (result.finalUrl !== result.url) {
+    field('Redirected to', result.finalUrl);
+  }
+  field('Title', result.title || colour.dim('(none)'));
+  field('Chrome', result.chromeVersion);
+  console.log('');
+
+  const outcome = result.framework;
+  field(
+    'Framework',
+    outcome.framework === 'unknown' ? colour.dim('Unknown') : outcome.adapter?.displayName ?? outcome.framework,
+  );
+  field('Version', outcome.version.version ?? colour.dim('Unknown'));
+  if (outcome.version.reason !== undefined) info(outcome.version.reason);
+
+  const sources = [...outcome.detection.evidence, ...outcome.version.evidence];
+  const seen = new Set<string>();
+  const lines = sources.map(describeEvidence).filter((line) => (seen.has(line) ? false : (seen.add(line), true)));
+  if (lines.length > 0) {
+    heading('WHAT THIS IS BASED ON');
+    for (const line of lines) console.log(line);
+  }
+
+  if (outcome.alsoDetected.length > 0) {
+    warn(`Also detected: ${outcome.alsoDetected.join(', ')}. The strongest evidence decided.`);
+  }
+  if (outcome.framework === 'unknown') {
+    warn('No framework was identified from this page.');
+  }
+
+  heading('AUTHENTICATION');
+  field('Required', result.auth.required ? colour.yellow('appears to be') : 'not detected');
+  for (const e of result.auth.evidence) console.log(describeEvidence(e));
+  if (result.auth.limitation !== undefined) info(result.auth.limitation);
+
+  console.log('');
+  info(
+    'This is a running-page-only view: no checkout was given, so entities, routes and ' +
+      'teardown cannot be listed. Pass a project folder to see those, or continue with a ' +
+      'target route once signed in.',
+  );
   console.log('');
   return 0;
 }

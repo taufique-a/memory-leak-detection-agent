@@ -53,7 +53,7 @@ USAGE
 
 COMMANDS
   ${'ui'.padEnd(28)} Guided local interface - start here if unsure
-  ${'discover <project>'.padEnd(28)} What is this application? Framework, version, and the evidence
+  ${'discover <project|url>'.padEnd(28)} What is this application? Framework, version, login, and the evidence
   ${'scan <project>'.padEnd(28)} Discover the Angular project structure
   ${'analyze <project>'.padEnd(28)} Find resource acquire/release operations (AST)
   ${'risk <project>'.padEnd(28)} Rank and explain static memory risks

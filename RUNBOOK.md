@@ -531,6 +531,13 @@ not installed.
 ### Static analysis — no browser, no login, read-only
 
 ```powershell
+# What framework is this, and which version?
+npm run dev -- discover "C:\Users\Taufique\IOSense"
+
+# Same question, from a running app instead of a checkout - opens a real
+# Chrome, reads what the page declares, and checks whether it needs a login
+npm run dev -- discover http://localhost:7400
+
 # What is in this project?
 npm run dev -- scan "C:\Users\Taufique\IOSense"
 

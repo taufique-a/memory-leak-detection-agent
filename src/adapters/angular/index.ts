@@ -12,13 +12,16 @@
  * That is the whole point of the change. When the React adapter arrives it
  * implements this same interface, and the core does not learn a thing.
  *
- * WHY DETECTION IS SOURCE-ONLY TODAY
- * ----------------------------------
- * `detect` reads angular.json and package.json. It cannot yet look at a
- * running page, so an application we have no checkout of returns "not
- * detected" with that as the stated reason - not a guess from the URL, and
- * not a silent `false`. Runtime detection through `context.evaluate` is the
- * next phase; the contract already carries it.
+ * DETECTION: SOURCE, RUNTIME, OR BOTH
+ * ------------------------------------
+ * `detect` and `getVersion` read angular.json and package.json when a
+ * checkout is given, AND read the `ng-version` attribute Angular writes
+ * onto its root element when a live page is given (`context.evaluate`) -
+ * true in every Angular build, JIT or AOT, dev or production, so it is as
+ * reliable a marker as the framework has. When both are available they are
+ * combined; when only one is, that one is reported as what it is. Only
+ * when neither source nor a running page is available does detection
+ * refuse, with the reason.
  */
 
 import * as fs from 'node:fs';
@@ -92,6 +95,30 @@ const KINDS_BY_CATEGORY: Readonly<Record<RuntimeEntityKind, readonly ResourceKin
 
 const CLEANUP_SITE = 'ngOnDestroy';
 
+/**
+ * Angular stamps `ng-version="X.Y.Z"` on its root element - JIT or AOT, dev
+ * or production, every build. Reading it needs no dev-mode global and
+ * cannot be stripped by minification, which is why it is preferred over
+ * `window.ng` (only present in development builds).
+ */
+const NG_VERSION_SCRIPT = `(() => {
+  const el = document.querySelector('[ng-version]');
+  return el ? el.getAttribute('ng-version') : null;
+})()`;
+
+/** The version on the live page, or undefined when there is no page or no marker. */
+async function readRuntimeVersion(context: AdapterContext): Promise<string | undefined> {
+  if (context.evaluate === undefined) return undefined;
+  try {
+    const value = await context.evaluate<string | null>(NG_VERSION_SCRIPT);
+    return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+  } catch {
+    // A page that is not ready, or an evaluate that is not wired up
+    // properly, is not evidence of absence - just silence.
+    return undefined;
+  }
+}
+
 function entityToApp(entity: Entity): AppEntity {
   return {
     name: entity.name,
@@ -135,17 +162,30 @@ export class AngularAdapter implements FrameworkAdapter {
   readonly displayName = 'Angular';
 
   async detect(context: AdapterContext): Promise<FrameworkDetection> {
+    const evidence: EvidenceSource[] = [];
+
+    const runtimeVersion = await readRuntimeVersion(context);
+    if (runtimeVersion !== undefined) {
+      evidence.push({
+        kind: 'dom-marker',
+        detail: '[ng-version] attribute on the page',
+        value: runtimeVersion,
+      });
+    }
+
     const source = requireSource(context);
     if ('reason' in source) {
+      if (evidence.length > 0) return { framework: this.id, detected: true, evidence };
       return {
         framework: this.id,
         detected: false,
         evidence: [],
-        reason: `${source.reason} Detecting Angular in a running page is not implemented yet.`,
+        reason:
+          context.evaluate !== undefined
+            ? `${source.reason} No [ng-version] attribute was found on the running page either.`
+            : source.reason,
       };
     }
-
-    const evidence: EvidenceSource[] = [];
 
     if (fs.existsSync(path.join(source.root, 'angular.json'))) {
       evidence.push({ kind: 'source-file', detail: 'angular.json' });
@@ -181,6 +221,26 @@ export class AngularAdapter implements FrameworkAdapter {
   }
 
   async getVersion(context: AdapterContext): Promise<VersionDetection> {
+    /* What is actually running beats what is merely installed, which beats
+       what is only declared. A live page answers the first question
+       directly and is preferred over both when one is available. */
+    const runtimeVersion = await readRuntimeVersion(context);
+    if (runtimeVersion !== undefined) {
+      return {
+        version: runtimeVersion,
+        ...(majorVersion(runtimeVersion) !== undefined
+          ? { major: majorVersion(runtimeVersion) as number }
+          : {}),
+        evidence: [
+          {
+            kind: 'dom-marker',
+            detail: '[ng-version] attribute on the page',
+            value: runtimeVersion,
+          },
+        ],
+      };
+    }
+
     const source = requireSource(context);
     if ('reason' in source) return { evidence: [], reason: source.reason };
 
