@@ -30,6 +30,7 @@ import { defaultRegistry } from '../adapters';
 import type { AdapterContext } from '../core/framework/adapter';
 import type { Capability, EvidenceSource } from '../core/framework/types';
 import { discoverFromUrl } from '../core/discovery/runtime';
+import { findStaticCandidates } from '../core/diagnosis/staticCandidates';
 import { colour, field, heading, info, warn } from '../utils/logger';
 
 function describeEvidence(e: EvidenceSource): string {
@@ -147,6 +148,21 @@ export async function runDiscover(args: string[]): Promise<number> {
       'A view with no cleanup hook is not a leak: most of them start nothing. This is a ' +
         'description of the source, not a verdict. Only the browser can produce one.',
     );
+  }
+
+  if (entities !== undefined) {
+    const candidates = findStaticCandidates(outcome.framework, entities);
+    if (candidates.length > 0) {
+      heading(`WORTH A LOOK (${candidates.length}) - STATIC ONLY, NOT A LEAK`);
+      for (const c of candidates.slice(0, 10)) {
+        field(`${c.entity} (${c.confidence})`, `${c.file}:${c.line}`);
+      }
+      if (candidates.length > 10) info(`...and ${candidates.length - 10} more.`);
+      info(
+        'Reading the code alone never reaches PROVEN or HIGH confidence. These are places to ' +
+          'run a browser investigation against, not confirmed leaks.',
+      );
+    }
   }
 
   console.log('');

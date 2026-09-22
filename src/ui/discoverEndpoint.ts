@@ -18,6 +18,7 @@ import type * as http from 'node:http';
 
 import { defaultRegistry } from '../adapters';
 import type { AdapterContext } from '../core/framework/adapter';
+import { findStaticCandidates } from '../core/diagnosis/staticCandidates';
 import { discoverFromUrl } from '../core/discovery/runtime';
 import type { EvidenceSource } from '../core/framework/types';
 
@@ -75,6 +76,8 @@ export interface DiscoverResponse {
   entities?: { total: number; views: number; routed: number };
   routes?: { total: number; boundaries: number; notes: string[] };
   lifecycle?: { hook: string; considered: number; withTeardown: number; withoutTeardown: number };
+  /** Framework-agnostic, static-only: places worth a browser investigation. Empty for plain JavaScript, which has no cleanup hook to check. */
+  staticCandidates?: Array<{ entity: string; file: string; line: number; confidence: string; explanation: string }>;
   /** "<what>: <why not>" for every capability the checkout/page could not supply. */
   unavailable: string[];
 }
@@ -189,6 +192,13 @@ async function discoverProject(target: string): Promise<DiscoverResponse> {
   if (entities.available) {
     const views = entities.value.filter((e) => e.role === 'view');
     base.entities = { total: entities.value.length, views: views.length, routed: views.filter((v) => v.routed).length };
+    base.staticCandidates = findStaticCandidates(outcome.framework, entities.value).map((c) => ({
+      entity: c.entity,
+      file: c.file,
+      line: c.line,
+      confidence: c.confidence,
+      explanation: c.explanation,
+    }));
   } else {
     unavailable.push(`Entities: ${entities.reason}`);
   }

@@ -1184,6 +1184,8 @@ Two constraints worth knowing before you edit:
 | — Six-level confidence | ✅ | `PROVEN`/`HIGH`/`MEDIUM`/`LOW`/`UNKNOWN`/`INCONCLUSIVE` — static analysis capped at `MEDIUM` |
 | — Recommended action | ✅ | one of six standard levels per Find & Fix issue, never a score (`src/core/diagnosis/action.ts`) |
 | — URL-first discovery | ◐ | `discover` (CLI + UI) does framework/version/login-detection from a URL; the rest of the pipeline (scan/analyze/risk/fix/correlate/investigate/Find & Fix) is still Angular-and-a-checkout only |
+| — Sign-in shortcut | ✅ | discovery's "sign in now" jumps straight into the existing safe `login` action - no new credential handling |
+| — Cross-framework static candidates | ✅ | `discover` flags a view with resources and no recognised teardown for Angular/React from facts the adapters already establish; never offered for plain JavaScript, which has no hook to be missing |
 
 **Phase 12 is deliberately partial.** The evidence bundle and analysis prompt
 are complete and usable today — `writeBundleForManualUse()` writes both to

@@ -1061,6 +1061,19 @@ function renderDiscoverResult(target, r) {
         (r.lifecycle ? '<span><b>' + esc(r.lifecycle.hook) + '</b> ' + r.lifecycle.withTeardown + ' with, ' + r.lifecycle.withoutTeardown + ' without</span>' : '') +
         '</div>';
     }
+
+    if (r.staticCandidates && r.staticCandidates.length) {
+      html += '<details class="banner" style="margin-top:.6rem" open>' +
+        '<summary>Worth a look (' + r.staticCandidates.length + ') - static only, not a leak</summary>' +
+        '<ul class="state">' + r.staticCandidates.map((c) =>
+          '<li><span class="pill ' + (c.confidence === 'MEDIUM' ? 'warn' : '') + '">' + esc(c.confidence) + '</span> ' +
+          '<strong>' + esc(c.entity) + '</strong> ' + openLink(c.file, c.line) +
+          '<div class="sub">' + esc(c.explanation) + '</div></li>'
+        ).join('') + '</ul>' +
+        '<div class="sub" style="margin-top:.4rem">Reading the code alone never reaches PROVEN or HIGH confidence. ' +
+        'These are places to run a browser investigation against, not confirmed leaks.</div>' +
+        '</details>';
+    }
   }
 
   if (r.unavailable && r.unavailable.length) {

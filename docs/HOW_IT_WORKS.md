@@ -272,3 +272,11 @@ Everything in section 20 also has a button. The **Set up** page opens with **Wha
 The endpoint calls the exact same adapter registry the CLI does - there is no framework logic living in the UI layer, only rendering of what the adapters decided.
 
 When a URL discovery finds `auth.required: true`, the card adds one thing: a **sign in now** button. It does not open a credential form - it is a shortcut into the sign-in step that already existed (`scenario login`, driven from the UI): a real Chrome window opens, the person signs in themselves, and only the resulting session is saved. This tool never renders a password field anywhere in its own page, and the shortcut does not change that - it just saves a click. If discovery finds no sign-in requirement, the button does not appear at all.
+
+## 22. "Worth a look" - a static heuristic that works across all three frameworks
+
+Discovery (CLI and UI) adds one more thing when it has a checkout: `src/core/diagnosis/staticCandidates.ts` looks at the entities the adapter already found and flags any **view** that starts a resource (`resourceCount > 0`, the same crude per-file count `discoverEntities` already returns) and has **no recognised cleanup site for its framework** (`teardown.present`, the same real AST fact `analyzeLifecycle` already establishes). Nothing new is parsed - this is existing facts recombined, never a new analyzer.
+
+It is deliberately **not offered for plain JavaScript**. Angular and React each have a real, checkable place cleanup belongs; JavaScript has none, so "no teardown found" is true of every JavaScript file that has ever been written and means nothing on its own - reporting it would manufacture a suspicion out of nothing.
+
+Confidence never exceeds the static ceiling: **MEDIUM** when the resource count belongs to one entity alone, **LOW** when the file holds more than one view and the count cannot be attributed to just one of them - stated explicitly in the explanation, not hidden. Every candidate says plainly that this is a reason to look, not a confirmed leak.

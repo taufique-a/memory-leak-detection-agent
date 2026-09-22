@@ -279,6 +279,13 @@ describe('page', () => {
     expect(page).toContain("$('sourcePath').value = target");
   });
 
+  it('renders static candidates with a confidence pill, an open-in-editor link and the static-only caveat', () => {
+    expect(page).toContain('r.staticCandidates');
+    expect(page).toContain('Worth a look');
+    expect(page).toContain('static only, not a leak');
+    expect(page).toContain('never reaches PROVEN or HIGH confidence');
+  });
+
   it('when auth is detected, offers to sign in through the existing safe login action - not a new credential form', () => {
     // Master flow section 4: authentication is detected automatically and
     // offered as the next step. This must not invent new credential
@@ -925,6 +932,7 @@ describe('server security', () => {
   describe('the Application step\'s endpoint', () => {
     let chrome = false;
     let jsProject: string;
+    let reactProject: string;
     let angularServer: http.Server;
     let angularBaseUrl: string;
 
@@ -937,7 +945,30 @@ describe('server security', () => {
       fs.mkdirSync(path.join(jsProject, 'src'));
       fs.writeFileSync(
         path.join(jsProject, 'src', 'app.js'),
+        // Same resource-acquiring shape as the React fixture below, and no
+        // recognised cleanup site either - plain JS has none. This is
+        // exactly the case that must NOT produce a static candidate.
         'class WidgetController { constructor() { this.t = setInterval(() => {}, 1000); } }',
+      );
+
+      reactProject = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-discover-react-'));
+      fs.writeFileSync(
+        path.join(reactProject, 'package.json'),
+        JSON.stringify({ name: 'app', dependencies: { react: '^18.2.0' } }),
+      );
+      fs.mkdirSync(path.join(reactProject, 'node_modules', 'react'), { recursive: true });
+      fs.writeFileSync(
+        path.join(reactProject, 'node_modules', 'react', 'package.json'),
+        JSON.stringify({ name: 'react', version: '18.2.0' }),
+      );
+      fs.mkdirSync(path.join(reactProject, 'src'));
+      fs.writeFileSync(
+        path.join(reactProject, 'src', 'Widget.jsx'),
+        `import { useEffect } from 'react';
+         export function LeakyWidget() {
+           useEffect(() => { setInterval(() => {}, 1000); }, []);
+           return <div>leaky</div>;
+         }`,
       );
 
       angularServer = http.createServer((req, res) => {
@@ -956,6 +987,7 @@ describe('server security', () => {
 
     afterAll(async () => {
       fs.rmSync(jsProject, { recursive: true, force: true });
+      fs.rmSync(reactProject, { recursive: true, force: true });
       await new Promise<void>((resolve) => angularServer.close(() => resolve()));
     });
 
@@ -984,6 +1016,23 @@ describe('server security', () => {
       expect(json.framework).toBe('javascript');
       expect(json.entities.total).toBe(1);
       expect(json.unavailable.some((u: string) => u.startsWith('Routes:'))).toBe(true);
+    });
+
+    it('never flags a plain-JS project as "worth a look", even with the exact leaky shape React would flag', async () => {
+      // WidgetController here starts a timer and has no cleanup site - but
+      // plain JS has no cleanup site to be missing, so this must stay empty.
+      const { json } = await post({ target: jsProject });
+      expect(json.staticCandidates ?? []).toEqual([]);
+    });
+
+    it('flags a real React component with a resource and no recognised teardown', async () => {
+      const { status, json } = await post({ target: reactProject });
+      expect(status).toBe(200);
+      expect(json.framework).toBe('react');
+      expect(json.staticCandidates).toHaveLength(1);
+      expect(json.staticCandidates[0].entity).toBe('LeakyWidget');
+      expect(json.staticCandidates[0].confidence).toBe('MEDIUM');
+      expect(json.staticCandidates[0].explanation).toContain('not a confirmed leak');
     });
 
     it('reads a real running page, including whether it needs a login', async () => {
