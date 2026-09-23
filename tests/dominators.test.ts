@@ -298,4 +298,12 @@ describe('choosing which object to explain', () => {
       expect(isGenericBucket(name)).toBe(false);
     }
   });
+
+  it('does not spend it on a registered timer\'s own bookkeeping either - one exists per timer, leaking or not', () => {
+    // Found by measuring a real setInterval leak: these three outranked
+    // the actual leaked class by raw count and starved it of trace budget.
+    for (const name of ['DOMTimer', 'ScheduledAction', 'V8Function']) {
+      expect(isGenericBucket(name)).toBe(true);
+    }
+  });
 });

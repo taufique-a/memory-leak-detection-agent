@@ -164,6 +164,8 @@ INSPECT OPTIONS
   --scenario <file>  The journey to run (required). Heap snapshots are not
                      optional here - they are what this command reports on
   --detail <n>       How many findings to print in full (default 10)
+  --propose-fixes    Show (never write) a diff for eligible findings.
+                     React function components only, today. No --apply.
   --json <file>      Write the full result as JSON
 
 FIX OPTIONS

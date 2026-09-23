@@ -461,7 +461,31 @@ export function isGenericBucket(name: string): boolean {
   return (
     name.startsWith('(') ||
     name.startsWith('system /') ||
-    ['Array', 'Object', 'Function', 'Map', 'Set', 'WeakMap', 'WeakSet', 'ArrayBuffer'].includes(name)
+    [
+      'Array',
+      'Object',
+      'Function',
+      'Map',
+      'Set',
+      'WeakMap',
+      'WeakSet',
+      'ArrayBuffer',
+      /**
+       * Blink's own bookkeeping for a registered timer - one of each is
+       * created for every surviving setInterval/setTimeout, whether it is
+       * a leak or not. Found by measuring a real React setInterval leak:
+       * these three outranked the actual leaked class by raw count and
+       * spent the whole default trace budget on "a timer exists somewhere"
+       * instead of naming what the timer's closure keeps alive - the one
+       * thing worth tracing a path for. Deliberately three exact names,
+       * not a prefix rule: V8EventListener growth DOES identify a real
+       * listener leak (see the test beside this one) and must keep
+       * competing for the trace budget normally.
+       */
+      'DOMTimer',
+      'ScheduledAction',
+      'V8Function',
+    ].includes(name)
   );
 }
 

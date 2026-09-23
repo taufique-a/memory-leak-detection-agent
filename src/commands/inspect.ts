@@ -17,12 +17,34 @@
  * object actually is. Nothing here parses a decorator, and nothing here
  * assumes a framework going in.
  *
- * WHAT IT DOES NOT DO
- * -------------------
- * It does not propose a fix. Every finding's recommended action is capped
- * at NEEDS DEVELOPER REVIEW, because there is no fix-generation logic here
- * to point to - "detection and fixing must be separate" is enforced by
- * omission, not by a flag.
+ * WHAT IT DOES NOT DO BY DEFAULT
+ * -------------------------------
+ * By default it does not propose a fix. Every finding's recommended action
+ * is capped at NEEDS DEVELOPER REVIEW - "detection and fixing must be
+ * separate" is the default, not an afterthought.
+ *
+ * `--propose-fixes` adds ONE thing on top, and nothing more: for a React
+ * finding at HIGH confidence or above whose heap constructor name matched
+ * a declared component exactly, it shows what a minimal, purely additive
+ * `useEffect` cleanup would look like - a diff, printed to the terminal.
+ * It never writes a file. There is no `--apply` here yet; writing to a
+ * project's real source needs the same git-safety machinery (dirty-tree
+ * refusal, a dedicated branch, content-hash-bound writes, rollback) the
+ * Angular `fix` command already has, and that has not been built for this
+ * pipeline - so this stops at showing the diff, on purpose.
+ *
+ * A KNOWN, STATED LIMIT: THIS RARELY FIRES FOR A FUNCTION COMPONENT
+ * -----------------------------------------------------------------------
+ * React does not name a function component's own instances after the
+ * function in the heap - its Fiber node is internal machinery, not a
+ * `YourComponent` object (see reactAdapter.test.ts). What usually grows is
+ * whatever object the effect's closure retains, which has no entity of
+ * its own for this generator to edit. So in practice this fires for a
+ * class component, or for the rarer case where the retained object
+ * happens to share its name with a declared component - not for the
+ * common function-component-plus-helper-class shape. Stated here, and in
+ * the message printed when nothing was eligible, rather than left to be
+ * discovered as a silent gap.
  */
 
 import * as fs from 'node:fs';
@@ -30,9 +52,11 @@ import * as path from 'node:path';
 
 import { defaultRegistry } from '../adapters';
 import { correlateGeneric, type GenericCorrelationResult } from '../core/correlation/correlateGeneric';
+import { proposeReactFix } from '../fix/react/proposeFix';
 import { investigateHeap, type HeapInvestigationResult } from '../heap/investigate';
 import { extractBaseUrlArg, loadScenarioFile as load } from '../scenario/load';
 import { runScenario, ScenarioError, type ScenarioRun } from '../scenario/runner';
+import { isRuntimeEstablished } from '../types/index';
 import { colour, field, heading, info, num, warn } from '../utils/logger';
 
 export interface InspectArgs {
@@ -41,6 +65,8 @@ export interface InspectArgs {
   jsonOut?: string;
   detail: number;
   baseUrl?: string;
+  /** Show (never write) a diff for eligible findings. Dry-run only - there is no --apply. */
+  proposeFixes: boolean;
 }
 
 export function parseInspectArgs(args: string[]): InspectArgs | string {
@@ -48,6 +74,7 @@ export function parseInspectArgs(args: string[]): InspectArgs | string {
   let scenarioFile: string | undefined;
   let jsonOut: string | undefined;
   let detail = 10;
+  let proposeFixes = false;
 
   const extracted = extractBaseUrlArg(args);
   if (extracted.error !== undefined) return extracted.error;
@@ -76,6 +103,8 @@ export function parseInspectArgs(args: string[]): InspectArgs | string {
       if (v === undefined || !/^\d+$/.test(v)) return '--detail requires a number';
       detail = Number(v);
       if (!arg.startsWith('--detail=')) i++;
+    } else if (arg === '--propose-fixes') {
+      proposeFixes = true;
     } else if (arg.startsWith('-')) {
       return `Unknown option for inspect: ${arg}`;
     } else if (projectPath === undefined) {
@@ -93,6 +122,7 @@ export function parseInspectArgs(args: string[]): InspectArgs | string {
     scenarioFile,
     ...(jsonOut !== undefined ? { jsonOut } : {}),
     detail,
+    proposeFixes,
     ...(baseUrl !== undefined ? { baseUrl } : {}),
   };
 }
@@ -169,6 +199,10 @@ export async function runInspect(args: string[]): Promise<number> {
 
   printReport(result, parsed.detail);
 
+  if (parsed.proposeFixes) {
+    printFixProposals(result, outcome.framework, projectRoot);
+  }
+
   if (parsed.jsonOut !== undefined) {
     const outPath = path.resolve(parsed.jsonOut);
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
@@ -218,5 +252,62 @@ function printReport(r: GenericCorrelationResult, detail: number): void {
   console.log('');
   heading('LIMITATIONS');
   for (const l of r.limitations) console.log(`  ${colour.dim('- ' + l)}`);
+  console.log('');
+}
+
+/**
+ * Show, never write. `--propose-fixes` earns its name literally: for each
+ * eligible finding, print what a minimal change would look like, and stop
+ * there. Only React function-component findings are eligible today - see
+ * `src/fix/react/proposeFix.ts` for exactly which two shapes it recognises
+ * and everything else it refuses rather than guesses at.
+ */
+function printFixProposals(result: GenericCorrelationResult, framework: string, projectRoot: string): void {
+  if (framework !== 'react') {
+    console.log('');
+    info(colour.dim(`--propose-fixes has no generator for "${framework}" yet - Angular has its own ` +
+      '(see "memory-agent fix"), and plain JavaScript has none.'));
+    return;
+  }
+
+  const eligible = result.findings.filter((f) => isRuntimeEstablished(f.confidence) && f.entity !== undefined);
+  if (eligible.length === 0) {
+    console.log('');
+    info(colour.dim('No finding reached HIGH confidence with a resolved entity, so there is nothing to propose.'));
+    info(
+      colour.dim(
+        'This is expected more often than not for a function component: React does not name a ' +
+          "function component's own instances after the function in the heap (its Fiber node is " +
+          "internal machinery), so what grows is usually the object the effect's closure retains, " +
+          'not the component itself - and that object has no entity for this generator to edit. A ' +
+          'class component, or a growing object that happens to share its name with a declared ' +
+          'component, is what this can act on today.',
+      ),
+    );
+    return;
+  }
+
+  console.log('');
+  heading(`PROPOSED FIXES (${eligible.length}) - SHOWN ONLY, NOT WRITTEN`);
+  for (const f of eligible) {
+    const proposal = proposeReactFix(f, f.entity as NonNullable<typeof f.entity>, { projectRoot });
+    console.log('');
+    console.log(`${colour.bold(f.constructorName)} -> ${colour.cyan(f.file ?? '?')}`);
+    if (proposal === undefined) {
+      console.log(`  ${colour.dim('the file could not be read')}`);
+      continue;
+    }
+    console.log(`  ${proposal.safety === 'additive' ? colour.green(proposal.safety) : colour.yellow(proposal.safety)}: ${proposal.rationale}`);
+    if (proposal.diff !== undefined) {
+      console.log('');
+      for (const line of proposal.diff.split('\n')) {
+        console.log(
+          line.startsWith('+') ? colour.green(line) : line.startsWith('-') ? colour.red(line) : colour.dim(line),
+        );
+      }
+    }
+  }
+  console.log('');
+  info(colour.dim('Nothing was written. There is no --apply for this pipeline yet.'));
   console.log('');
 }

@@ -301,3 +301,21 @@ Confidence follows the same six-level rule as everywhere else in this project: P
 This is proven against a real leak, not a mocked adapter: `tests/inspectCommand.test.ts` serves the same page the live-watch tests already trust (one class that leaks into a global list, one that cleans up), points a genuinely plain-JavaScript-shaped project root at it, and checks that the leaking class is found in its real source file while the clean one is not reported as growing.
 
 What it does not do: it does not pick a target route for you (that still needs an explicit `--scenario` file), and it does not carry the Angular-specific lifetime knowledge (`knowledge/lifetime.ts`) that decides a subscription is meant to outlive its component - that judgement has no generic equivalent yet.
+
+## 24. `inspect --propose-fixes` - a React fix, shown, never written
+
+`src/fix/react/proposeFix.ts` generates one specific, minimal edit: a missing `useEffect` cleanup, added to the effect that has none. It refuses rather than guesses in every case that is not completely unambiguous:
+
+- Confidence below HIGH.
+- A class component (`componentWillUnmount` is a different insertion point, not built yet).
+- More than one `useEffect` in the component with no cleanup - picking the right one needs a person.
+- The one effect starts more than one recognised resource - clearing only one would look like the problem was solved when it was not.
+- An inline arrow handed to `addEventListener` - it cannot be matched by reference to remove it later.
+
+When none of those apply, it adds exactly one line - `return () => clearInterval(id);` or `return () => target.removeEventListener(event, handler);` - matching the file's own indentation and semicolon style, and nothing else changes. `--propose-fixes` on `memory-agent inspect` shows the diff. It never writes a file; there is no `--apply` for this pipeline yet.
+
+**This is proven against a real leak, not a syntax check.** `tests/reactFixVerified.test.ts` takes the exact text `proposeReactFix` generates - no hand correction - writes it back to the real file a real browser is serving, re-runs the identical journey, and confirms the object that was piling up before has stopped. `tests/reactFixGenerator.test.ts` covers every refusal above and the second fix shape (a named listener) that the end-to-end test does not happen to exercise.
+
+**A known, stated limit: this rarely fires for the most common shape.** React does not name a function component's own instances after the function in the heap - a function component's presence there is internal Fiber machinery, not a `YourComponent` object (see section 20 and `reactAdapter.test.ts`). What usually grows is whatever object the effect's closure retains - a class instance, a socket, a chart - which has no entity of its own for this generator to point at. So `--propose-fixes` fires reliably for a class component, and for the rarer case where the retained object happens to share a declared component's name - not for the ordinary function-component-plus-helper-object shape most real leaks take. The command says this plainly when nothing was eligible, rather than leaving it to be discovered as a silent gap.
+
+**Also found and fixed while proving this**, and useful independently of the fix generator: `isGenericBucket` (`src/heap/analyze.ts`) now excludes `DOMTimer`, `ScheduledAction` and `V8Function` - Blink's own bookkeeping for a registered timer, created once per surviving `setInterval`/`setTimeout` whether it leaks or not. Before this, a real timer leak could spend the whole default trace budget (`traceTop: 3`) on these three instead of the object the timer's closure actually retains - the one name worth tracing a path for. This affects every command that traces retaining paths, not only `inspect`.

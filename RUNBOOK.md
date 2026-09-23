@@ -636,6 +636,9 @@ npm run dev -- correlate <project> --scenario <file> --detail 10
 # adapter what each surviving object is. No fix is proposed here.
 npm run dev -- inspect <project> --scenario <file> --detail 10
 
+# Also SHOW (never write) a React useEffect-cleanup fix, where eligible
+npm run dev -- inspect <project> --scenario <file> --propose-fixes
+
 # Propose fixes. DRY RUN by default - nothing is written.
 npm run dev -- fix <project> --scenario <file>
 
@@ -1116,7 +1119,9 @@ src/
   scenario/    journey definition, validation, runner, login capture
   report/      investigation model, Markdown and HTML renderers
   commands/    one file per CLI command
-  fix/         git safety, fix proposals, guarded apply
+  fix/         git safety, fix proposals, guarded apply (Angular)
+    react/     the one React fix this generates: a missing useEffect
+               cleanup - shown only, no --apply yet for this pipeline
   heap/        snapshot capture, parsing, retaining paths
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search, discovery endpoint
@@ -1194,7 +1199,9 @@ Two constraints worth knowing before you edit:
 | — URL-first discovery | ◐ | `discover` (CLI + UI) does framework/version/login-detection from a URL; `inspect` now covers detection for all three frameworks; static analysis, fixing, and Find & Fix (scan/analyze/risk/fix/Find & Fix) are still Angular-and-a-checkout only |
 | — Sign-in shortcut | ✅ | discovery's "sign in now" jumps straight into the existing safe `login` action - no new credential handling |
 | — Cross-framework static candidates | ✅ | `discover` flags a view with resources and no recognised teardown for Angular/React from facts the adapters already establish; never offered for plain JavaScript, which has no hook to be missing |
-| — `inspect` (route-aware investigation) | ✅ | Angular/React/JavaScript: real scenario + real heap comparison, correlated to source through the adapter, six-level confidence. Proven against a real leak. No fix is proposed - detection and fixing stay separate |
+| — `inspect` (route-aware investigation) | ✅ | Angular/React/JavaScript: real scenario + real heap comparison, correlated to source through the adapter, six-level confidence. Proven against a real leak. No fix by default - detection and fixing stay separate |
+| — `inspect --propose-fixes` (React) | ◐ | Generates and shows (never writes) a missing `useEffect` cleanup - proven end to end: the generated text, written back verbatim to a real file, stops a real measured leak. No `--apply` yet. Rarely eligible for a plain function component today - explained in the docs and in the command's own output, not hidden |
+| — Retaining-path trace budget fix | ✅ | `isGenericBucket` now excludes a timer's own Blink bookkeeping (`DOMTimer`/`ScheduledAction`/`V8Function`), found by measuring a real timer leak where they starved the actual leaked object of trace budget - fixes every command that traces retaining paths, not only `inspect` |
 
 **Phase 12 is deliberately partial.** The evidence bundle and analysis prompt
 are complete and usable today — `writeBundleForManualUse()` writes both to

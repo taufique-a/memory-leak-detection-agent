@@ -29,7 +29,19 @@ describe('parseInspectArgs', () => {
 
   it('parses a full, valid set of options', () => {
     const parsed = parseInspectArgs(['proj', '--scenario', 'x.json', '--detail', '5', '--json', 'out.json']);
-    expect(parsed).toEqual({ projectPath: 'proj', scenarioFile: 'x.json', jsonOut: 'out.json', detail: 5 });
+    expect(parsed).toEqual({
+      projectPath: 'proj',
+      scenarioFile: 'x.json',
+      jsonOut: 'out.json',
+      detail: 5,
+      proposeFixes: false,
+    });
+  });
+
+  it('parses --propose-fixes', () => {
+    const parsed = parseInspectArgs(['proj', '--scenario', 'x.json', '--propose-fixes']);
+    if (typeof parsed === 'string') throw new Error(parsed);
+    expect(parsed.proposeFixes).toBe(true);
   });
 });
 

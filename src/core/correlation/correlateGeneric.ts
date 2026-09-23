@@ -36,6 +36,7 @@
 
 import { classifyAction, type RecommendedAction } from '../diagnosis/action';
 import type { FrameworkAdapter, AdapterContext } from '../framework/adapter';
+import type { AppEntity } from '../framework/types';
 import type { RetainedObjectFinding, HeapInvestigationResult } from '../../heap/investigate';
 import type { ScenarioRun } from '../../scenario/runner';
 import type { Confidence, Risk } from '../../types/index';
@@ -56,6 +57,8 @@ export interface GenericCorrelatedFinding {
   entityName?: string;
   file?: string;
   line?: number;
+  /** The full matched entity, when outcome is 'exact' - what a fix generator needs. */
+  entity?: AppEntity;
   correlationNote: string;
 
   confidence: Confidence;
@@ -184,7 +187,7 @@ export async function correlateGeneric(options: CorrelateGenericOptions): Promis
       ...(hf.retainedBytesDelta !== undefined ? { retainedBytesDelta: hf.retainedBytesDelta } : {}),
       retainingExplanation: hf.explanation,
       outcome,
-      ...(match !== undefined ? { entityName: match.name, file: match.file, line: match.line } : {}),
+      ...(match !== undefined ? { entityName: match.name, file: match.file, line: match.line, entity: match } : {}),
       correlationNote: note,
       confidence,
       rationale,
