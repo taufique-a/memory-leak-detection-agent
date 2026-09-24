@@ -55,7 +55,7 @@ import {
 import { analyzeGenericResource, GENERIC_KINDS_BY_CATEGORY } from '../generic-web/resources';
 import { REACT_FIBER_MARKER_SCRIPT } from '../generic-web/reactMarker';
 import { readProjectProfile } from '../../knowledge/projectProfile';
-import { getJsProjectScan, type JsDeclaration } from './scanner';
+import { customElementTag, getJsProjectScan, type JsDeclaration } from './scanner';
 
 /**
  * Dependencies that mean "a framework this tool knows by name owns this
@@ -273,7 +273,37 @@ export class JavaScriptAdapter implements FrameworkAdapter {
     const source = requireSource(context);
     if ('reason' in source) return unavailable(source.reason);
 
-    const { byName, resourceHintsByFile } = getJsProjectScan(source.root);
+    const { byName, resourceHintsByFile, customElements } = getJsProjectScan(source.root);
+
+    /* A custom element is named by its TAG in the heap. Follow the
+       registration the source itself makes - customElements.define - to the
+       class; that registration is evidence, not a guess from the name. */
+    const tag = customElementTag(constructorName);
+    if (tag !== undefined) {
+      const classes = [...new Set(customElements.get(tag) ?? [])];
+      const decls = classes.flatMap((c) => byName.get(c) ?? []);
+      const candidates = decls.map((d) => declToAppEntity(d, decls.length > 1, resourceHintsByFile.get(d.file) ?? 0));
+      if (candidates.length === 1) {
+        const match = candidates[0] as AppEntity;
+        return available({
+          constructorName,
+          match,
+          candidates,
+          outcome: 'exact',
+          note: `${constructorName} is the custom element the project registers as ${match.name} (customElements.define): ${match.file}.`,
+        });
+      }
+      return available({
+        constructorName,
+        candidates,
+        outcome: candidates.length > 1 ? 'ambiguous' : 'none',
+        note:
+          candidates.length > 1
+            ? `"${tag}" is registered to ${candidates.length} declarations in the project, so this element cannot be attributed to one file.`
+            : `No customElements.define('${tag}', ...) in the project - the element comes from a library, or is registered in a way this reader does not follow.`,
+      });
+    }
+
     const declarations = byName.get(constructorName) ?? [];
     const candidates = declarations.map((d) =>
       declToAppEntity(d, declarations.length > 1, resourceHintsByFile.get(d.file) ?? 0),

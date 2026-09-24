@@ -41,7 +41,16 @@ export interface JsProjectScan {
   byName: Map<string, JsDeclaration[]>;
   /** A crude per-file count of resource-acquiring calls - ordering only. */
   resourceHintsByFile: Map<string, number>;
+  /**
+   * Custom elements by tag: `customElements.define('ticker-el', TickerElement)`
+   * records 'ticker-el' -> ['TickerElement']. Chrome names a custom element's
+   * heap node by its TAG (`<ticker-el>`), not its class, so this is the only
+   * way from what the heap says to the class that owns it.
+   */
+  customElements: Map<string, string[]>;
 }
+
+export { customElementTag } from '../../core/framework/customElements';
 
 const EXTENSIONS = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx'];
 
@@ -76,11 +85,31 @@ function record(
   byName.set(name, list);
 }
 
-function visitFile(sourceFile: ts.SourceFile, file: string, byName: Map<string, JsDeclaration[]>): void {
+function visitFile(
+  sourceFile: ts.SourceFile,
+  file: string,
+  byName: Map<string, JsDeclaration[]>,
+  customElements: Map<string, string[]> = new Map(),
+): void {
   const lineOf = (node: ts.Node): number =>
     sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
 
   const visit = (node: ts.Node): void => {
+    // customElements.define('tag-name', ClassName)
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === 'define' &&
+      /(^|.)customElements$/.test(node.expression.expression.getText(sourceFile)) &&
+      node.arguments.length >= 2 &&
+      ts.isStringLiteralLike(node.arguments[0] as ts.Expression) &&
+      ts.isIdentifier(node.arguments[1] as ts.Expression)
+    ) {
+      const tag = (node.arguments[0] as ts.StringLiteral).text;
+      const list = customElements.get(tag) ?? [];
+      list.push((node.arguments[1] as ts.Identifier).text);
+      customElements.set(tag, list);
+    }
     if (ts.isClassDeclaration(node) && node.name !== undefined) {
       record(byName, node.name.text, 'class', file, lineOf(node));
     } else if (ts.isFunctionDeclaration(node) && node.name !== undefined) {
@@ -105,6 +134,7 @@ function visitFile(sourceFile: ts.SourceFile, file: string, byName: Map<string, 
 export function scanJsProject(root: string): JsProjectScan {
   const byName = new Map<string, JsDeclaration[]>();
   const resourceHintsByFile = new Map<string, number>();
+  const customElements = new Map<string, string[]>();
 
   const { files } = walkDirectory(root, { extensions: EXTENSIONS });
 
@@ -128,7 +158,7 @@ export function scanJsProject(root: string): JsProjectScan {
         /* setParentNodes */ false,
         scriptKindFor(absolutePath),
       );
-      visitFile(sourceFile, file, byName);
+      visitFile(sourceFile, file, byName, customElements);
     } catch {
       // A file that will not parse contributes no declarations, but its
       // resource-hint count (a plain text match) still stands.
@@ -136,7 +166,7 @@ export function scanJsProject(root: string): JsProjectScan {
     }
   }
 
-  return { byName, resourceHintsByFile };
+  return { byName, resourceHintsByFile, customElements };
 }
 
 const cache = new Map<string, JsProjectScan>();

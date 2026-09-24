@@ -143,6 +143,14 @@ describe('source maps - exact-name correlation', () => {
     expect(findDeclarations('Foo', index({ 'a.js': 'const Foo = () => 1;\nobj.Foo = 2;\nclass FooBar {}' }))).toEqual([{ file: 'a.js', line: 1, kind: 'function' }]);
   });
 
+  it('follows customElements.define in the original source from <tag> to the class', () => {
+    const idx = index({ 'src/ticker.js': "export class TickerElement extends HTMLElement {}\ncustomElements.define('ticker-el', TickerElement);\n" });
+    const c = correlateFromSourceMaps('<ticker-el>', idx);
+    expect(c.outcome).toBe('exact');
+    expect(c.match?.name).toBe('TickerElement');
+    expect(c.match?.line).toBe(1);
+  });
+
   it('wraps an adapter: only correlation changes', async () => {
     const wrapped = withSourceMaps(undefined, index({ 'a.js': 'class A {}' }));
     expect(wrapped.id).toBe('unknown');

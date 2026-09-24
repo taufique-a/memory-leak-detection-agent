@@ -24,6 +24,7 @@
  */
 
 import type { AdapterContext, FrameworkAdapter } from '../core/framework/adapter';
+import { customElementTag } from '../core/framework/customElements';
 import { available, unavailable, type AppEntity, type Capability, type SourceCorrelation } from '../core/framework/types';
 
 export interface OriginalSource {
@@ -188,11 +189,28 @@ function entityFor(name: string, d: SourceMapDeclaration, ambiguous: boolean): A
   };
 }
 
+/** Classes the original sources register for a custom-element tag (customElements.define). */
+export function classesForTag(tag: string, index: SourceMapIndex): string[] {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`customElements\\.define\\(\\s*['"\`]${escaped}['"\`]\\s*,\\s*([A-Za-z_$][\\w$]*)`, 'g');
+  const found = new Set<string>();
+  for (const src of index.sources) {
+    for (const m of src.content.matchAll(re)) if (m[1] !== undefined) found.add(m[1]);
+  }
+  return [...found];
+}
+
 export function correlateFromSourceMaps(name: string, index: SourceMapIndex): SourceCorrelation {
-  const decls = findDeclarations(name, index);
+  // A custom element is named by its tag in the heap: follow the
+  // registration in the original source to the class.
+  const tag = customElementTag(name);
+  const decls =
+    tag !== undefined
+      ? classesForTag(tag, index).flatMap((c) => findDeclarations(c, index).map((d) => ({ ...d, className: c })))
+      : findDeclarations(name, index).map((d) => ({ ...d, className: name }));
   if (decls.length === 1) {
-    const d = decls[0] as SourceMapDeclaration;
-    const match = entityFor(name, d, false);
+    const d = decls[0] as SourceMapDeclaration & { className: string };
+    const match = entityFor(d.className, d, false);
     return {
       constructorName: name,
       match,
@@ -204,7 +222,7 @@ export function correlateFromSourceMaps(name: string, index: SourceMapIndex): So
   if (decls.length > 1) {
     return {
       constructorName: name,
-      candidates: decls.map((d) => entityFor(name, d, true)),
+      candidates: decls.map((d) => entityFor(d.className, d, true)),
       outcome: 'ambiguous',
       note: `${decls.length} declarations called "${name}" in the application's source maps - cannot be attributed to one file.`,
     };

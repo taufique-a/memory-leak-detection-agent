@@ -302,3 +302,24 @@ describe('registered in the default registry', () => {
     expect(outcome.alsoDetected).toEqual([]);
   });
 });
+
+describe('custom elements: the heap names them by tag', () => {
+  it('follows customElements.define from <tag> to the class', async () => {
+    const root = project({
+      'package.json': '{"name":"x"}',
+      'src/ticker.js': "class TickerElement extends HTMLElement {}\ncustomElements.define('ticker-el', TickerElement);\n",
+    });
+    const c = await javaScriptAdapter.correlateRuntimeObject('<ticker-el>', { projectRoot: root });
+    expect(c.available && c.value.outcome).toBe('exact');
+    expect(c.available && c.value.match?.name).toBe('TickerElement');
+    expect(c.available && c.value.match?.file).toBe('src/ticker.js');
+  });
+
+  it('says none for an unregistered tag, and never treats a plain element as custom', async () => {
+    const root = project({ 'package.json': '{"name":"y"}', 'src/a.js': 'class A {}\n' });
+    const c = await javaScriptAdapter.correlateRuntimeObject('<other-el>', { projectRoot: root });
+    expect(c.available && c.value.outcome).toBe('none');
+    const div = await javaScriptAdapter.correlateRuntimeObject('<div>', { projectRoot: root });
+    expect(div.available && div.value.note).toMatch(/No class or function/);
+  });
+});
