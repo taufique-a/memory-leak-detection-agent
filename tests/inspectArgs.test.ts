@@ -35,6 +35,10 @@ describe('parseInspectArgs', () => {
       jsonOut: 'out.json',
       detail: 5,
       proposeFixes: false,
+      apply: false,
+      yes: false,
+      newBranch: false,
+      commit: false,
     });
   });
 
@@ -42,6 +46,32 @@ describe('parseInspectArgs', () => {
     const parsed = parseInspectArgs(['proj', '--scenario', 'x.json', '--propose-fixes']);
     if (typeof parsed === 'string') throw new Error(parsed);
     expect(parsed.proposeFixes).toBe(true);
+    expect(parsed.apply).toBe(false);
+  });
+
+  it('--apply implies --propose-fixes - applying with nothing generated makes no sense', () => {
+    const parsed = parseInspectArgs(['proj', '--scenario', 'x.json', '--apply']);
+    if (typeof parsed === 'string') throw new Error(parsed);
+    expect(parsed.apply).toBe(true);
+    expect(parsed.proposeFixes).toBe(true);
+  });
+
+  it('rejects --yes without --apply', () => {
+    expect(parseInspectArgs(['proj', '--scenario', 'x.json', '--yes'])).toMatch(/--yes only makes sense/);
+  });
+
+  it('rejects --branch without --apply', () => {
+    expect(parseInspectArgs(['proj', '--scenario', 'x.json', '--branch'])).toMatch(/--branch only makes sense/);
+  });
+
+  it('rejects --commit without --apply', () => {
+    expect(parseInspectArgs(['proj', '--scenario', 'x.json', '--commit'])).toMatch(/--commit only makes sense/);
+  });
+
+  it('accepts --yes, --branch and --commit together with --apply', () => {
+    const parsed = parseInspectArgs(['proj', '--scenario', 'x.json', '--apply', '--yes', '--branch', '--commit']);
+    if (typeof parsed === 'string') throw new Error(parsed);
+    expect(parsed).toMatchObject({ apply: true, yes: true, newBranch: true, commit: true });
   });
 });
 

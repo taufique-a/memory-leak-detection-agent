@@ -26,12 +26,24 @@
  * `--propose-fixes` adds ONE thing on top, and nothing more: for a React
  * finding at HIGH confidence or above whose heap constructor name matched
  * a declared component exactly, it shows what a minimal, purely additive
- * `useEffect` cleanup would look like - a diff, printed to the terminal.
- * It never writes a file. There is no `--apply` here yet; writing to a
- * project's real source needs the same git-safety machinery (dirty-tree
- * refusal, a dedicated branch, content-hash-bound writes, rollback) the
- * Angular `fix` command already has, and that has not been built for this
- * pipeline - so this stops at showing the diff, on purpose.
+ * `useEffect` cleanup (function component) or `componentWillUnmount`
+ * (class component) would look like - a diff, printed to the terminal.
+ * By itself it never writes a file.
+ *
+ * `--apply` writes it - through the EXACT SAME safety machinery the
+ * Angular `fix` command already uses (`fix/gitSafety.ts`, `fix/apply.ts`):
+ * refuses on a dirty working tree or no repository at all, writes on a
+ * dedicated branch or your own (your choice, `--branch`), asks approval
+ * per file unless `--yes`, and prints ready-to-paste rollback commands
+ * whether or not anything fails afterward. Nothing new was written to
+ * apply a React fix safely - `applyFixes` never knew Angular was the only
+ * caller, so it needed no changes at all.
+ *
+ * What `--apply` does NOT do: re-measure memory for you. It runs the
+ * project's own build and tests (the same "did this break something"
+ * check `fix` runs), then tells you to run `inspect` again on the same
+ * scenario - proving the leak actually stopped is a real browser run, not
+ * something to fake with a config flag.
  *
  * A KNOWN, STATED LIMIT: THIS RARELY FIRES FOR A FUNCTION COMPONENT
  * -----------------------------------------------------------------------
@@ -40,7 +52,7 @@
  * `YourComponent` object (see reactAdapter.test.ts). What usually grows is
  * whatever object the effect's closure retains, which has no entity of
  * its own for this generator to edit. So in practice this fires for a
- * class component, or for the rarer case where the retained object
+ * class component (proven end to end in inspectApply.test.ts), or for the rarer case where the retained object
  * happens to share its name with a declared component - not for the
  * common function-component-plus-helper-class shape. Stated here, and in
  * the message printed when nothing was eligible, rather than left to be
@@ -52,11 +64,16 @@ import * as path from 'node:path';
 
 import { defaultRegistry } from '../adapters';
 import { correlateGeneric, type GenericCorrelationResult } from '../core/correlation/correlateGeneric';
+import { applyFixes } from '../fix/apply';
+import { checkSafeToModify } from '../fix/gitSafety';
 import { proposeReactFix } from '../fix/react/proposeFix';
+import type { ProposedFix } from '../fix/propose';
 import { investigateHeap, type HeapInvestigationResult } from '../heap/investigate';
 import { extractBaseUrlArg, loadScenarioFile as load } from '../scenario/load';
 import { runScenario, ScenarioError, type ScenarioRun } from '../scenario/runner';
 import { isRuntimeEstablished } from '../types/index';
+import { askLine } from '../utils/prompt';
+import { runVerification } from '../verify/checks';
 import { colour, field, heading, info, num, warn } from '../utils/logger';
 
 export interface InspectArgs {
@@ -65,8 +82,16 @@ export interface InspectArgs {
   jsonOut?: string;
   detail: number;
   baseUrl?: string;
-  /** Show (never write) a diff for eligible findings. Dry-run only - there is no --apply. */
+  /** Show a diff for eligible findings. Implied by --apply. */
   proposeFixes: boolean;
+  /** Actually write. Every file is still shown and confirmed, through the same machinery `fix` uses. */
+  apply: boolean;
+  /** Answer yes to every approval. Requires --apply. */
+  yes: boolean;
+  /** Put the change on a new memory-agent branch and commit it. Off by default: your own branch, uncommitted. */
+  newBranch: boolean;
+  /** Commit the change in place, on your own branch. */
+  commit: boolean;
 }
 
 export function parseInspectArgs(args: string[]): InspectArgs | string {
@@ -75,6 +100,10 @@ export function parseInspectArgs(args: string[]): InspectArgs | string {
   let jsonOut: string | undefined;
   let detail = 10;
   let proposeFixes = false;
+  let apply = false;
+  let yes = false;
+  let newBranch = false;
+  let commit = false;
 
   const extracted = extractBaseUrlArg(args);
   if (extracted.error !== undefined) return extracted.error;
@@ -105,6 +134,14 @@ export function parseInspectArgs(args: string[]): InspectArgs | string {
       if (!arg.startsWith('--detail=')) i++;
     } else if (arg === '--propose-fixes') {
       proposeFixes = true;
+    } else if (arg === '--apply') {
+      apply = true;
+    } else if (arg === '--yes') {
+      yes = true;
+    } else if (arg === '--branch') {
+      newBranch = true;
+    } else if (arg === '--commit') {
+      commit = true;
     } else if (arg.startsWith('-')) {
       return `Unknown option for inspect: ${arg}`;
     } else if (projectPath === undefined) {
@@ -116,13 +153,21 @@ export function parseInspectArgs(args: string[]): InspectArgs | string {
 
   if (projectPath === undefined) return 'inspect requires a project path';
   if (scenarioFile === undefined) return 'inspect requires --scenario <file>';
+  if (yes && !apply) return '--yes only makes sense together with --apply';
+  if (newBranch && !apply) return '--branch only makes sense together with --apply';
+  if (commit && !apply) return '--commit only makes sense together with --apply';
 
   return {
     projectPath,
     scenarioFile,
     ...(jsonOut !== undefined ? { jsonOut } : {}),
     detail,
-    proposeFixes,
+    // --apply with no explicit --propose-fixes still needs something to apply.
+    proposeFixes: proposeFixes || apply,
+    apply,
+    yes,
+    newBranch,
+    commit,
     ...(baseUrl !== undefined ? { baseUrl } : {}),
   };
 }
@@ -144,6 +189,17 @@ export async function runInspect(args: string[]): Promise<number> {
 
   const projectRoot = path.resolve(parsed.projectPath);
   const context = { projectRoot };
+
+  /* ---- refuse early if the repo is not safe to write to, even in dry run ---- */
+  if (parsed.apply) {
+    const safety = checkSafeToModify(projectRoot);
+    if (!safety.safe) {
+      console.error('');
+      console.error(colour.red('Refusing to modify this repository.'));
+      console.error('  ' + (safety.reason ?? 'unknown reason'));
+      return 1;
+    }
+  }
 
   console.log('');
   console.log(`Inspecting ${colour.cyan(projectRoot)}`);
@@ -199,8 +255,77 @@ export async function runInspect(args: string[]): Promise<number> {
 
   printReport(result, parsed.detail);
 
+  let exitCode = 0;
+
   if (parsed.proposeFixes) {
-    printFixProposals(result, outcome.framework, projectRoot);
+    const { proposals, notEligibleReason } = buildFixProposals(result, outcome.framework, projectRoot);
+    printFixProposals(proposals, notEligibleReason);
+
+    if (parsed.apply && proposals.length > 0) {
+      const applyResult = await applyFixes(proposals, {
+        projectRoot,
+        investigationId: `inspect-${Date.now().toString(36)}`,
+        approve: (fix) => (parsed.yes ? true : askApproval(fix)),
+        useNewBranch: parsed.newBranch,
+        commit: parsed.commit,
+        onProgress: (m) => console.log(colour.dim('  ' + m)),
+      });
+
+      console.log('');
+      heading('APPLIED');
+      for (const a of applyResult.applied) {
+        console.log(
+          `  ${a.applied ? colour.green('applied ') : colour.dim('skipped ')} ${a.title}` +
+            (a.skippedReason !== undefined ? colour.dim(` - ${a.skippedReason}`) : ''),
+        );
+      }
+      field('Branch', applyResult.branch.name + (parsed.newBranch ? '' : ' (your own)'));
+      field('Baseline', applyResult.branch.baselineCommit.slice(0, 10));
+      if (applyResult.commit === undefined && applyResult.changedFiles.length > 0) {
+        field('Committed', 'no - waiting in your working tree');
+      } else if (applyResult.commit !== undefined) {
+        field('Commit', applyResult.commit.slice(0, 10));
+      }
+
+      if (applyResult.changedFiles.length === 0) {
+        console.log('');
+        heading('NOTHING CHANGED');
+      } else {
+        console.log('');
+        heading('VERIFYING');
+        info(colour.dim("Running the project's own build and tests, on the system Node."));
+        const verification = await runVerification({
+          projectRoot,
+          onProgress: (m) => console.log(colour.dim('  ' + m)),
+        });
+        for (const check of verification.checks) {
+          const status =
+            check.skippedReason !== undefined
+              ? colour.dim('skipped')
+              : check.passed
+                ? colour.green('passed ')
+                : colour.red('FAILED ');
+          console.log(`  ${status} ${check.name.padEnd(10)}`);
+        }
+        console.log('');
+        info(colour.dim(verification.summary));
+        if (!verification.allPassed) {
+          console.log('');
+          warn('Verification failed. Roll back unless you intend to fix the failure by hand.');
+          exitCode = 1;
+        }
+
+        printRollback(applyResult.rollback);
+
+        console.log('');
+        info(
+          colour.dim(
+            'The checks say the change did not break anything they cover. They do NOT say the ' +
+              `leak is fixed. Run the same "inspect ... --scenario ${parsed.scenarioFile}" again to measure that.`,
+          ),
+        );
+      }
+    }
   }
 
   if (parsed.jsonOut !== undefined) {
@@ -211,7 +336,7 @@ export async function runInspect(args: string[]): Promise<number> {
     console.log('');
   }
 
-  return 0;
+  return exitCode;
 }
 
 function confidenceColour(level: string): string {
@@ -262,52 +387,83 @@ function printReport(r: GenericCorrelationResult, detail: number): void {
  * `src/fix/react/proposeFix.ts` for exactly which two shapes it recognises
  * and everything else it refuses rather than guesses at.
  */
-function printFixProposals(result: GenericCorrelationResult, framework: string, projectRoot: string): void {
+/**
+ * Generate a proposal for every eligible finding.
+ *
+ * Pure and side-effect-free on purpose: both the dry-run print path and
+ * the --apply path need the exact same list, generated the exact same
+ * way, so there is exactly one place a fix is ever produced.
+ */
+function buildFixProposals(
+  result: GenericCorrelationResult,
+  framework: string,
+  projectRoot: string,
+): { proposals: ProposedFix[]; notEligibleReason?: string } {
   if (framework !== 'react') {
-    console.log('');
-    info(colour.dim(`--propose-fixes has no generator for "${framework}" yet - Angular has its own ` +
-      '(see "memory-agent fix"), and plain JavaScript has none.'));
-    return;
+    return {
+      proposals: [],
+      notEligibleReason:
+        `no generator for "${framework}" yet - Angular has its own (see "memory-agent fix"), ` +
+        'and plain JavaScript has none',
+    };
   }
 
   const eligible = result.findings.filter((f) => isRuntimeEstablished(f.confidence) && f.entity !== undefined);
   if (eligible.length === 0) {
+    return {
+      proposals: [],
+      notEligibleReason:
+        'no finding reached HIGH confidence with a resolved entity. This is expected more often ' +
+        "than not for a function component: React does not name a function component's own " +
+        "instances after the function in the heap (its Fiber node is internal machinery), so what " +
+        "grows is usually the object the effect's closure retains, not the component itself - and " +
+        'that object has no entity for this generator to edit. A class component, or a growing ' +
+        'object that happens to share its name with a declared component, is what this can act on today.',
+    };
+  }
+
+  const proposals: ProposedFix[] = [];
+  for (const f of eligible) {
+    const proposal = proposeReactFix(f, f.entity as NonNullable<typeof f.entity>, { projectRoot });
+    if (proposal !== undefined) proposals.push(proposal);
+  }
+  return { proposals };
+}
+
+function printFixProposals(proposals: ProposedFix[], notEligibleReason: string | undefined): void {
+  if (notEligibleReason !== undefined) {
     console.log('');
-    info(colour.dim('No finding reached HIGH confidence with a resolved entity, so there is nothing to propose.'));
-    info(
-      colour.dim(
-        'This is expected more often than not for a function component: React does not name a ' +
-          "function component's own instances after the function in the heap (its Fiber node is " +
-          "internal machinery), so what grows is usually the object the effect's closure retains, " +
-          'not the component itself - and that object has no entity for this generator to edit. A ' +
-          'class component, or a growing object that happens to share its name with a declared ' +
-          'component, is what this can act on today.',
-      ),
-    );
+    info(colour.dim(notEligibleReason));
     return;
   }
 
   console.log('');
-  heading(`PROPOSED FIXES (${eligible.length}) - SHOWN ONLY, NOT WRITTEN`);
-  for (const f of eligible) {
-    const proposal = proposeReactFix(f, f.entity as NonNullable<typeof f.entity>, { projectRoot });
+  heading(`PROPOSED FIXES (${proposals.length})`);
+  for (const p of proposals) {
     console.log('');
-    console.log(`${colour.bold(f.constructorName)} -> ${colour.cyan(f.file ?? '?')}`);
-    if (proposal === undefined) {
-      console.log(`  ${colour.dim('the file could not be read')}`);
-      continue;
-    }
-    console.log(`  ${proposal.safety === 'additive' ? colour.green(proposal.safety) : colour.yellow(proposal.safety)}: ${proposal.rationale}`);
-    if (proposal.diff !== undefined) {
+    console.log(`${colour.bold(p.title)}`);
+    console.log(`  ${colour.cyan(p.file)}`);
+    console.log(
+      `  ${p.safety === 'additive' ? colour.green(p.safety) : colour.yellow(p.safety)}: ${p.rationale}`,
+    );
+    if (p.diff !== undefined) {
       console.log('');
-      for (const line of proposal.diff.split('\n')) {
+      for (const line of p.diff.split('\n')) {
         console.log(
           line.startsWith('+') ? colour.green(line) : line.startsWith('-') ? colour.red(line) : colour.dim(line),
         );
       }
     }
   }
-  console.log('');
-  info(colour.dim('Nothing was written. There is no --apply for this pipeline yet.'));
-  console.log('');
+}
+
+/** Ask for approval. Anything other than an explicit yes is a no - matching `fix`'s own rule exactly. */
+async function askApproval(fix: ProposedFix): Promise<boolean> {
+  const answer = await askLine(`\n  Apply "${fix.title}" to ${fix.file}? [y/N] `);
+  return answer.trim().toLowerCase() === 'y';
+}
+
+function printRollback(commands: string[]): void {
+  heading('TO UNDO EVERYTHING');
+  for (const line of commands) console.log('  ' + (line === '' ? '' : colour.cyan(line)));
 }

@@ -72,11 +72,12 @@ describe('proposeReactFix - refusals', () => {
     expect(result?.rationale).toMatch(/below HIGH/);
   });
 
-  it('refuses a class component - not built yet, stated as a limit', () => {
+  it('refuses a class component with no componentDidMount - nothing to pair teardown with', () => {
     const root = project({ 'src/Widget.jsx': 'class Widget extends React.Component {}' });
     const result = proposeReactFix(finding(), entity({ frameworkKind: 'ClassComponent' }), { projectRoot: root });
     expect(result?.safety).toBe('manual-only');
-    expect(result?.rationale).toMatch(/componentWillUnmount/);
+    expect(result?.title).toMatch(/componentWillUnmount/);
+    expect(result?.rationale).toMatch(/no componentDidMount/);
   });
 
   it('returns undefined when the file does not exist', () => {
@@ -226,6 +227,105 @@ function onClick() {}
     });
     const result = proposeReactFix(finding(), entity(), { projectRoot: root });
     expect(result?.newContent).toContain("document.removeEventListener('click', onClick)");
+  });
+});
+
+describe('proposeReactFix - class components (componentWillUnmount)', () => {
+  const cls = (): AppEntity => entity({ frameworkKind: 'ClassComponent', teardown: { hook: 'componentWillUnmount', present: false } });
+
+  it('adds componentWillUnmount clearing a timer stored on the instance', () => {
+    const root = project({
+      'src/Widget.jsx': `class Widget extends React.Component {
+  componentDidMount() {
+    this.timer = setInterval(() => this.tick(), 1000);
+  }
+
+  render() {
+    return null;
+  }
+}
+`,
+    });
+    const result = proposeReactFix(finding(), cls(), { projectRoot: root });
+    expect(result?.safety).toBe('additive');
+    expect(result?.title).toBe('Add the missing componentWillUnmount in Widget');
+    expect(result?.newContent).toContain('componentWillUnmount() {\n    clearInterval(this.timer);\n  }');
+    const before = fs.readFileSync(path.join(root, 'src/Widget.jsx'), 'utf8');
+    for (const line of before.split('\n')) {
+      if (line.trim() !== '') expect(result?.newContent).toContain(line);
+    }
+    expect(() => new Function('var React = { Component: function () {} };\n' + (result?.newContent as string))).not.toThrow();
+  });
+
+  it('adds componentWillUnmount removing a this.<handler> listener with the same reference', () => {
+    const root = project({
+      'src/Widget.jsx': `class Widget extends React.Component {
+  componentDidMount() {
+    window.addEventListener('resize', this.onResize)
+  }
+  render() { return null }
+}
+`,
+    });
+    const result = proposeReactFix(finding(), cls(), { projectRoot: root });
+    expect(result?.safety).toBe('additive');
+    // No semicolons in the source, none added.
+    expect(result?.newContent).toContain("window.removeEventListener('resize', this.onResize)\n");
+  });
+
+  it('refuses when the timer handle is a local variable componentWillUnmount cannot reach', () => {
+    const root = project({
+      'src/Widget.jsx': `class Widget extends React.Component {
+  componentDidMount() {
+    const id = setInterval(() => {}, 1000);
+  }
+}
+`,
+    });
+    const result = proposeReactFix(finding(), cls(), { projectRoot: root });
+    expect(result?.safety).toBe('manual-only');
+    expect(result?.rationale).toMatch(/local variable/);
+  });
+
+  it('refuses when componentWillUnmount already exists', () => {
+    const root = project({
+      'src/Widget.jsx': `class Widget extends React.Component {
+  componentDidMount() { this.timer = setInterval(() => {}, 1000); }
+  componentWillUnmount() { console.log('bye'); }
+}
+`,
+    });
+    const result = proposeReactFix(finding(), cls(), { projectRoot: root });
+    expect(result?.safety).toBe('manual-only');
+    expect(result?.rationale).toMatch(/already has a componentWillUnmount/);
+  });
+
+  it('refuses when componentDidMount starts two resources', () => {
+    const root = project({
+      'src/Widget.jsx': `class Widget extends React.Component {
+  componentDidMount() {
+    this.timer = setInterval(() => {}, 1000);
+    window.addEventListener('resize', this.onResize);
+  }
+}
+`,
+    });
+    const result = proposeReactFix(finding(), cls(), { projectRoot: root });
+    expect(result?.safety).toBe('manual-only');
+    expect(result?.rationale).toMatch(/exactly one recognised resource/);
+  });
+
+  it('refuses an inline arrow listener in componentDidMount', () => {
+    const root = project({
+      'src/Widget.jsx': `class Widget extends React.Component {
+  componentDidMount() {
+    window.addEventListener('resize', () => this.setState({}));
+  }
+}
+`,
+    });
+    const result = proposeReactFix(finding(), cls(), { projectRoot: root });
+    expect(result?.safety).toBe('manual-only');
   });
 });
 

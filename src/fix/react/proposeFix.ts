@@ -23,12 +23,16 @@
  * resource while leaving a second untouched is worse than no fix, because
  * it looks like the problem was solved.
  *
- * WHAT IS DELIBERATELY NOT ATTEMPTED HERE
- * -------------------------------------------
- * Class components (`componentWillUnmount`) are a different, simpler
- * insertion point with no equivalent risk profile to this one bundled in
- * for now - not built yet, refused with a stated reason rather than
- * silently mishandled.
+ * CLASS COMPONENTS
+ * ----------------
+ * A class component's cleanup site is `componentWillUnmount`. The same
+ * one-resource rule applies to `componentDidMount`, with one extra
+ * requirement: the handle must be stored ON THE INSTANCE (`this.timer =
+ * setInterval(...)`, or a listener registered with `this.handler`), because
+ * `componentWillUnmount` is a different method and cannot see a local
+ * variable from `componentDidMount`. A class that already has a
+ * `componentWillUnmount` is refused - merging into existing teardown is a
+ * judgement call, not an insertion.
  */
 
 import * as fs from 'node:fs';
@@ -44,11 +48,16 @@ export interface ReactFixOptions {
   projectRoot: string;
 }
 
-function manualOnly(finding: GenericCorrelatedFinding, file: string, reason: string): ProposedFix {
+function manualOnly(
+  finding: GenericCorrelatedFinding,
+  file: string,
+  reason: string,
+  site = 'a useEffect cleanup',
+): ProposedFix {
   return {
     findingId: finding.constructorName,
     file,
-    title: `Add a useEffect cleanup in ${finding.entityName ?? '(unknown)'}`,
+    title: `Add ${site} in ${finding.entityName ?? '(unknown)'}`,
     rationale: reason,
     safety: 'manual-only',
     functionalRisks: [
@@ -136,6 +145,42 @@ function findEffectsWithoutCleanup(root: ts.Node): EffectCandidate[] {
   return found;
 }
 
+const ACQUIRE_NAMES = new Set([
+  'setInterval',
+  'setTimeout',
+  'addEventListener',
+  'requestAnimationFrame',
+  'MutationObserver',
+  'ResizeObserver',
+  'IntersectionObserver',
+  'PerformanceObserver',
+  'WebSocket',
+  'EventSource',
+  'Worker',
+  'SharedWorker',
+]);
+
+function recognisedCallName(node: ts.Node): string | undefined {
+  if (ts.isCallExpression(node)) {
+    if (ts.isIdentifier(node.expression)) return node.expression.text;
+    if (ts.isPropertyAccessExpression(node.expression)) return node.expression.name.text;
+  }
+  if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) return node.expression.text;
+  return undefined;
+}
+
+/** Every acquire-shaped call anywhere under `root`, at any depth. */
+function countAcquireCalls(root: ts.Node): number {
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    const name = recognisedCallName(node);
+    if (name !== undefined && ACQUIRE_NAMES.has(name)) count++;
+    ts.forEachChild(node, visit);
+  };
+  visit(root);
+  return count;
+}
+
 type ResourcePlan =
   | { kind: 'timer'; clearCall: string; handleText: string }
   | { kind: 'listener'; targetText: string; eventText: string; handlerText: string };
@@ -152,38 +197,9 @@ function findSingleResource(block: ts.Block, sourceFile: ts.SourceFile): Resourc
   let planCount = 0;
   let otherAcquireCount = 0;
 
-  const ACQUIRE_NAMES = new Set([
-    'setInterval',
-    'setTimeout',
-    'addEventListener',
-    'requestAnimationFrame',
-    'MutationObserver',
-    'ResizeObserver',
-    'IntersectionObserver',
-    'PerformanceObserver',
-    'WebSocket',
-    'EventSource',
-    'Worker',
-    'SharedWorker',
-  ]);
-
-  const isRecognisedCallName = (node: ts.Node): string | undefined => {
-    if (ts.isCallExpression(node)) {
-      if (ts.isIdentifier(node.expression)) return node.expression.text;
-      if (ts.isPropertyAccessExpression(node.expression)) return node.expression.name.text;
-    }
-    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) return node.expression.text;
-    return undefined;
-  };
-
   // First pass over the whole block: count every acquire-shaped call so a
   // second, different resource is never silently left uncleaned.
-  const countVisit = (node: ts.Node): void => {
-    const name = isRecognisedCallName(node);
-    if (name !== undefined && ACQUIRE_NAMES.has(name)) otherAcquireCount++;
-    ts.forEachChild(node, countVisit);
-  };
-  countVisit(block);
+  otherAcquireCount = countAcquireCalls(block);
 
   for (const stmt of block.statements) {
     // const <id> = setInterval(...) / setTimeout(...)
@@ -250,6 +266,182 @@ function usesSemicolons(block: ts.Block, sourceFile: ts.SourceFile): boolean {
   return text.endsWith(';');
 }
 
+/** `this.<name>` - the only handle shape `componentWillUnmount` can reach. */
+function thisProperty(node: ts.Node, sourceFile: ts.SourceFile): string | undefined {
+  if (
+    ts.isPropertyAccessExpression(node) &&
+    node.expression.kind === ts.SyntaxKind.ThisKeyword &&
+    ts.isIdentifier(node.name)
+  ) {
+    return node.getText(sourceFile);
+  }
+  return undefined;
+}
+
+type ClassPlan =
+  | { kind: 'timer'; clearCall: string; handleText: string }
+  | { kind: 'listener'; targetText: string; eventText: string; handlerText: string }
+  | { kind: 'local-handle' };
+
+/**
+ * The single resource `componentDidMount` starts, as long as its handle
+ * lives on the instance. A timer captured in a local variable is reported
+ * as `local-handle` so the refusal can say exactly why.
+ */
+function findSingleClassResource(body: ts.Block, sourceFile: ts.SourceFile): ClassPlan | undefined {
+  if (countAcquireCalls(body) !== 1) return undefined;
+
+  for (const stmt of body.statements) {
+    if (!ts.isExpressionStatement(stmt)) {
+      if (ts.isVariableStatement(stmt)) {
+        const init = stmt.declarationList.declarations[0]?.initializer;
+        const name = init !== undefined ? recognisedCallName(init) : undefined;
+        if (name === 'setInterval' || name === 'setTimeout') return { kind: 'local-handle' };
+      }
+      continue;
+    }
+    const expr = stmt.expression;
+
+    // this.<handle> = setInterval(...) / setTimeout(...)
+    if (
+      ts.isBinaryExpression(expr) &&
+      expr.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isCallExpression(expr.right) &&
+      ts.isIdentifier(expr.right.expression) &&
+      (expr.right.expression.text === 'setInterval' || expr.right.expression.text === 'setTimeout')
+    ) {
+      const handleText = thisProperty(expr.left, sourceFile);
+      if (handleText === undefined) return undefined;
+      const clearCall = expr.right.expression.text === 'setInterval' ? 'clearInterval' : 'clearTimeout';
+      return { kind: 'timer', clearCall, handleText };
+    }
+
+    // <target>.addEventListener(<event>, this.<handler>)
+    if (
+      ts.isCallExpression(expr) &&
+      ts.isPropertyAccessExpression(expr.expression) &&
+      expr.expression.name.text === 'addEventListener' &&
+      expr.arguments.length >= 2
+    ) {
+      const handlerText = thisProperty(expr.arguments[1] as ts.Expression, sourceFile);
+      if (handlerText === undefined) return undefined;
+      return {
+        kind: 'listener',
+        targetText: expr.expression.expression.getText(sourceFile),
+        eventText: (expr.arguments[0] as ts.Expression).getText(sourceFile),
+        handlerText,
+      };
+    }
+  }
+  return undefined;
+}
+
+function proposeClassComponentFix(
+  finding: GenericCorrelatedFinding,
+  entity: AppEntity,
+  relativeFile: string,
+  text: string,
+  sourceFile: ts.SourceFile,
+): ProposedFix {
+  const site = 'componentWillUnmount';
+  let cls: ts.ClassDeclaration | undefined;
+  const visit = (node: ts.Node): void => {
+    if (cls !== undefined) return;
+    if (ts.isClassDeclaration(node) && node.name?.text === entity.name) {
+      cls = node;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  if (cls === undefined) {
+    return manualOnly(finding, relativeFile, `${entity.name} could not be found in this file as currently written.`, site);
+  }
+
+  const methodNamed = (name: string): ts.MethodDeclaration | undefined =>
+    (cls as ts.ClassDeclaration).members.find(
+      (m): m is ts.MethodDeclaration => ts.isMethodDeclaration(m) && m.name.getText(sourceFile) === name,
+    );
+
+  if (methodNamed('componentWillUnmount') !== undefined) {
+    return manualOnly(
+      finding,
+      relativeFile,
+      `${entity.name} already has a componentWillUnmount. What it is missing needs a person to read ` +
+        'it - adding a second teardown path next to an existing one is not a mechanical change.',
+      site,
+    );
+  }
+
+  const didMount = methodNamed('componentDidMount');
+  if (didMount?.body === undefined) {
+    return manualOnly(
+      finding,
+      relativeFile,
+      `${entity.name} has no componentDidMount - the growth does not come from the one place this generator knows how to pair with teardown.`,
+      site,
+    );
+  }
+
+  const plan = findSingleClassResource(didMount.body, sourceFile);
+  if (plan === undefined) {
+    return manualOnly(
+      finding,
+      relativeFile,
+      'componentDidMount does not start exactly one recognised resource (a timer stored on this, or ' +
+        'addEventListener with a this.<handler>) - either none was found, or more than one is started ' +
+        'and clearing only one would be a partial, misleading fix.',
+      site,
+    );
+  }
+  if (plan.kind === 'local-handle') {
+    return manualOnly(
+      finding,
+      relativeFile,
+      'componentDidMount keeps its timer handle in a local variable, which componentWillUnmount cannot ' +
+        'reach. Storing it on the instance first changes existing code, so that is left for a person.',
+      site,
+    );
+  }
+
+  const semi = usesSemicolons(didMount.body, sourceFile) ? ';' : '';
+  const memberIndent = indentOf(sourceFile, didMount);
+  const cleanupLine =
+    plan.kind === 'timer'
+      ? `${plan.clearCall}(${plan.handleText})${semi}`
+      : `${plan.targetText}.removeEventListener(${plan.eventText}, ${plan.handlerText})${semi}`;
+
+  const insertPos = didMount.getEnd();
+  const insertion = `\n\n${memberIndent}componentWillUnmount() {\n${memberIndent}  ${cleanupLine}\n${memberIndent}}`;
+  const newContent = text.slice(0, insertPos) + insertion + text.slice(insertPos);
+
+  return {
+    findingId: finding.constructorName,
+    file: relativeFile,
+    title: `Add the missing componentWillUnmount in ${entity.name}`,
+    rationale:
+      plan.kind === 'timer'
+        ? `${entity.name} starts a timer in componentDidMount and never clears it, so every unmounted ` +
+          `instance stays reachable from the timer. Adding \`${plan.clearCall}(${plan.handleText})\` in ` +
+          'componentWillUnmount stops it exactly when React unmounts the component.'
+        : `${entity.name} adds an event listener in componentDidMount and never removes it, so every ` +
+          'unmounted instance stays reachable from the event target. Adding `removeEventListener` in ' +
+          'componentWillUnmount, with the same handler reference, releases it.',
+    safety: 'additive',
+    newContent,
+    diff: buildUnifiedDiff(relativeFile, text, newContent),
+    functionalRisks: [
+      plan.kind === 'timer'
+        ? 'None expected: the timer is only cleared once React has unmounted the component.'
+        : 'None expected: the listener is only removed once React has unmounted the component.',
+    ],
+    verificationPlan: [
+      'Rebuild, run the project\'s tests, then repeat the same journey with `memory-agent inspect` ' +
+        `and confirm ${finding.constructorName} no longer grows across the measured cycles.`,
+    ],
+  };
+}
+
 export function proposeReactFix(
   finding: GenericCorrelatedFinding,
   entity: AppEntity,
@@ -261,12 +453,12 @@ export function proposeReactFix(
   if (!isRuntimeEstablished(finding.confidence)) {
     return manualOnly(finding, relativeFile, 'Confidence is below HIGH, so no change is generated.');
   }
-  if (entity.frameworkKind !== 'FunctionComponent') {
+  if (entity.frameworkKind !== 'FunctionComponent' && entity.frameworkKind !== 'ClassComponent') {
     return manualOnly(
       finding,
       relativeFile,
-      `${entity.frameworkKind} teardown is not generated yet - only a function component's ` +
-        'useEffect cleanup is. A class component needs componentWillUnmount, added by hand for now.',
+      `${entity.frameworkKind} teardown is not generated - only a function component's useEffect ` +
+        "cleanup and a class component's componentWillUnmount are.",
     );
   }
   if (!fs.existsSync(absolute)) return undefined;
@@ -283,6 +475,10 @@ export function proposeReactFix(
     sourceFile = ts.createSourceFile(absolute, text, ts.ScriptTarget.ES2022, /* setParentNodes */ true, scriptKindFor(absolute));
   } catch {
     return manualOnly(finding, relativeFile, 'The file could not be parsed.');
+  }
+
+  if (entity.frameworkKind === 'ClassComponent') {
+    return proposeClassComponentFix(finding, entity, relativeFile, text, sourceFile);
   }
 
   const fn = findComponentFunction(sourceFile, entity.name);
