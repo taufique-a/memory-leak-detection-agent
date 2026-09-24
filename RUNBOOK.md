@@ -39,6 +39,62 @@ if you ever want to override the project's own.
 The rest of this section explains what the script is doing under the hood,
 and how to do it by hand if you need to.
 
+## Memory check — start here
+
+**In the UI:** the first page, **Memory check**. Paste the address you open
+your app at, optionally the project folder, and press **Start Memory Check**.
+That is all it needs — no scenario file.
+
+**From a terminal** (after activating Node 22, section 1):
+
+```powershell
+npm run dev -- check http://localhost:4200                                  # address only
+npm run dev -- check http://localhost:4200 --project C:\Users\Taufique\IOSense  # + trace to files, prepare fixes
+```
+
+What it does, in order (each step appears in the UI's status list):
+
+| Step | What happens |
+|---|---|
+| Connecting | Opens the address in a real Chrome. Uses `.auth\app.auth.json` automatically if it was saved **for this address**. |
+| Sign-in needed | If a login screen appears, it stops. Press **Sign in**: a Chrome window opens, you sign in yourself, press *I have signed in / continue*, and the check restarts on its own. The tool never sees the password. From a terminal: exit code 3 means run `npm run dev -- scenario login --base-url <url>` then `check` again. |
+| Understanding | Framework and version (through the adapters), links, scripts, page size, chart libraries, workers, sockets — plus components/routes/teardown from the project folder when given. Anything it could not work out is listed as unknown, never guessed. |
+| Choosing safe links | Every link on the start page is judged. Refused: other sites, files, API addresses, new-window links, and anything whose address or text says *logout, delete, pay, checkout, reset, submit…* It never presses buttons or submits forms. |
+| Exploring | Clicks each safe link, checks it stayed inside the running page (a reload would hide leaks), presses Back, and notes safe tabs. |
+| Testing | For the busiest pages (charts, big DOM, tabs, navigation first; default 6): enter → switch tabs → Back, 8 times, forcing garbage collection before every reading, first 3 discarded. Modest growth (<200 KB/visit) is re-measured over twice as many visits before it is believed. |
+| Heap analysis | Growing pages are repeated between two heap snapshots: what accumulated, what holds it (retaining path), and the cause read off that path (timer, listener, observer, subscription, socket, worker, global, detached DOM — or "undetermined", never a guess). |
+| Source correlation | With a project folder: matched by exact name through the framework adapter. Without one: through the source maps the app serves, when they embed their original sources. |
+| Fixes prepared | Only for HIGH/PROVEN findings matched to exactly one class/component: React (`useEffect` cleanup / `componentWillUnmount`), Angular (the existing ngOnDestroy engine), plain JS (existing `destroy()`/`dispose()`, or a custom element's `disconnectedCallback`). Everything else becomes advice for a person. **Nothing is written.** |
+
+Then **Review Fixes** opens Fix Review: the issue, the evidence, before/after,
+files changed, the risk, whether tests exist. **Apply Fix** writes exactly that
+change (bound by hash — a file edited since, or a dirty git tree, is refused),
+runs the project's build and tests, waits for the dev server to pick it up,
+repeats the same journey and reports **FIX VERIFIED / PARTIALLY VERIFIED /
+DID NOT RESOLVE LEAK / COULD NOT BE VERIFIED**. **Reject** writes nothing and
+is remembered. If your server does not rebuild on change, restart it and press
+**Measure again**.
+
+Terminal equivalents, on a finished check:
+
+```powershell
+npm run dev -- check-apply    --check chk-... --fix 0      # asks y/N first
+npm run dev -- check-verify   --check chk-... --fix 0      # re-measure an applied fix
+npm run dev -- check-reject   --check chk-... --fix 0
+npm run dev -- check-expected --check chk-... --finding f2 # "this memory is intended"
+```
+
+Everything a check produces is in `reports\checks\<check id>\`: `report.html`
+(the 17-section report — **View Report** in the UI), `report.md`, `check.json`,
+`state.json` (every state it passed through), the generated journeys, and the
+heap snapshots. Decisions (applied, rejected, verified, marked expected) are
+remembered in `.memory-agent\knowledge.json` and shown on matching findings
+next time — they never change a confidence level or make a fix automatic.
+
+`npm run dev -- doctor` (add `--project <folder>` to include build/test) proves
+each capability for real — browser, CDP, a heap snapshot, forced GC — and says
+what each missing one costs.
+
 ## 1. Activate the environment — do this first, every time
 
 This project runs on its **own Node 22**, kept in this folder (`.node\`, see
