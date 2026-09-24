@@ -1,160 +1,115 @@
 /**
- * `memory-agent doctor` - environment diagnostics.
+ * `memory-agent doctor` - is this machine ready, and what does each missing
+ * piece cost?
  *
- * Checks everything the runtime phases depend on, and says plainly what is
- * missing. Written because the alternative is a browser command failing
- * three minutes into a run with a stack trace about a missing executable.
+ * Reads the tool registry (src/tools/registry.ts) and actually exercises
+ * each capability: one real Chrome launch proves the browser connection,
+ * the DevTools protocol, a real heap snapshot and a forced garbage
+ * collection - the four things every memory reading depends on. With
+ * `--project`, it also checks the project's build and test scripts, which
+ * are what verify a fix.
+ *
+ * Written because the alternative is a check failing three minutes in with
+ * a stack trace about a missing executable.
  */
 
-import { execFileSync } from 'node:child_process';
-import * as ts from 'typescript';
+import * as path from 'node:path';
 
-import { findDevToolsMcpBin, sdkInstalled } from '../mcp/devtools';
-import { isChromeAvailable } from '../runtime/browser';
+import { checkTools, type ToolReport } from '../tools/registry';
 import { colour, field, heading, info, warn } from '../utils/logger';
 import { AGENT_VERSION } from '../version';
 
-interface Check {
-  name: string;
-  ok: boolean;
-  detail: string;
-  /** Set when the check failed and there is something the user can do. */
-  remedy?: string;
-  /** A failure here does not block runtime work. */
-  advisory?: boolean;
+export function parseDoctorArgs(args: string[]): { projectRoot?: string; json: boolean } | string {
+  let projectRoot: string | undefined;
+  let json = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] as string;
+    if (arg === '--project') {
+      const v = args[i + 1];
+      if (v === undefined || v.startsWith('-')) return '--project requires a folder';
+      projectRoot = path.resolve(v);
+      i++;
+    } else if (arg === '--json') {
+      json = true;
+    } else {
+      return `Unknown option for doctor: ${arg}`;
+    }
+  }
+  return { ...(projectRoot !== undefined ? { projectRoot } : {}), json };
+}
+
+function mark(r: ToolReport): string {
+  if (r.health.status === 'ok') return colour.green('✓');
+  if (r.health.status === 'fail') return r.tool.required ? colour.red('✗') : colour.yellow('⚠');
+  return colour.yellow('⚠');
 }
 
 export async function runDoctor(args: string[]): Promise<number> {
-  if (args.length > 0 && args[0] !== undefined && args[0].startsWith('-')) {
-    console.error(`Unknown option for doctor: ${args[0]}`);
+  const parsed = parseDoctorArgs(args);
+  if (typeof parsed === 'string') {
+    console.error(parsed);
     return 1;
   }
 
+  if (!parsed.json) {
+    console.log('');
+    console.log(colour.bold('Memory Agent Health'));
+    console.log(colour.dim('  launching Chrome once to prove the browser, the protocol, heap snapshots and forced GC...'));
+  }
+
+  const reports = await checkTools(parsed.projectRoot !== undefined ? { projectRoot: parsed.projectRoot } : {});
+  const blocking = reports.filter((r) => r.tool.required && r.health.status === 'fail');
+
+  if (parsed.json) {
+    console.log(
+      JSON.stringify(
+        {
+          agentVersion: AGENT_VERSION,
+          ready: blocking.length === 0,
+          tools: reports.map((r) => ({
+            name: r.tool.name,
+            purpose: r.tool.purpose,
+            frameworks: r.tool.frameworks,
+            requires: r.tool.requires,
+            required: r.tool.required,
+            fallback: r.tool.fallback,
+            ...r.health,
+          })),
+        },
+        null,
+        2,
+      ),
+    );
+    return blocking.length === 0 ? 0 : 1;
+  }
+
   console.log('');
-  console.log(colour.bold('memory-agent doctor'));
-
-  const checks: Check[] = [];
-
-  /* ---- Node ---- */
-  const nodeMajor = Number(process.version.replace('v', '').split('.')[0]);
-  checks.push({
-    name: 'Node.js',
-    ok: nodeMajor >= 20,
-    detail: `${process.version} on ${process.platform}/${process.arch}`,
-    ...(nodeMajor >= 20
-      ? {}
-      : {
-          remedy:
-            'Node 20+ is required. Dot-source env.ps1 to activate the portable Node 22 ' +
-            'for this shell: `. .\\env.ps1`',
-        }),
-  });
-
-  /* ---- TypeScript ---- */
-  const tsMajor = Number(ts.versionMajorMinor.split('.')[0]);
-  checks.push({
-    name: 'TypeScript',
-    ok: tsMajor < 7,
-    detail: ts.version,
-    ...(tsMajor < 7
-      ? {}
-      : {
-          remedy:
-            'TypeScript 7 removed the JavaScript Compiler API, so the analyzer cannot ' +
-            'work. Reinstall with: npm install --save-dev --save-exact typescript@5.9.3',
-        }),
-  });
-
-  /* ---- git ---- */
-  let gitVersion: string | undefined;
-  try {
-    gitVersion = execFileSync('git', ['--version'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 5000,
-    }).trim();
-  } catch {
-    gitVersion = undefined;
-  }
-  checks.push({
-    name: 'git',
-    ok: gitVersion !== undefined,
-    detail: gitVersion ?? 'not found on PATH',
-    advisory: true,
-    ...(gitVersion !== undefined
-      ? {}
-      : {
-          remedy:
-            'Reports will omit commit context, and Phase 14 fix safety will not be ' +
-            'available. Static analysis still works.',
-        }),
-  });
-
-  /* ---- Chrome via Playwright ---- */
-  console.log(colour.dim('  checking Chrome...'));
-  const chrome = await isChromeAvailable();
-  checks.push({
-    name: 'Chrome (Playwright)',
-    ok: chrome.available,
-    detail: chrome.available ? 'launchable via channel: chrome' : (chrome.reason ?? 'unknown'),
-    ...(chrome.available
-      ? {}
-      : {
-          remedy:
-            'Install Google Chrome, or run `npx playwright install chromium` (note: ' +
-            'downloads ~150 MB - set PLAYWRIGHT_BROWSERS_PATH to keep it off C:).',
-        }),
-  });
-
-  /* ---- Chrome DevTools MCP ---- */
-  const mcpBin = findDevToolsMcpBin();
-  checks.push({
-    name: 'Chrome DevTools MCP',
-    ok: mcpBin !== undefined && sdkInstalled(),
-    detail:
-      mcpBin !== undefined && sdkInstalled()
-        ? 'installed - run `memory-agent devtools` to prove it works live'
-        : 'chrome-devtools-mcp or the MCP SDK is not installed here',
-    advisory: true,
-    ...(mcpBin !== undefined && sdkInstalled() ? {} : { remedy: 'Run "npm install" in the agent folder (a git pull can add packages). Without it the agent uses the raw DevTools protocol.' }),
-  });
-
-  /* ---- report ---- */
-  heading('CHECKS');
-  for (const check of checks) {
-    const mark = check.ok
-      ? colour.green('ok  ')
-      : check.advisory === true
-        ? colour.yellow('warn')
-        : colour.red('FAIL');
-    console.log(`  ${mark}  ${check.name.padEnd(22)} ${colour.dim(check.detail)}`);
+  for (const r of reports) {
+    console.log(
+      `  ${mark(r)} ${r.tool.name.padEnd(26)} ${colour.dim(
+        [r.health.version, r.health.detail].filter((x) => x !== undefined && x !== '').join(' - '),
+      )}`,
+    );
   }
 
-  const failures = checks.filter((c) => !c.ok);
-  if (failures.length > 0) {
-    heading('WHAT TO DO');
-    for (const failure of failures) {
-      if (failure.remedy === undefined) continue;
-      warn(`${failure.name}: ${failure.remedy}`);
+  const problems = reports.filter((r) => r.health.status !== 'ok');
+  if (problems.length > 0) {
+    heading('WHAT THIS COSTS YOU');
+    for (const r of problems) {
+      warn(`${r.tool.name}: ${r.health.failureReason ?? r.health.detail}`);
+      console.log(colour.dim(`      Without it: ${r.tool.fallback}`));
     }
   }
 
   heading('SUMMARY');
   field('Agent version', AGENT_VERSION);
-  const blocking = failures.filter((c) => c.advisory !== true);
   if (blocking.length === 0) {
-    console.log(`  ${colour.green('Ready.')} All required checks passed.`);
+    console.log(`  ${colour.green('Ready.')} Every required capability was exercised and works.`);
     console.log('');
-    info(
-      colour.dim(
-        'Next: run `memory-agent selftest` to confirm memory measurement actually ' +
-          'works in this Chrome before trusting it on a real application.',
-      ),
-    );
+    info(colour.dim('Next: memory-agent check <your app URL>'));
   } else {
-    console.log(`  ${colour.red(`${blocking.length} blocking issue(s).`)}`);
+    console.log(`  ${colour.red(`${blocking.length} blocking issue(s).`)} Memory checks cannot run until they are fixed.`);
   }
   console.log('');
-
   return blocking.length === 0 ? 0 : 1;
 }
