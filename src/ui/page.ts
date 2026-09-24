@@ -526,7 +526,11 @@ a{color:var(--accent)}
 <main>
   <aside class="side">
     <nav class="nav" id="nav">
-      <button class="navitem on" data-page="setup">
+      <button class="navitem on" data-page="check">
+        <span class="num">&#9654;</span>
+        <span class="lbl">Memory check<small>Paste the URL, press start</small></span>
+      </button>
+      <button class="navitem" data-page="setup">
         <span class="num">1</span>
         <span class="lbl">Set up<small>Point it at your app</small></span>
       </button>
@@ -549,8 +553,53 @@ a{color:var(--accent)}
 
   <section id="content">
 
+    <!-- ============ MEMORY CHECK (the main screen) ============ -->
+    <div class="page on" id="page-check">
+      <div class="pagehead">
+        <h2>Memory check</h2>
+        <p>Give it your application's address. It works out what the app is, finds the pages it can
+          safely move between, measures each one, and explains what leaks &mdash; with evidence. It never
+          changes your code on its own: fixes wait for you in Fix Review.</p>
+      </div>
+
+      <div class="banner">
+        <div class="ffform">
+          <label>Application URL
+            <input type="text" id="mcUrl" placeholder="http://localhost:4200"></label>
+          <label>Project folder <span class="sub">(optional &mdash; lets it trace leaks to your files and prepare fixes)</span>
+            <input type="text" id="mcProject" placeholder="E:\\path\\to\\your\\project"></label>
+        </div>
+        <div class="row" style="margin-top:.7rem">
+          <button id="mcStart" type="button">Start Memory Check</button>
+          <span class="sub" id="mcHint"></span>
+        </div>
+      </div>
+
+      <div id="mcAuth"></div>
+
+      <div class="panel" id="mcStatusBox" style="display:none;margin-bottom:1rem">
+        <h2><span>Status</span><span class="sub" id="mcCheckId"></span></h2>
+        <ol class="stepper" id="mcStages"></ol>
+      </div>
+
+      <div id="mcSummary"></div>
+      <div id="mcRoutes"></div>
+      <div id="mcFindings"></div>
+      <div id="mcVerification"></div>
+
+      <div class="row" id="mcButtons" style="display:none;margin-bottom:1rem">
+        <button class="ghost" id="mcReport" type="button">View Report</button>
+        <button id="mcReview" type="button">Review Fixes</button>
+      </div>
+
+      <details class="banner" id="mcTechBox">
+        <summary>Show technical details</summary>
+        <div id="mcTech" class="sub" style="margin-top:.5rem">Nothing yet.</div>
+      </details>
+    </div>
+
     <!-- ============ 1. SET UP ============ -->
-    <div class="page on" id="page-setup">
+    <div class="page" id="page-setup">
       <div class="pagehead">
         <h2>Set up</h2>
         <p>Tell it where your app is, check the tools are there, and sign in once.</p>
@@ -777,6 +826,21 @@ a{color:var(--accent)}
     </div>
 
   </section>
+
+  <div class="modalback" id="mcFixBack">
+    <div class="modal split" role="dialog" aria-modal="true" aria-labelledby="mcFixTitle">
+      <h3 id="mcFixTitle">Fix Review</h3>
+      <div class="body" id="mcFixBody"></div>
+      <div class="foot">
+        <span class="sub" id="mcFixNote">Nothing is written until you press Apply Fix.</span>
+        <button class="ghost" id="mcFixPrev" type="button">previous</button>
+        <button class="ghost" id="mcFixNext" type="button">next</button>
+        <button class="ghost" id="mcFixClose" type="button">close</button>
+        <button class="ghost" id="mcFixReject" type="button">Reject</button>
+        <button id="mcFixApply" type="button">Apply Fix</button>
+      </div>
+    </div>
+  </div>
 
   <div class="modalback" id="fixBack">
     <div class="modal split" role="dialog" aria-modal="true" aria-labelledby="fixTitle" id="fixModal">
@@ -1318,6 +1382,7 @@ function attachRun(result, action) {
       return;
     }
     if (currentActionId === 'live' && data.line.indexOf('@@LIVE ') === 0) { handleLive(data.line); return; }
+    if (data.line.indexOf('@@CHECK ') === 0) { handleCheckLine(data.line); return; }
     const out = $('out');
     const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
     out.textContent += data.line + '\\n';
@@ -1330,6 +1395,14 @@ function attachRun(result, action) {
 async function finish(exitCode) {
   const finishedAction = currentActionId;
   if (finishedAction === 'live') liveEnded();
+  if (['memoryCheck', 'checkApply', 'checkReject', 'checkVerify', 'checkExpected'].includes(finishedAction)) {
+    void mcLoadCheck(mc.checkId || localStorage.getItem('memoryAgentLastCheck') || '');
+  }
+  if (finishedAction === 'login' && mcResumeAfterLogin) {
+    mcResumeAfterLogin = false;
+    // Signed in: carry on with the check, exactly as it was started.
+    if (exitCode === 0) setTimeout(startMemoryCheck, 0);
+  }
   if (source) { source.close(); source = null; }
   currentRun = null;
   if (runTimer) { clearInterval(runTimer); runTimer = null; }
@@ -3478,13 +3551,400 @@ $('sourcePath').addEventListener('keydown', (e) => {
 /* Which page are we on                                                */
 /* ------------------------------------------------------------------ */
 
+/* ================================================================== */
+/* Memory check - the main screen                                      */
+/* ================================================================== */
+
+/**
+ * The stages a person sees, in order. The check command streams its real
+ * state machine as "@@CHECK {json}" lines; this list only gives each state
+ * a plain name. A state never reached stays an empty circle - nothing here
+ * marks a stage done that the check did not actually report.
+ */
+const MC_STAGES = [
+  ['CONNECTING', 'Connecting to the application'],
+  ['AUTHENTICATION_REQUIRED', 'Sign-in needed'],
+  ['DISCOVERING', 'Understanding the application'],
+  ['PLANNING', 'Choosing links that are safe to follow'],
+  ['EXPLORING', 'Exploring pages'],
+  ['BASELINE_CAPTURED', 'Memory baseline captured'],
+  ['TESTING', 'Testing pages'],
+  ['HEAP_ANALYSIS', 'Heap analysis'],
+  ['CORRELATING', 'Source correlation'],
+  ['DIAGNOSING', 'Diagnosis'],
+  ['FIX_AVAILABLE', 'Fixes prepared for review'],
+  ['USER_REVIEW', 'Your review'],
+  ['APPLYING', 'Applying the approved change'],
+  ['BUILDING', 'Build and tests'],
+  ['TESTING_AFTER_FIX', 'Repeating the memory test'],
+  ['VERIFYING', 'Verifying'],
+  ['COMPLETED', 'Completed'],
+];
+const MC_FAILURES = {
+  AUTH_FAILED: 'Sign-in did not work',
+  BROWSER_ERROR: 'Browser problem',
+  DISCOVERY_FAILED: 'Discovery failed',
+  HEAP_CAPTURE_FAILED: 'Heap snapshots failed',
+  BUILD_FAILED: 'Build failed',
+  TEST_FAILED: 'Tests failed',
+  FIX_REJECTED: 'Fix rejected',
+  VERIFICATION_INCONCLUSIVE: 'Verification inconclusive',
+};
+
+let mc = mcFresh();
+/** Set when the person pressed Sign in: the check restarts itself once sign-in finishes. */
+let mcResumeAfterLogin = false;
+let mcFixIndex = 0;
+
+function mcFresh() {
+  return { checkId: '', history: [], model: null, explored: [], plan: [], routes: {}, findings: [], check: null };
+}
+
+function mcConfidencePill(level) {
+  const tone = level === 'PROVEN' || level === 'HIGH' ? 'bad' : level === 'MEDIUM' ? 'warn' : '';
+  return '<span class="pill ' + tone + '">' + esc(level) + '</span>';
+}
+
+function mcKb(bytes) {
+  if (bytes === undefined || bytes === null) return '';
+  const kb = bytes / 1024;
+  return (kb >= 0 ? '+' : '') + kb.toFixed(0) + ' KB per visit';
+}
+
+function startMemoryCheck() {
+  const url = $('mcUrl').value.trim();
+  const project = $('mcProject').value.trim();
+  if (!/^https?:[/][/]/i.test(url)) {
+    $('mcHint').textContent = 'Paste the address you open the app at, starting with http:// or https://';
+    return;
+  }
+  if (currentRun) {
+    $('mcHint').textContent = 'Something else is running - wait for it to finish, or press stop.';
+    return;
+  }
+  localStorage.setItem('memoryAgentCheckUrl', url);
+  localStorage.setItem('memoryAgentCheckProject', project);
+  $('mcHint').textContent = '';
+  mc = mcFresh();
+  $('mcAuth').innerHTML = '';
+  mcRender();
+  void mcRunAction('memoryCheck', { url: url, project: project });
+}
+
+async function mcRunAction(actionId, params) {
+  const action = ACTIONS.find((a) => a.id === actionId);
+  if (!action || currentRun) return;
+  // A follow-up continues the same check: keep its history so the new
+  // states are added to it rather than replacing it.
+  if (actionId !== 'memoryCheck' && actionId !== 'login' && mc.check) mc.history = mc.check.state.history.slice();
+  $('out').textContent = '';
+  const result = await api('/api/run', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: actionId, params: params }),
+  });
+  if (result.error) {
+    $('mcHint').textContent = result.error;
+    return;
+  }
+  attachRun(result, action);
+}
+
+function handleCheckLine(line) {
+  let e;
+  try { e = JSON.parse(line.slice('@@CHECK '.length)); } catch { return; }
+  if (e.type === 'started') {
+    mc.checkId = e.checkId;
+    localStorage.setItem('memoryAgentLastCheck', e.checkId);
+  } else if (e.type === 'state') {
+    mc.history.push(e.transition);
+  } else if (e.type === 'model') {
+    mc.model = e;
+  } else if (e.type === 'explored') {
+    mc.explored.push(e);
+  } else if (e.type === 'plan') {
+    mc.plan = e.routes;
+    for (const r of e.routes) mc.routes[r] = mc.routes[r] || { status: 'waiting' };
+  } else if (e.type === 'route') {
+    mc.routes[e.route] = e;
+  } else if (e.type === 'finding') {
+    mc.findings.push(e.finding);
+  } else if (e.type === 'followup') {
+    $('mcHint').textContent = e.message || '';
+  }
+  mcRender();
+}
+
+function mcCurrentState() {
+  const h = mc.check ? mc.check.state.history : mc.history;
+  return h.length ? h[h.length - 1].state : '';
+}
+
+function mcRenderStages() {
+  const history = mc.check && mc.check.state.history.length >= mc.history.length ? mc.check.state.history : mc.history;
+  const seen = new Map(history.map((t) => [t.state, t.detail]));
+  const current = history.length ? history[history.length - 1].state : '';
+  const failed = MC_FAILURES[current] !== undefined;
+  const lastSeenIndex = MC_STAGES.reduce((acc, s, i) => (seen.has(s[0]) ? i : acc), -1);
+  let html = '';
+  MC_STAGES.forEach((s, i) => {
+    const state = s[0];
+    if (state === 'AUTHENTICATION_REQUIRED' && !seen.has(state)) return;
+    if (i > lastSeenIndex && ['USER_REVIEW', 'APPLYING', 'BUILDING', 'TESTING_AFTER_FIX', 'VERIFYING'].includes(state)) return;
+    let cls = '';
+    let mark = '';
+    if (state === current && !failed) {
+      cls = state === 'COMPLETED' || state === 'FIX_AVAILABLE' ? 'done' : currentRun ? 'active' : 'done';
+      mark = cls === 'done' ? '&#10003;' : '';
+    } else if (seen.has(state)) {
+      cls = 'done';
+      mark = '&#10003;';
+    } else if (i < lastSeenIndex) {
+      cls = 'skip';
+    }
+    const detail = seen.get(state);
+    html += '<li class="stage ' + cls + '"><span class="dot">' + mark + '</span><span class="txt"><b>' +
+      esc(s[1]) + '</b>' + (detail ? '<span class="det">' + esc(detail) + '</span>' : '') + '</span></li>';
+  });
+  if (failed) {
+    html += '<li class="stage fail"><span class="dot">!</span><span class="txt"><b>' + esc(MC_FAILURES[current]) +
+      '</b><span class="det">' + esc(seen.get(current) || '') + '</span></span></li>';
+  }
+  $('mcStages').innerHTML = html;
+}
+
+function mcRender() {
+  const any = mc.history.length > 0 || mc.check;
+  $('mcStatusBox').style.display = any ? '' : 'none';
+  $('mcCheckId').textContent = mc.checkId ? mc.checkId : '';
+  mcRenderStages();
+
+  /* ---- authentication ---- */
+  if (mcCurrentState() === 'AUTHENTICATION_REQUIRED' || mcCurrentState() === 'AUTH_FAILED') {
+    $('mcAuth').innerHTML = '<div class="banner warn"><strong>' +
+      (mcCurrentState() === 'AUTH_FAILED' ? 'Your saved sign-in no longer works' : 'This application needs you to sign in') +
+      '</strong><p class="sub" style="margin:.3rem 0 .6rem">A real Chrome window opens. You sign in there yourself, then press ' +
+      '"I have signed in / continue" under the console. Only the resulting session is saved - this tool never sees your ' +
+      'password. The memory check then starts again on its own.</p>' +
+      '<button id="mcSignIn" type="button">Sign in</button></div>';
+    $('mcSignIn').addEventListener('click', mcSignIn);
+  }
+
+  /* ---- what it found out ---- */
+  const c = mc.check;
+  const m = c && c.model ? c.model : null;
+  let summary = '';
+  if (m) {
+    summary = '<div class="banner"><div class="facts2">' +
+      '<span><b>Framework</b> ' + esc(m.framework.displayName) + (m.framework.version ? ' ' + esc(m.framework.version) : '') +
+      ' ' + mcConfidencePill(m.framework.confidence) + '</span>' +
+      '<span><b>Links</b> ' + m.routes.length + ' found, ' + m.routes.filter((r) => r.safeToVisit).length + ' safe to follow</span>' +
+      '<span><b>Areas</b> ' + m.modules.length + '</span>' +
+      '<span><b>Components known</b> ' + m.entities.length + '</span>' +
+      '<span><b>Charts</b> ' + (m.chartLibraries.length ? esc(m.chartLibraries.join(', ')) : 'none') + '</span>' +
+      '<span><b>Workers / sockets</b> ' + m.workers.length + ' / ' + m.sockets.length + '</span>' +
+      '</div>' + (c.conclusion ? '<p style="margin:.6rem 0 0"><b>' + esc(c.conclusion) + '</b></p>' : '') + '</div>';
+  } else if (mc.model) {
+    summary = '<div class="banner">' + esc(mc.model.framework) + (mc.model.version ? ' ' + esc(mc.model.version) : '') +
+      ' &middot; ' + mc.model.safeRoutes + ' of ' + mc.model.routes + ' links safe to follow</div>';
+  }
+  $('mcSummary').innerHTML = summary;
+
+  /* ---- pages ---- */
+  const results = c ? c.routeResults : null;
+  let routes = '';
+  if (results && results.length) {
+    routes = results.map((r) => {
+      const tone = r.verdict === 'GROWING' ? 'bad' : r.verdict === 'FAILED' || r.verdict === 'INCONCLUSIVE' ? 'warn' : 'ok';
+      return '<li><span class="pill ' + tone + '">' + esc(r.verdict) + '</span> <code>' + esc(r.route) + '</code> ' +
+        '<span class="sub">' + esc(mcKb(r.bytesPerIteration)) + (r.confirmation ? ' (confirmed over ' + r.confirmation.iterations + ' visits)' : '') +
+        (r.error ? ' - ' + esc(r.error) : '') + '</span></li>';
+    }).join('');
+  } else if (mc.plan.length || mc.explored.length) {
+    const list = mc.plan.length ? mc.plan : mc.explored.map((x) => x.route);
+    routes = list.map((route) => {
+      const r = mc.routes[route];
+      const ex = mc.explored.find((x) => x.route === route);
+      if (r && r.status === 'testing') return '<li><span class="spinner"></span><code>' + esc(route) + '</code> <span class="sub">testing...</span></li>';
+      if (r && r.status === 'done') return '<li><span class="pill ' + (r.verdict === 'GROWING' ? 'bad' : 'ok') + '">' + esc(r.verdict) + '</span> <code>' + esc(route) + '</code> <span class="sub">' + esc(mcKb(r.bytesPerIteration)) + '</span></li>';
+      if (r && r.status === 'failed') return '<li><span class="pill warn">FAILED</span> <code>' + esc(route) + '</code> <span class="sub">' + esc(r.detail || '') + '</span></li>';
+      if (ex && !ex.measurable) return '<li><span class="pill">skipped</span> <code>' + esc(route) + '</code> <span class="sub">' + esc(ex.note) + '</span></li>';
+      return '<li><span class="pill">waiting</span> <code>' + esc(route) + '</code></li>';
+    }).join('');
+  }
+  $('mcRoutes').innerHTML = routes ? '<div class="banner"><strong>Pages</strong><ul class="state">' + routes + '</ul></div>' : '';
+
+  /* ---- findings ---- */
+  const findings = c ? c.findings : mc.findings;
+  if (findings.length) {
+    $('mcFindings').innerHTML = '<div class="banner"><strong>Findings</strong>' + findings.map((f) => {
+      const fix = c && f.fixIndex !== undefined ? c.fixes[f.fixIndex] : undefined;
+      const canApply = fix && fix.proposedHash;
+      return '<div class="verdict ' + (f.confidence === 'PROVEN' || f.confidence === 'HIGH' ? 'bad' : 'warn') + '" style="margin-top:.6rem">' +
+        '<h3>' + mcConfidencePill(f.confidence) + ' ' + esc(f.constructorName) + ' <span class="sub">on ' + esc(f.route) + '</span></h3>' +
+        '<div>' + esc(f.rootCause.summary) + '</div>' +
+        '<div class="sub">+' + f.countDelta + ' instance(s) stayed behind after the page was left. ' +
+        (f.file ? 'Source: ' + openLink(f.file, f.line) : 'Not traced to a source file.') + '</div>' +
+        (f.knowledge && f.knowledge.length ? '<div class="sub">Earlier: ' + f.knowledge.map((k) => esc(k.decision + ' on ' + k.at.slice(0, 10))).join('; ') + '</div>' : '') +
+        '<div class="row" style="margin-top:.4rem">' +
+        (fix ? '<button class="mini" data-mcfix="' + fix.index + '" type="button">' + (canApply ? 'Review fix' : 'Read the advice') + '</button>' : '') +
+        (c ? '<button class="ghost mini" data-mcexpected="' + esc(f.id) + '" type="button">Mark as expected</button>' : '') +
+        '</div></div>';
+    }).join('') + '</div>';
+    for (const b of document.querySelectorAll('[data-mcfix]')) b.addEventListener('click', () => mcOpenFix(Number(b.getAttribute('data-mcfix'))));
+    for (const b of document.querySelectorAll('[data-mcexpected]')) b.addEventListener('click', () => {
+      if (!mc.check) return;
+      void mcRunAction('checkExpected', { check: mc.check.checkId, finding: b.getAttribute('data-mcexpected') });
+    });
+  } else {
+    $('mcFindings').innerHTML = '';
+  }
+
+  /* ---- verification ---- */
+  if (c && c.verifications.length) {
+    $('mcVerification').innerHTML = '<div class="banner"><strong>Fix results</strong>' + c.verifications.map((v) => {
+      const tone = v.status === 'FIX VERIFIED' ? 'ok' : v.status === 'FIX PARTIALLY VERIFIED' ? 'warn' : 'bad';
+      return '<div class="verdict ' + tone + '" style="margin-top:.6rem"><h3>' + esc(v.status) + ' <span class="sub">fix ' + v.fixIndex + '</span></h3>' +
+        '<div>' + esc(v.explanation) + '</div>' +
+        (v.before && v.after ? '<div class="sub">Instances left behind: before ' + v.before.countDelta + ', after ' + v.after.countDelta + '</div>' : '') +
+        (v.build ? '<div class="sub">Build and tests: ' + (v.build.passed ? 'passed' : 'FAILED') + '</div>' : '') +
+        (v.applied && v.status !== 'FIX VERIFIED' ? '<div class="row" style="margin-top:.4rem"><button class="ghost mini" data-mcverify="' + v.fixIndex + '" type="button">Measure again</button></div>' : '') +
+        (v.rollback && v.rollback.length ? '<details><summary>How to undo</summary><pre>' + esc(v.rollback.join('\\n')) + '</pre></details>' : '') +
+        '</div>';
+    }).join('') + '</div>';
+    for (const b of document.querySelectorAll('[data-mcverify]')) b.addEventListener('click', () => {
+      void mcRunAction('checkVerify', { check: mc.check.checkId, fix: b.getAttribute('data-mcverify') });
+    });
+  } else {
+    $('mcVerification').innerHTML = '';
+  }
+
+  /* ---- buttons and technical details ---- */
+  const writable = c ? c.fixes.filter((x) => x.proposedHash) : [];
+  $('mcButtons').style.display = c ? '' : 'none';
+  $('mcReview').style.display = c && c.fixes.length ? '' : 'none';
+  $('mcReview').textContent = writable.length ? 'Review Fixes (' + writable.length + ')' : 'Read the advice';
+  if (c) {
+    const lines = [];
+    for (const f of c.findings) lines.push(f.constructorName + ': ' + f.retainingPath);
+    for (const l of c.limitations) lines.push(l);
+    for (const u of (c.model ? c.model.unknowns : [])) lines.push(u);
+    for (const x of c.manualItems) lines.push('Needs a person: ' + x);
+    $('mcTech').innerHTML = '<ul class="state">' + lines.map((l) => '<li>' + esc(l) + '</li>').join('') + '</ul>';
+  }
+}
+
+async function mcLoadCheck(id) {
+  if (!id) return;
+  let r;
+  try { r = await api('/api/memcheck?id=' + encodeURIComponent(id)); } catch { return; }
+  if (!r || !r.check) return;
+  mc.check = r.check;
+  mc.checkId = r.check.checkId;
+  mcRender();
+}
+
+function mcSignIn() {
+  const url = $('mcUrl').value.trim();
+  if (!url) return;
+  mcResumeAfterLogin = true;
+  void mcRunAction('login', { url: url });
+}
+
+/* ---- Fix Review ---- */
+
+function mcOpenFix(index) {
+  if (!mc.check) return;
+  mcFixIndex = index;
+  mcRenderFix();
+  $('mcFixBack').classList.add('on');
+}
+
+function mcRenderFix() {
+  const c = mc.check;
+  const fix = c.fixes[mcFixIndex];
+  if (!fix) return;
+  const f = c.findings.find((x) => x.fixIndex === fix.index);
+  const verification = c.verifications.find((v) => v.fixIndex === fix.index);
+  const writable = !!fix.proposedHash && !verification;
+  let html = '<div style="padding:.9rem 1.1rem">' +
+    '<div class="lbl2">MEMORY ISSUE</div>' +
+    (f ? '<p style="margin:.3rem 0"><b>Component</b> ' + esc(f.entityName || f.constructorName) + ' ' + mcConfidencePill(f.confidence) + '</p>' +
+      '<p style="margin:.3rem 0"><b>Problem</b> ' + esc(f.rootCause.summary) + '</p>' +
+      '<p style="margin:.3rem 0"><b>Evidence</b></p><ul class="state">' +
+      '<li>' + f.countDelta + ' more instance(s) survived repeated visits to <code>' + esc(f.route) + '</code></li>' +
+      f.rationale.map((x) => '<li>' + esc(x) + '</li>').join('') +
+      '<li>Held by: <code>' + esc(f.retainingPath) + '</code></li>' +
+      (f.file ? '<li>Source: ' + openLink(f.file, f.line) + '</li>' : '') + '</ul>' : '') +
+    '<div class="lbl2" style="margin-top:.8rem">PROPOSED FIX</div>' +
+    '<p style="margin:.3rem 0"><b>' + esc(fix.title) + '</b></p>' +
+    '<p style="margin:.3rem 0">' + esc(fix.rationale) + '</p>' +
+    '<p class="sub" style="margin:.3rem 0">Files changed: 1 (<code>' + esc(fix.file) + '</code>) &middot; Risk: ' + esc(fix.risk) +
+    ' &middot; Tests: ' + (fix.testsAvailable ? 'available - they run after the change' : 'unavailable - only the build is run') + '</p>' +
+    '</div>';
+  if (fix.diff) {
+    html += '<div class="split-row" style="font-weight:600"><span class="cell">Before</span><span class="cell">After</span></div>' +
+      renderSplitHtml(buildSplitRows(fix.diff.split('\\n')));
+  } else {
+    html += '<div style="padding:0 1.1rem 1rem"><div class="banner warn">No change was generated: this needs a person. ' +
+      esc((fix.manualInstructions || []).join(' ')) + '</div></div>';
+  }
+  if (verification) {
+    html += '<div style="padding:.6rem 1.1rem"><div class="banner">Already decided: <b>' + esc(verification.status) + '</b> - ' + esc(verification.explanation) + '</div></div>';
+  }
+  $('mcFixBody').innerHTML = html;
+  $('mcFixApply').style.display = writable ? '' : 'none';
+  $('mcFixReject').style.display = writable ? '' : 'none';
+  $('mcFixPrev').disabled = mcFixIndex <= 0;
+  $('mcFixNext').disabled = mcFixIndex >= c.fixes.length - 1;
+  $('mcFixNote').textContent = writable
+    ? 'Nothing is written until you press Apply Fix. It then writes exactly this change, runs your build and tests, and repeats the memory test.'
+    : 'Nothing to apply here.';
+}
+
+function mcCloseFix() {
+  $('mcFixBack').classList.remove('on');
+}
+
+$('mcStart').addEventListener('click', startMemoryCheck);
+$('mcUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); startMemoryCheck(); } });
+$('mcReport').addEventListener('click', () => {
+  if (mc.check) window.open('/api/memcheck/report?id=' + encodeURIComponent(mc.check.checkId) + '&token=' + TOKEN, '_blank', 'noopener');
+});
+$('mcReview').addEventListener('click', () => {
+  if (!mc.check || !mc.check.fixes.length) return;
+  const first = mc.check.fixes.find((x) => x.proposedHash);
+  mcOpenFix(first ? first.index : 0);
+});
+$('mcFixClose').addEventListener('click', mcCloseFix);
+$('mcFixPrev').addEventListener('click', () => { if (mcFixIndex > 0) { mcFixIndex--; mcRenderFix(); } });
+$('mcFixNext').addEventListener('click', () => { if (mc.check && mcFixIndex < mc.check.fixes.length - 1) { mcFixIndex++; mcRenderFix(); } });
+$('mcFixApply').addEventListener('click', () => {
+  const fix = mc.check && mc.check.fixes[mcFixIndex];
+  if (!fix || !fix.proposedHash) return;
+  mcCloseFix();
+  void mcRunAction('checkApply', { check: mc.check.checkId, fix: String(fix.index), expect: fix.proposedHash });
+});
+$('mcFixReject').addEventListener('click', () => {
+  const fix = mc.check && mc.check.fixes[mcFixIndex];
+  if (!fix) return;
+  mcCloseFix();
+  void mcRunAction('checkReject', { check: mc.check.checkId, fix: String(fix.index) });
+});
+{
+  $('mcUrl').value = localStorage.getItem('memoryAgentCheckUrl') || '';
+  $('mcProject').value = localStorage.getItem('memoryAgentCheckProject') || '';
+  const last = localStorage.getItem('memoryAgentLastCheck');
+  if (last) void mcLoadCheck(last);
+}
+
 /**
  * Remembered across reloads.
  *
  * A run takes minutes and people reload. Landing back on step one every
  * time, having already set everything up, is a small insult that adds up.
  */
-let page = localStorage.getItem('memoryAgentPage') || 'setup';
+let page = localStorage.getItem('memoryAgentPage') || 'check';
 
 function showPage(name) {
   page = name;

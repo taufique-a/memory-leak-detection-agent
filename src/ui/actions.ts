@@ -42,7 +42,13 @@ export type ParamType =
    */
   | 'filter'
   /** A Find & Fix session id, e.g. ff-lq2x9k3a1b2c3. */
-  | 'session';
+  | 'session'
+  /** A memory check id, e.g. chk-mufehr430mygv4. */
+  | 'checkId'
+  /** A finding id inside one check, e.g. f3. */
+  | 'findingId'
+  /** A sha256 of the exact content that was reviewed. */
+  | 'sha256';
 
 export interface ActionParam {
   name: string;
@@ -361,6 +367,97 @@ export const ACTIONS: readonly ActionDefinition[] = [
     writes: true,
   },
   {
+    id: 'memoryCheck',
+    step: 2,
+    title: 'Memory check',
+    summary: 'Give it the address - it finds the pages, measures them and explains what leaks',
+    why:
+      'Opens your app in a real Chrome, notices a login, works out what the app is, follows only links ' +
+      'that cannot change anything, measures each page by entering and leaving it, and names what ' +
+      'stays behind. With the project folder it also traces leaks to your files and prepares fixes ' +
+      'for you to review. It never changes your code.',
+    expect: 'a few minutes - longer for more pages',
+    params: [
+      { name: 'url', type: 'url', required: true, label: 'Application URL' },
+      { name: 'project', type: 'project', required: false, label: 'Project folder (optional)' },
+      { name: 'authFile', type: 'authFile', required: false, label: 'Saved sign-in' },
+    ],
+    build: (v) => [
+      'check',
+      v['url'] ?? '',
+      ...(v['project'] !== undefined && v['project'] !== '' ? ['--project', v['project']] : []),
+      ...(v['authFile'] !== undefined && v['authFile'] !== '' ? ['--auth', v['authFile']] : []),
+    ],
+    needsApp: false,
+    driven: true,
+  },
+  {
+    id: 'checkApply',
+    step: 2,
+    title: 'Apply the reviewed fix and verify it',
+    summary: 'Writes exactly the reviewed change, builds, tests, and repeats the memory test',
+    why:
+      'Writes only the change shown in Fix Review - bound to it by a hash, so a change that differs ' +
+      'from what was reviewed, or a file edited since, is refused. Refuses a repository with ' +
+      'uncommitted work. Then runs your build and tests, repeats the journey that exposed the leak, and ' +
+      'reports whether the leak actually stopped.',
+    expect: 'as long as your build and tests take, plus a few minutes of measuring',
+    params: [
+      { name: 'check', type: 'checkId', required: true, label: 'Check' },
+      { name: 'fix', type: 'number', required: true, label: 'Fix' },
+      { name: 'expect', type: 'sha256', required: true, label: 'Reviewed change' },
+    ],
+    build: (v) => ['check-apply', '--check', v['check'] ?? '', '--fix', v['fix'] ?? '', '--expect', v['expect'] ?? ''],
+    needsApp: true,
+    driven: true,
+    writes: true,
+  },
+  {
+    id: 'checkReject',
+    step: 2,
+    title: 'Reject the proposed fix',
+    summary: 'Nothing is written; the decision is remembered',
+    why: 'Records that you rejected it, so the next check shows your earlier decision. A rejected fix never becomes automatic.',
+    expect: 'a second',
+    params: [
+      { name: 'check', type: 'checkId', required: true, label: 'Check' },
+      { name: 'fix', type: 'number', required: true, label: 'Fix' },
+    ],
+    build: (v) => ['check-reject', '--check', v['check'] ?? '', '--fix', v['fix'] ?? ''],
+    needsApp: false,
+    driven: true,
+  },
+  {
+    id: 'checkVerify',
+    step: 2,
+    title: 'Measure the applied fix again',
+    summary: 'Repeats the journey against the running app - e.g. after restarting it',
+    why: 'Use after restarting an app whose server does not rebuild on change by itself.',
+    expect: 'a few minutes',
+    params: [
+      { name: 'check', type: 'checkId', required: true, label: 'Check' },
+      { name: 'fix', type: 'number', required: true, label: 'Fix' },
+    ],
+    build: (v) => ['check-verify', '--check', v['check'] ?? '', '--fix', v['fix'] ?? ''],
+    needsApp: true,
+    driven: true,
+  },
+  {
+    id: 'checkExpected',
+    step: 2,
+    title: 'Mark a finding as expected',
+    summary: 'Remembered for next time; the finding is still reported',
+    why: 'For memory your app keeps on purpose (a cache, a long-lived service). It is never hidden, only labelled.',
+    expect: 'a second',
+    params: [
+      { name: 'check', type: 'checkId', required: true, label: 'Check' },
+      { name: 'finding', type: 'findingId', required: true, label: 'Finding' },
+    ],
+    build: (v) => ['check-expected', '--check', v['check'] ?? '', '--finding', v['finding'] ?? ''],
+    needsApp: false,
+    driven: true,
+  },
+  {
     id: 'demo',
     step: 0,
     title: 'Try it first',
@@ -479,6 +576,15 @@ function validate(type: ParamType, value: string): string | undefined {
 
     case 'session':
       return /^ff-[a-z0-9]{8,32}$/.test(value) ? value : undefined;
+
+    case 'checkId':
+      return /^chk-[a-z0-9]{6,40}$/.test(value) ? value : undefined;
+
+    case 'findingId':
+      return /^f\d{1,4}$/.test(value) ? value : undefined;
+
+    case 'sha256':
+      return /^[a-f0-9]{64}$/.test(value) ? value : undefined;
 
     case 'project':
     case 'scenario':

@@ -36,9 +36,9 @@ describe('action allowlist', () => {
     expect('args' in built && built.args[0]).toBe('compile');
   });
 
-  it('ONLY apply and undo can write, and both are started by the page, never as a card', () => {
+  it('ONLY the two apply actions and undo can write, and all are started by the page, never as a card', () => {
     const writers = ACTIONS.filter((a) => a.writes === true).map((a) => a.id).sort();
-    expect(writers).toEqual(['findfixApply', 'findfixUndo']);
+    expect(writers).toEqual(['checkApply', 'findfixApply', 'findfixUndo']);
     for (const id of writers) expect(findAction(id)?.driven).toBe(true);
 
     // Nothing else can reach the code-changing commands at all.
@@ -54,6 +54,7 @@ describe('action allowlist', () => {
         expect(built.args).not.toContain('--apply');
         expect(built.args.slice(0, 2)).not.toEqual(['findfix', 'apply']);
         expect(built.args.slice(0, 2)).not.toEqual(['findfix', 'undo']);
+        expect(built.args[0]).not.toBe('check-apply');
       }
     }
   });
@@ -461,7 +462,7 @@ describe('page', () => {
   it("shows exactly one page at a time", () => {
     const markup = page.slice(page.indexOf('<main>'), page.indexOf('</main>'));
     const open = [...markup.matchAll(/class="page( on)?"/g)].map((m) => m[1] ?? '');
-    expect(open).toHaveLength(4); // Set up, Find & fix, Live watch, Report
+    expect(open).toHaveLength(5); // Memory check, Set up, Find & fix, Live watch, Report
     expect(open.filter((x) => x.trim() === 'on')).toHaveLength(1);
   });
 
