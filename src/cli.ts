@@ -14,6 +14,7 @@ import { runFindFix } from './commands/findFix';
 import { runCorrelate } from './commands/correlate';
 import { runDoctor } from './commands/doctor';
 import { runFix } from './commands/fix';
+import { runCheckCommand, runCheckFollowUp } from './commands/check';
 import { runCompile } from './commands/compile';
 import { runDeps } from './commands/deps';
 import { runDevTools } from './commands/devtools';
@@ -55,6 +56,8 @@ USAGE
   memory-agent <command> [options]
 
 COMMANDS
+  ${'check <url>'.padEnd(28)} START HERE: give it the app's address - it finds, explains and prepares fixes
+  ${'check-apply'.padEnd(28)} Apply one reviewed fix, build, test, re-measure, verify
   ${'ui'.padEnd(28)} Guided local interface - start here if unsure
   ${'discover <project|url>'.padEnd(28)} What is this application? Framework, version, login, and the evidence
   ${'scan <project>'.padEnd(28)} Discover the Angular project structure
@@ -160,6 +163,22 @@ CORRELATE OPTIONS
   --detail <n>       How many corroborated findings to print (default 10)
   --json <file>      Write the full result as JSON
 
+CHECK OPTIONS
+  --project <dir>    The app's source folder: traces what leaks to files, enables fixes
+  --auth <file>      Saved sign-in (default .auth/app.auth.json when it applies)
+  --max-routes <n>   Most pages to measure (default 6, busiest first)
+  --iterations <n>   Repetitions per page (default 8, min 5)
+  --warmup <n>       Repetitions discarded as warm-up (default 3)
+  --plan-only        Discover and plan, measure nothing
+  --out <dir>        Where checks are written (default reports/checks)
+  Exit code 3 means the app needs you to sign in first ("scenario login").
+
+CHECK FOLLOW-UPS (on a finished check)
+  check-apply    --check <id> --fix <n> [--yes] [--branch] [--commit] [--settle <sec>]
+  check-verify   --check <id> --fix <n>     re-measure an applied fix again
+  check-reject   --check <id> --fix <n> [--note <text>]
+  check-expected --check <id> --finding <fN> [--note <text>]
+
 INSPECT OPTIONS
   --scenario <file>  The journey to run (required). Heap snapshots are not
                      optional here - they are what this command reports on
@@ -226,6 +245,14 @@ export function run(argv: string[]): number | Promise<number> {
   if (first === '-v' || first === '--version' || first === 'version') {
     console.log(versionString());
     return 0;
+  }
+
+  if (first === 'check') {
+    return runCheckCommand(args.slice(1));
+  }
+
+  if (first === 'check-apply' || first === 'check-verify' || first === 'check-reject' || first === 'check-expected') {
+    return runCheckFollowUp(first, args.slice(1));
   }
 
   if (first === 'discover') {
