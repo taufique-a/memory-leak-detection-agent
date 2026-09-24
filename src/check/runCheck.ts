@@ -200,6 +200,22 @@ export function isBrowserInternal(constructorName: string): boolean {
 }
 
 /**
+ * Chrome's own wrapper objects for things the app registered: one per
+ * listener, timer or callback. They are the MECHANISM - already named in
+ * the root cause of whatever they hold - not something the app owns. Left
+ * out only when the project does not itself declare a class of that name.
+ */
+const BLINK_BINDINGS: ReadonlySet<string> = new Set([
+  'EventListener',
+  'V8EventListener',
+  'JSEventListener',
+  'DOMTimer',
+  'ScheduledAction',
+  'V8Function',
+  'V8FrameRequestCallback',
+]);
+
+/**
  * Performance-timeline entries the BROWSER records on its own, on every
  * navigation, request, paint or input - seen growing on a page that leaks
  * nothing. Application code cannot construct these. PerformanceMark and
@@ -659,7 +675,7 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
     const entry = runs.get(route);
     if (adapter !== undefined) {
       const c = await correlateGeneric({ adapter, context: correlationContext, heap, ...(entry !== undefined ? { run: entry.run } : {}) });
-      for (const l of c.limitations) if (!/: source correlation|requires a project|no project/i.test(l)) limitations.add(l);
+      for (const l of c.limitations) if (!/: source correlation|requires a project|no project|No fix is generated here/i.test(l)) limitations.add(l);
       for (const f of c.findings) correlated.push({ route, finding: f, heap });
     } else {
       for (const hf of heap.findings.filter((f) => !f.onlyToolingArtifacts)) {
@@ -701,7 +717,7 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
   const internal = new Set<string>();
   for (const { route, finding, heap } of correlated) {
     if (finding.confidence === 'INCONCLUSIVE') continue;
-    if (isBrowserInternal(finding.constructorName)) {
+    if (isBrowserInternal(finding.constructorName) || (BLINK_BINDINGS.has(finding.constructorName) && finding.outcome !== 'exact')) {
       internal.add(finding.constructorName);
       continue;
     }

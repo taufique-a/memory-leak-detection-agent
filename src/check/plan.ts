@@ -75,6 +75,11 @@ export function scoreRoute(r: ExploredRoute, inNavigation: boolean): { score: nu
     score += 150 + canvases * 20;
     reasons.push(`${canvases} canvas element(s) - charts or drawing`);
   }
+  if (r.via !== undefined) reasons.push(`reached through ${r.via.route}`);
+  if (r.scrollable === true) {
+    score += 40;
+    reasons.push('longer than the window - scrolled to the end and back');
+  }
   if ((r.safeDisclosures ?? []).length > 0) {
     score += 60;
     reasons.push(`${r.safeDisclosures.length} show/hide control(s) to open and close`);
@@ -99,10 +104,17 @@ export function scoreRoute(r: ExploredRoute, inNavigation: boolean): { score: nu
 export function journeyFor(route: ExploredRoute, startRoute: string): Step[] | undefined {
   const link = linkSelector(route.hrefAttr);
   if (link === undefined) return undefined;
-  const steps: Step[] = [
-    { action: 'click', selector: link },
-    { action: 'waitForRoute', route: route.route },
-  ];
+  const steps: Step[] = [];
+  // A second-level page is reached through its first-level parent, and left
+  // by pressing Back twice - the same way it was explored.
+  if (route.via !== undefined) {
+    const parent = linkSelector(route.via.hrefAttr);
+    if (parent === undefined) return undefined;
+    steps.push({ action: 'click', selector: parent });
+    steps.push({ action: 'waitForRoute', route: route.via.route });
+  }
+  steps.push({ action: 'click', selector: link });
+  steps.push({ action: 'waitForRoute', route: route.route });
   for (const tab of route.safeTabs) {
     const sel = tabSelector(tab);
     if (sel === undefined) continue;
@@ -118,7 +130,19 @@ export function journeyFor(route: ExploredRoute, startRoute: string): Step[] | u
     steps.push({ action: 'click', selector: close });
     steps.push({ action: 'wait', ms: 250 });
   }
+  if (route.scrollable === true) {
+    // To the end and back: long lists and lazy-loaded sections render as
+    // they scroll into view, and those are the parts that must be torn down too.
+    steps.push({ action: 'press', key: 'End' });
+    steps.push({ action: 'wait', ms: 400 });
+    steps.push({ action: 'press', key: 'Home' });
+    steps.push({ action: 'wait', ms: 200 });
+  }
   steps.push({ action: 'back' });
+  if (route.via !== undefined) {
+    steps.push({ action: 'waitForRoute', route: route.via.route });
+    steps.push({ action: 'back' });
+  }
   steps.push({ action: 'waitForRoute', route: startRoute });
   return steps;
 }
@@ -174,7 +198,7 @@ export function buildMemoryTestPlan(explored: readonly ExploredRoute[], options:
     warmupIterations,
     methodology: [
       `Load ${options.startRoute} once. Everything after that happens inside the same running page - no reloads, which would free leaked memory and hide it.`,
-      `For each route: click its link, wait for the address to change, switch through any safe tabs, press Back, wait to be back on ${options.startRoute}.`,
+      `For each route: click its link (for a page one level deeper, its parent page's link first), wait for the address to change, switch through any safe tabs, open and close safe show/hide controls, scroll a long page to the end and back, press Back, wait to be back on ${options.startRoute}.`,
       `Repeat ${iterations} times. Garbage collection is forced and the heap is read after every repetition; the first ${warmupIterations} are discarded as warm-up (first visits load code and fill caches).`,
       'Modest growth (under 200 KB per repetition) is not believed on one run: the route is measured again with twice the repetitions and a longer warm-up, because a framework still warming up climbs and then flattens while a real leak keeps climbing.',
       'A route whose memory keeps climbing after warm-up is then repeated again between two heap snapshots, to name exactly which objects accumulated and what is holding them.',

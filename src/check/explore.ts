@@ -27,7 +27,7 @@ import type { Page } from 'playwright';
 import { detectAuthRequirement } from '../core/discovery/auth';
 import { waitForRoute } from '../scenario/route';
 import { readPageInventory, type DomSummary } from './inventory';
-import { classifyLink, routeOf, type RawLink, type RouteSafety } from './routeSafety';
+import { classifyLink, classifyLinks, routeOf, type RawLink, type RouteSafety } from './routeSafety';
 
 export interface ExploredRoute {
   route: string;
@@ -50,6 +50,10 @@ export interface ExploredRoute {
    * to where it was - that is what aria-expanded means.
    */
   safeDisclosures: string[];
+  /** Taller than the window: the journey scrolls to the end and back. */
+  scrollable: boolean;
+  /** Set for a second-level page: the first-level page whose link leads here. */
+  via?: { route: string; hrefAttr: string };
   /** Buttons on the page the agent deliberately did not press. */
   buttonsNotPressed: number;
   chartLibraries: string[];
@@ -106,14 +110,25 @@ function isSafeLabel(label: string): boolean {
 
 export interface ExploreOptions {
   maxRoutes?: number;
+  /** Most pages to explore one level deeper (reached through a first-level page). Default 6; 0 turns it off. */
+  maxDeepRoutes?: number;
   navigationTimeoutMs?: number;
   onProgress?: (message: string) => void;
   onRoute?: (route: ExploredRoute, index: number, total: number) => void;
 }
 
+const SCROLLABLE_SCRIPT = 'document.documentElement.scrollHeight > window.innerHeight + 200';
+
 /**
  * Explore from the page the browser is currently on. The caller has
  * already loaded the start page (and applied any saved sign-in).
+ *
+ * Two levels. First every safe link on the start page. Then, for pages
+ * that level reached inside the running app, the safe links found ON
+ * them that lead somewhere new - reached by clicking the first page's link
+ * and then the second's, and left by pressing Back twice. Deeper than that
+ * the journey to reach a page gets long enough that a failure anywhere on
+ * it would hide which page was at fault, so the agent stops at two.
  */
 export async function exploreRoutes(
   page: Page,
@@ -127,68 +142,82 @@ export async function exploreRoutes(
   const history: NavigationEvent[] = [];
   const explored: ExploredRoute[] = [];
 
-  const safe = candidates.filter((c) => c.safeToVisit).slice(0, options.maxRoutes ?? 12);
+  const first = candidates.filter((c) => c.safeToVisit).slice(0, options.maxRoutes ?? 12);
+  const seen = new Set<string>([startRoute, ...candidates.map((c) => c.route)]);
+  const deeper: Array<{ parent: ExploredRoute; link: RouteSafety }> = [];
 
   const plantMarker = async (): Promise<void> => {
     await page.evaluate(`window.${MARKER} = true`);
   };
   const markerSurvived = async (): Promise<boolean> =>
     (await page.evaluate(`window.${MARKER} === true`).catch(() => false)) as boolean;
+  const here = (): string => routeOf(new URL(page.url()));
 
-  const backToStart = async (): Promise<boolean> => {
-    const before = routeOf(new URL(page.url()));
-    await page.goBack({ timeout: navTimeout }).catch(() => null);
-    try {
-      await waitForRoute(page, startRoute, navTimeout);
-    } catch {
-      /* fall through to the reload below */
+  /** Press Back until the start page, checking each hop stayed in the running page. */
+  const backToStart = async (hops: string[]): Promise<boolean> => {
+    let ok = true;
+    for (const expected of hops) {
+      const before = here();
+      await page.goBack({ timeout: navTimeout }).catch(() => null);
+      await waitForRoute(page, expected, navTimeout).catch(() => undefined);
+      history.push({ from: before, to: here(), at: new Date().toISOString(), kind: 'back' });
+      if (here() !== expected) ok = false;
     }
-    const ok = routeOf(new URL(page.url())) === startRoute && (await markerSurvived());
-    history.push({ from: before, to: routeOf(new URL(page.url())), at: new Date().toISOString(), kind: 'back' });
+    ok = ok && here() === startRoute && (await markerSurvived());
     if (!ok) {
       // Get back to a known state for the next route. This is exploration,
       // not measurement, so a reload here costs nothing but time.
+      const before = here();
       await page.goto(startUrl, { waitUntil: 'load' }).catch(() => null);
       history.push({ from: before, to: startRoute, at: new Date().toISOString(), kind: 'reload-to-start' });
     }
     return ok;
   };
 
-  for (let i = 0; i < safe.length; i++) {
-    const candidate = safe[i] as RouteSafety;
-    const selector = linkSelector(candidate.hrefAttr);
+  const clickTo = async (hrefAttr: string, route: string): Promise<void> => {
+    const selector = linkSelector(hrefAttr) as string;
+    const from = here();
+    await page.click(selector, { timeout: navTimeout });
+    await waitForRoute(page, route, navTimeout).catch(() => undefined);
+    await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+    history.push({ from, to: here(), at: new Date().toISOString(), kind: 'click' });
+  };
+
+  const visit = async (candidate: RouteSafety, via?: ExploredRoute): Promise<ExploredRoute> => {
     const base: ExploredRoute = {
       route: candidate.route,
       hrefAttr: candidate.hrefAttr,
       label: candidate.label,
+      ...(via !== undefined ? { via: { route: via.route, hrefAttr: via.hrefAttr } } : {}),
       reached: false,
       inApp: false,
       returnedOk: false,
       requiresAuth: false,
       safeTabs: [],
       safeDisclosures: [],
+      scrollable: false,
       buttonsNotPressed: 0,
       chartLibraries: [],
       note: '',
     };
-    report(`exploring ${candidate.route}`);
-
-    if (selector === undefined) {
-      explored.push({ ...base, note: 'the link address contains characters that cannot be matched reliably, so it was not clicked' });
-      options.onRoute?.(explored[explored.length - 1] as ExploredRoute, i + 1, safe.length);
-      continue;
+    report(`exploring ${via !== undefined ? `${via.route} -> ` : ''}${candidate.route}`);
+    if (linkSelector(candidate.hrefAttr) === undefined) {
+      return { ...base, note: 'the link address contains characters that cannot be matched reliably, so it was not clicked' };
     }
 
     let result: ExploredRoute = base;
+    const backHops: string[] = [];
     try {
       await plantMarker();
-      const from = routeOf(new URL(page.url()));
-      await page.click(selector, { timeout: navTimeout });
-      await waitForRoute(page, candidate.route, navTimeout).catch(() => undefined);
-      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
-      const landed = routeOf(new URL(page.url()));
-      history.push({ from, to: landed, at: new Date().toISOString(), kind: 'click' });
+      if (via !== undefined) {
+        await clickTo(via.hrefAttr, via.route);
+        if (here() !== via.route || !(await markerSurvived())) throw new Error(`could not get back into ${via.route} inside the running page`);
+        backHops.push(startRoute);
+      }
+      await clickTo(candidate.hrefAttr, candidate.route);
+      backHops.unshift(via !== undefined ? via.route : startRoute);
 
+      const landed = here();
       const auth = await detectAuthRequirement(page);
       const inApp = await markerSurvived();
       const reached = landed === candidate.route;
@@ -208,6 +237,7 @@ export async function exploreRoutes(
         const disclosures = inApp
           ? [...new Set((await page.evaluate(SAFE_DISCLOSURES_SCRIPT)) as string[])].filter(isSafeLabel).slice(0, 2)
           : [];
+        const scrollable = inApp ? ((await page.evaluate(SCROLLABLE_SCRIPT).catch(() => false)) as boolean) : false;
         result = {
           ...base,
           reached: true,
@@ -216,23 +246,45 @@ export async function exploreRoutes(
           dom: inv.dom,
           safeTabs: tabs,
           safeDisclosures: disclosures,
+          scrollable,
           buttonsNotPressed: inv.dom.buttons,
           chartLibraries: inv.chartLibraries,
           note: inApp
-            ? 'reached inside the running page'
+            ? `reached inside the running page${via !== undefined ? ` through ${via.route}` : ''}`
             : 'following this link loads a whole new page, which frees all memory, so entering and leaving it cannot show a leak',
         };
+        // Links on this page that lead somewhere new: the next level.
+        if (inApp && via === undefined) {
+          for (const link of classifyLinks(inv.links, page.url())) {
+            if (!link.safeToVisit || seen.has(link.route)) continue;
+            seen.add(link.route);
+            deeper.push({ parent: result, link });
+          }
+        }
       }
     } catch (err) {
       result = { ...base, note: `the link could not be followed: ${(err as Error).message.split('\n')[0] ?? 'unknown error'}` };
     }
 
-    result.returnedOk = await backToStart();
+    result.returnedOk = await backToStart(backHops.length > 0 ? backHops : [startRoute]);
     if (result.reached && result.inApp && !result.returnedOk) {
       result.note = 'reached, but Back did not return to the start page inside the same running page, so the loop cannot be repeated';
     }
-    explored.push(result);
-    options.onRoute?.(result, i + 1, safe.length);
+    return result;
+  };
+
+  for (let i = 0; i < first.length; i++) {
+    const r = await visit(first[i] as RouteSafety);
+    explored.push(r);
+    options.onRoute?.(r, i + 1, first.length);
+  }
+
+  const second = deeper.filter((d) => isMeasurable(d.parent)).slice(0, options.maxDeepRoutes ?? 6);
+  for (let i = 0; i < second.length; i++) {
+    const d = second[i] as { parent: ExploredRoute; link: RouteSafety };
+    const r = await visit(d.link, d.parent);
+    explored.push(r);
+    options.onRoute?.(r, first.length + i + 1, first.length + second.length);
   }
 
   return { startRoute, explored, history };

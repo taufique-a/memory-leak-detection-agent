@@ -43,7 +43,8 @@ const PANELS_SOURCE = `class LeakyPanel extends React.Component {
   }
 
   render() {
-    return React.createElement('div', { id: 'leaky-page' }, 'leaky page');
+    // Taller than the window, so the journey has to scroll it.
+    return React.createElement('div', { id: 'leaky-page', style: { height: '3000px' } }, 'leaky page');
   }
 }
 
@@ -53,6 +54,17 @@ function Disclosure(props) {
   return React.createElement('span', null,
     React.createElement('button', { 'aria-expanded': String(open), onClick: () => { if (props.label === 'Delete all') window.__deletePressed = true; setOpen(!open); } }, props.label),
     open ? React.createElement('span', { className: 'panel' }, 'panel for ' + props.label) : null);
+}
+
+class DeepPanel extends React.Component {
+  componentDidMount() {
+    this.payload = new Array(40000).fill(0);
+    this.timer = setInterval(() => { void this.payload; }, 1000);
+  }
+
+  render() {
+    return React.createElement('div', { id: 'deep-page' }, 'deep page');
+  }
 }
 
 class CleanPanel extends React.Component {
@@ -71,7 +83,9 @@ class CleanPanel extends React.Component {
     return React.createElement('div', { id: 'clean-page' },
       'clean page',
       React.createElement(Disclosure, { label: 'Filters' }),
-      React.createElement(Disclosure, { label: 'Delete all' }));
+      React.createElement(Disclosure, { label: 'Delete all' }),
+      // Only reachable from THIS page: finding it needs a second level.
+      React.createElement('a', { href: '/clean/deep' }, 'Details'));
   }
 }
 `;
@@ -98,7 +112,7 @@ const SHELL = `<!doctype html><html><head><title>Fixture app</title></head><body
       history.pushState({}, '', a.getAttribute('href'));
       setPath(location.pathname);
     };
-    var page = path === '/leaky' ? h(LeakyPanel) : path === '/clean' ? h(CleanPanel) : h('div', { id: 'home' }, 'home');
+    var page = path === '/leaky' ? h(LeakyPanel) : path === '/clean' ? h(CleanPanel) : path === '/clean/deep' ? h(DeepPanel) : h('div', { id: 'home' }, 'home');
     return h('div', { onClick: onClick },
       h('nav', null,
         h('a', { href: '/leaky' }, 'Leaky'), ' ',
@@ -232,6 +246,14 @@ describe('memory check - URL only, end to end', () => {
     const cleanScenario = JSON.parse(fs.readFileSync(clean?.scenarioFile as string, 'utf8')) as { steps: Array<{ selector?: string }> };
     expect(cleanScenario.steps.some((s) => s.selector?.includes('Filters') === true)).toBe(true);
     expect(cleanScenario.steps.some((s) => s.selector?.includes('Delete') === true)).toBe(false);
+
+    /* ---- one level deeper, and scrolling ---- */
+    const deep = result.routeResults.find((r) => r.route === '/clean/deep');
+    expect(deep?.verdict).toBe('GROWING');
+    expect(result.exploration?.explored.find((e) => e.route === '/clean/deep')?.via?.route).toBe('/clean');
+    expect(result.findings.some((f) => f.constructorName === 'DeepPanel' && f.route === '/clean/deep')).toBe(true);
+    const leakyScenario = JSON.parse(fs.readFileSync(leaky?.scenarioFile as string, 'utf8')) as { steps: Array<{ action: string; key?: string }> };
+    expect(leakyScenario.steps.some((s) => s.action === 'press' && s.key === 'End')).toBe(true);
 
     /* ---- diagnosis ---- */
     const finding = result.findings.find((f) => f.constructorName === 'LeakyPanel');

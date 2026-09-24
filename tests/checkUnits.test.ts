@@ -147,6 +147,7 @@ function explored(route: string, over: Partial<ExploredRoute> = {}): ExploredRou
     requiresAuth: false,
     safeTabs: [],
     safeDisclosures: [],
+    scrollable: false,
     buttonsNotPressed: 0,
     chartLibraries: [],
     note: 'reached inside the running page',
@@ -192,6 +193,28 @@ describe('memory test plan', () => {
       'a[href="/list"] >> visible=true',
       'role=button[name="Filters"][expanded=false] >> visible=true',
       'role=button[name="Filters"][expanded=true] >> visible=true',
+    ]);
+  });
+
+  it('reaches a second-level page through its parent, and presses Back twice', () => {
+    const steps = journeyFor(explored('/orders/5', { via: { route: '/orders', hrefAttr: '/orders' } }), '/');
+    expect(steps).toEqual([
+      { action: 'click', selector: 'a[href="/orders"] >> visible=true' },
+      { action: 'waitForRoute', route: '/orders' },
+      { action: 'click', selector: 'a[href="/orders/5"] >> visible=true' },
+      { action: 'waitForRoute', route: '/orders/5' },
+      { action: 'back' },
+      { action: 'waitForRoute', route: '/orders' },
+      { action: 'back' },
+      { action: 'waitForRoute', route: '/' },
+    ]);
+  });
+
+  it('scrolls a long page to the end and back', () => {
+    const steps = journeyFor(explored('/feed', { scrollable: true }), '/');
+    expect(steps?.filter((s) => s.action === 'press')).toEqual([
+      { action: 'press', key: 'End' },
+      { action: 'press', key: 'Home' },
     ]);
   });
 
