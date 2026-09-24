@@ -33,6 +33,7 @@ import { isRuntimeEstablished } from '../../types/index';
 import { buildUnifiedDiff, type ProposedFix } from '../propose';
 import {
   cleanupLineFor,
+  describeResource,
   countAcquireCalls,
   findClass,
   findSingleInstanceResource,
@@ -136,7 +137,7 @@ export function proposePlainJsFix(
       finding,
       relativeFile,
       entity.name,
-      'The timer handle is kept in a local variable, which a teardown method cannot reach. Storing it on the instance changes existing code, so that is left for a person.',
+      'The handle is kept in a local variable, which a teardown method cannot reach. Storing it on the instance changes existing code, so that is left for a person.',
     );
   }
 
@@ -192,9 +193,9 @@ export function proposePlainJsFix(
   return {
     findingId: finding.constructorName,
     file: relativeFile,
-    title: `Release the ${plan.kind === 'timer' ? 'timer' : 'listener'} in ${entity.name}`,
+    title: `Release the ${plan.kind === 'timer' ? 'timer' : plan.kind === 'listener' ? 'listener' : plan.what} in ${entity.name}`,
     rationale:
-      `${entity.name} ${plan.kind === 'timer' ? 'starts a timer' : 'adds an event listener'} and never releases it, ` +
+      `${entity.name} ${describeResource(plan)} and never releases it, ` +
       `so every discarded instance stays reachable. Adding \`${cleanupLine.replace(/;$/, '')}\` in ${where} releases it.`,
     safety: 'additive',
     newContent,

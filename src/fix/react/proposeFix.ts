@@ -45,6 +45,8 @@ import { isRuntimeEstablished } from '../../types/index';
 import { buildUnifiedDiff, type ProposedFix } from '../propose';
 import {
   cleanupLineFor,
+  describeResource,
+  releaseForInitializer,
   countAcquireCalls,
   findClass,
   findSingleInstanceResource,
@@ -150,7 +152,8 @@ function findEffectsWithoutCleanup(root: ts.Node): EffectCandidate[] {
 
 type ResourcePlan =
   | { kind: 'timer'; clearCall: string; handleText: string }
-  | { kind: 'listener'; targetText: string; eventText: string; handlerText: string };
+  | { kind: 'listener'; targetText: string; eventText: string; handlerText: string }
+  | { kind: 'release'; releaseText: string; what: string };
 
 /**
  * Read exactly one recognised resource-acquiring statement out of an
@@ -186,6 +189,13 @@ function findSingleResource(block: ts.Block, sourceFile: ts.SourceFile): Resourc
         const clearCall = init.expression.text === 'setInterval' ? 'clearInterval' : 'clearTimeout';
         plan = { kind: 'timer', clearCall, handleText: (decl.name as ts.Identifier).text };
         planCount++;
+      } else if (init !== undefined) {
+        // const obs = new ResizeObserver(...) / const sub = x.subscribe(...) / const f = requestAnimationFrame(...)
+        const release = releaseForInitializer(init, (decl.name as ts.Identifier).text);
+        if (release !== undefined) {
+          plan = { kind: 'release', ...release };
+          planCount++;
+        }
       }
     }
 
@@ -266,7 +276,7 @@ function proposeClassComponentFix(
     return manualOnly(
       finding,
       relativeFile,
-      'componentDidMount keeps its timer handle in a local variable, which componentWillUnmount cannot ' +
+      'componentDidMount keeps the handle in a local variable, which componentWillUnmount cannot ' +
         'reach. Storing it on the instance first changes existing code, so that is left for a person.',
       site,
     );
@@ -285,21 +295,14 @@ function proposeClassComponentFix(
     file: relativeFile,
     title: `Add the missing componentWillUnmount in ${entity.name}`,
     rationale:
-      plan.kind === 'timer'
-        ? `${entity.name} starts a timer in componentDidMount and never clears it, so every unmounted ` +
-          `instance stays reachable from the timer. Adding \`${plan.clearCall}(${plan.handleText})\` in ` +
-          'componentWillUnmount stops it exactly when React unmounts the component.'
-        : `${entity.name} adds an event listener in componentDidMount and never removes it, so every ` +
-          'unmounted instance stays reachable from the event target. Adding `removeEventListener` in ' +
-          'componentWillUnmount, with the same handler reference, releases it.',
+      `${entity.name} ${describeResource(plan)} in componentDidMount and never releases it, so every ` +
+      `unmounted instance stays reachable through it. Adding \`${cleanupLine.replace(/;$/, '')}\` in ` +
+      'componentWillUnmount releases it exactly when React unmounts the component' +
+      (plan.kind === 'listener' ? ', with the same handler reference.' : '.'),
     safety: 'additive',
     newContent,
     diff: buildUnifiedDiff(relativeFile, text, newContent),
-    functionalRisks: [
-      plan.kind === 'timer'
-        ? 'None expected: the timer is only cleared once React has unmounted the component.'
-        : 'None expected: the listener is only removed once React has unmounted the component.',
-    ],
+    functionalRisks: ['None expected: it is only released once React has unmounted the component.'],
     verificationPlan: [
       'Rebuild, run the project\'s tests, then repeat the same journey with `memory-agent inspect` ' +
         `and confirm ${finding.constructorName} no longer grows across the measured cycles.`,
@@ -383,10 +386,7 @@ export function proposeReactFix(
 
   const semi = usesSemicolons(target.block, sourceFile) ? ';' : '';
   const indent = indentOf(sourceFile, target.block.statements[target.block.statements.length - 1] as ts.Node);
-  const cleanupLine =
-    plan.kind === 'timer'
-      ? `${plan.clearCall}(${plan.handleText})${semi}`
-      : `${plan.targetText}.removeEventListener(${plan.eventText}, ${plan.handlerText})${semi}`;
+  const cleanupLine = cleanupLineFor(plan, semi);
 
   const insertPos = target.block.getEnd() - 1; // position of the block's closing "}"
   const insertion = `${indent}  return () => { ${cleanupLine} };\n${indent}`;
@@ -399,21 +399,13 @@ export function proposeReactFix(
     file: relativeFile,
     title: `Add the missing useEffect cleanup in ${entity.name}`,
     rationale:
-      plan.kind === 'timer'
-        ? `${entity.name} starts a timer in useEffect with no cleanup, so it keeps running after the ` +
-          `component unmounts. Adding \`${plan.clearCall}(${plan.handleText})\` in the effect's own ` +
-          'cleanup function stops it exactly when React tears the effect down.'
-        : `${entity.name} adds an event listener in useEffect with no cleanup, so it stays registered ` +
-          `after the component unmounts, keeping everything its closure captured reachable. Adding ` +
-          `\`removeEventListener\` in the effect's own cleanup function releases it.`,
+      `${entity.name} ${describeResource(plan)} in useEffect with no cleanup, so it outlives the component ` +
+      `and keeps everything its closure captured reachable. Adding \`${cleanupLine.replace(/;$/, '')}\` in the ` +
+      "effect's own cleanup function releases it exactly when React tears the effect down.",
     safety: 'additive',
     newContent,
     diff,
-    functionalRisks: [
-      plan.kind === 'timer'
-        ? 'None expected: the timer is only ever cleared after the effect it belongs to is torn down.'
-        : 'None expected: the listener is only ever removed after the effect it belongs to is torn down.',
-    ],
+    functionalRisks: ['None expected: it is only released after the effect it belongs to is torn down.'],
     verificationPlan: [
       'Rebuild, run the project\'s tests, then repeat the same journey with `memory-agent inspect` ' +
         `and confirm ${finding.constructorName} no longer grows across the measured cycles.`,

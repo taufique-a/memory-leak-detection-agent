@@ -23,7 +23,45 @@ export const ACQUIRE_NAMES: ReadonlySet<string> = new Set([
   'EventSource',
   'Worker',
   'SharedWorker',
+  'BroadcastChannel',
+  // Not a constructor, but a resource all the same: a second subscription
+  // next to a timer must make the "exactly one resource" rule refuse.
+  'subscribe',
 ]);
+
+/** Things released by one method call on their own handle. */
+const RELEASE_BY_CONSTRUCTOR: Record<string, { method: string; what: string }> = {
+  MutationObserver: { method: 'disconnect', what: 'observer' },
+  ResizeObserver: { method: 'disconnect', what: 'observer' },
+  IntersectionObserver: { method: 'disconnect', what: 'observer' },
+  PerformanceObserver: { method: 'disconnect', what: 'observer' },
+  WebSocket: { method: 'close', what: 'WebSocket' },
+  EventSource: { method: 'close', what: 'EventSource connection' },
+  BroadcastChannel: { method: 'close', what: 'BroadcastChannel' },
+  Worker: { method: 'terminate', what: 'worker' },
+};
+
+/**
+ * The release for a resource whose handle is `handleText`, when its
+ * initializer is one of the shapes with exactly one correct release:
+ * an observer, socket, channel or worker; an animation frame; an RxJS-style
+ * `.subscribe(...)`. Undefined for anything else.
+ */
+export function releaseForInitializer(init: ts.Expression, handleText: string): { releaseText: string; what: string } | undefined {
+  if (ts.isNewExpression(init) && ts.isIdentifier(init.expression)) {
+    const r = RELEASE_BY_CONSTRUCTOR[init.expression.text];
+    return r !== undefined ? { releaseText: `${handleText}.${r.method}()`, what: r.what } : undefined;
+  }
+  if (ts.isCallExpression(init)) {
+    if (ts.isIdentifier(init.expression) && init.expression.text === 'requestAnimationFrame') {
+      return { releaseText: `cancelAnimationFrame(${handleText})`, what: 'animation frame' };
+    }
+    if (ts.isPropertyAccessExpression(init.expression) && init.expression.name.text === 'subscribe') {
+      return { releaseText: `${handleText}.unsubscribe()`, what: 'subscription' };
+    }
+  }
+  return undefined;
+}
 
 export function scriptKindFor(file: string): ts.ScriptKind {
   if (file.endsWith('.tsx')) return ts.ScriptKind.TSX;
@@ -82,7 +120,15 @@ export function usesSemicolons(block: ts.Block, sourceFile: ts.SourceFile): bool
 export type InstanceResourcePlan =
   | { kind: 'timer'; clearCall: string; handleText: string }
   | { kind: 'listener'; targetText: string; eventText: string; handlerText: string }
+  | { kind: 'release'; releaseText: string; what: string }
   | { kind: 'local-handle' };
+
+/** Plain words for what a plan starts, used in rationales. */
+export function describeResource(plan: Exclude<InstanceResourcePlan, { kind: 'local-handle' }>): string {
+  if (plan.kind === 'timer') return 'starts a timer';
+  if (plan.kind === 'listener') return 'adds an event listener';
+  return `creates a${/^[aeiouAEIOU]/.test(plan.what) ? 'n' : ''} ${plan.what}`;
+}
 
 /**
  * The single resource a method body starts, as long as its handle lives on
@@ -103,6 +149,7 @@ export function findSingleInstanceResource(
         const init = stmt.declarationList.declarations[0]?.initializer;
         const name = init !== undefined ? recognisedCallName(init) : undefined;
         if (name === 'setInterval' || name === 'setTimeout') return { kind: 'local-handle' };
+        if (init !== undefined && releaseForInitializer(init, 'x') !== undefined) return { kind: 'local-handle' };
       }
       continue;
     }
@@ -119,6 +166,15 @@ export function findSingleInstanceResource(
       if (handleText === undefined) return undefined;
       const clearCall = expr.right.expression.text === 'setInterval' ? 'clearInterval' : 'clearTimeout';
       return { kind: 'timer', clearCall, handleText };
+    }
+
+    // this.<handle> = new ResizeObserver(...) / x.subscribe(...) / requestAnimationFrame(...) ...
+    if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const handleText = thisProperty(expr.left, sourceFile);
+      if (handleText !== undefined) {
+        const release = releaseForInitializer(expr.right, handleText);
+        if (release !== undefined) return { kind: 'release', ...release };
+      }
     }
 
     if (
@@ -144,9 +200,9 @@ export function cleanupLineFor(
   plan: Exclude<InstanceResourcePlan, { kind: 'local-handle' }>,
   semi: string,
 ): string {
-  return plan.kind === 'timer'
-    ? `${plan.clearCall}(${plan.handleText})${semi}`
-    : `${plan.targetText}.removeEventListener(${plan.eventText}, ${plan.handlerText})${semi}`;
+  if (plan.kind === 'timer') return `${plan.clearCall}(${plan.handleText})${semi}`;
+  if (plan.kind === 'release') return `${plan.releaseText}${semi}`;
+  return `${plan.targetText}.removeEventListener(${plan.eventText}, ${plan.handlerText})${semi}`;
 }
 
 export function findClass(sourceFile: ts.SourceFile, name: string): ts.ClassDeclaration | undefined {

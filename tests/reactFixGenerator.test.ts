@@ -329,6 +329,64 @@ describe('proposeReactFix - class components (componentWillUnmount)', () => {
   });
 });
 
+describe('proposeReactFix - observers, sockets, workers, frames and subscriptions', () => {
+  const effect = (body: string): string => `function Widget() {
+  useEffect(() => {
+${body}
+  }, []);
+  return null;
+}
+`;
+
+  it.each([
+    ['const obs = new ResizeObserver(onResize);', 'obs.disconnect()'],
+    ['const obs = new MutationObserver(onChange);', 'obs.disconnect()'],
+    ['const ws = new WebSocket(url);', 'ws.close()'],
+    ['const w = new Worker(url);', 'w.terminate()'],
+    ['const frame = requestAnimationFrame(draw);', 'cancelAnimationFrame(frame)'],
+    ['const sub = prices$.subscribe(setPrice);', 'sub.unsubscribe()'],
+  ])('%s -> return () => { %s; }', (line, release) => {
+    const root = project({ 'src/Widget.jsx': effect(`    ${line}`) });
+    const result = proposeReactFix(finding(), entity(), { projectRoot: root });
+    expect(result?.safety).toBe('additive');
+    expect(result?.newContent).toContain(`return () => { ${release}; };`);
+    expect(() => new Function(result?.newContent as string)).not.toThrow();
+  });
+
+  it('refuses a subscription next to a timer - releasing one would be a partial fix', () => {
+    const root = project({ 'src/Widget.jsx': effect('    const id = setInterval(tick, 1000);\n    source$.subscribe(update);') });
+    expect(proposeReactFix(finding(), entity(), { projectRoot: root })?.safety).toBe('manual-only');
+  });
+
+  it('in a class: this.observer = new ResizeObserver -> componentWillUnmount disconnects it', () => {
+    const root = project({
+      'src/Widget.jsx': `class Widget extends React.Component {
+  componentDidMount() {
+    this.observer = new ResizeObserver(this.onResize);
+  }
+}
+`,
+    });
+    const result = proposeReactFix(finding(), entity({ frameworkKind: 'ClassComponent' }), { projectRoot: root });
+    expect(result?.newContent).toContain('componentWillUnmount() {\n    this.observer.disconnect();\n  }');
+    expect(result?.rationale).toContain('creates an observer');
+  });
+
+  it('in a class: an observer kept in a local variable is refused, like a local timer', () => {
+    const root = project({
+      'src/Widget.jsx': `class Widget extends React.Component {
+  componentDidMount() {
+    const observer = new ResizeObserver(this.onResize);
+  }
+}
+`,
+    });
+    const result = proposeReactFix(finding(), entity({ frameworkKind: 'ClassComponent' }), { projectRoot: root });
+    expect(result?.safety).toBe('manual-only');
+    expect(result?.rationale).toMatch(/local variable/);
+  });
+});
+
 describe('proposeReactFix - found via a const arrow component', () => {
   it('also works when the component is declared as a const arrow function', () => {
     const root = project({
