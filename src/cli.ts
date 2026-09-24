@@ -49,8 +49,10 @@ function printHelp(): void {
   console.log(`
 ${versionString()}
 AI Memory Leak Investigation Agent for Angular, React and plain JavaScript applications
-"discover" understands all three; the rest of the pipeline (scan/analyze/risk/fix/
-correlate/investigate/find & fix) is still Angular-only today.
+"check" is the one command most people need: give it the app's address and it finds,
+explains and proposes fixes - for Angular, React and plain JavaScript. The older
+step-by-step commands (scan/analyze/risk/fix/correlate/investigate/find & fix) are
+still Angular-only; "discover" and "inspect" work for all three.
 
 USAGE
   memory-agent <command> [options]
@@ -183,8 +185,11 @@ INSPECT OPTIONS
   --scenario <file>  The journey to run (required). Heap snapshots are not
                      optional here - they are what this command reports on
   --detail <n>       How many findings to print in full (default 10)
-  --propose-fixes    Show (never write) a diff for eligible findings.
-                     React function components only, today. No --apply.
+  --propose-fixes    Show (never write) a diff for eligible findings (React:
+                     useEffect cleanup or componentWillUnmount)
+  --apply            Write it, through the same git safety as "fix": refuses a
+                     dirty tree, asks per file, prints rollback, runs build/tests
+  --yes --branch --commit   With --apply: skip the prompt / new branch / commit
   --json <file>      Write the full result as JSON
 
 FIX OPTIONS

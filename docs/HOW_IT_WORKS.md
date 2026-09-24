@@ -12,6 +12,8 @@ Written in plain English. Every statement here is taken from the real code in th
 4. **It fixes only what the browser proved**, and only what is safe. Anything meant to stay alive is left alone, with the reason shown.
 5. **It rebuilds, re-tests and repeats the same navigation** to prove the fix worked. **Undo** puts every file back.
 
+**The easy way in is the memory check (section 25):** give it your app's address and it does all five steps itself - finds the pages, measures them, explains what leaks, prepares fixes for you to review, and proves whether an approved fix worked. Everything below it explains the parts it is built from.
+
 Prefer to see it in your own running app? **Live watch** opens your app in Chrome with DevTools, draws the heap live while you navigate, and checks from two real snapshots whether the page you left was destroyed (section 16).
 
 Everything it tells you comes from your code or from real Chrome data. Where it is guessing, it says so.
@@ -220,10 +222,14 @@ Found by checking it against 28 IOSense components read independently; the tool 
 - **Code that can never run.** A `setInterval` inside `if (!this.flag)` where `flag` is always `true` is reported, because reading the code cannot tell.
 - **Medium and low findings are suspicions.** Static findings are a reason to look, never a verdict; only findings the browser confirmed get a fix.
 - **Widgets created at runtime** from a config map are reached only through the code that opens them (see section 14).
+- **Buttons, forms and dialogs are never pressed by the memory check** (section 25). What a button does cannot be known in advance, so a page reachable only through one is not tested, and that is stated in the report rather than skipped silently.
+- **A minified build cannot be traced to files.** Names are renamed, so a heap class matches no declaration; the finding stays UNKNOWN instead of being guessed.
 
 ## 18. How the parts connect
 
 `analyze` (code) → `entities` (components, routes, modules) → `scenario runner` (Chrome, trend) → `heap` (snapshots, retained size, paths) → `correlate` (browser evidence + code findings) → `issues` (what you see) → `fix` (decision-aware changes) → `apply` → `verify` (build, tests, re-run) → `report`/`undo`.
+
+The memory check (`src/check/`) drives this same chain itself, with no scenario file: it discovers the application, chooses and explores pages, writes one journey per page, and hands each to the scenario runner and the heap engine, then correlates, proposes, and - after your approval - applies and re-measures (section 25).
 
 Everything the agent tells you comes from either the code or real Chrome data; where it is a guess, it says so.
 
@@ -296,25 +302,25 @@ What it does, in order:
 3. **Capture and compare two heap snapshots** (`investigateHeap`) around the same scenario - again, unchanged, already framework-agnostic.
 4. **Correlate.** For every constructor that grew, ask the adapter what it is (`correlateRuntimeObject`) instead of assuming from the name. One owner is a match; several is ambiguous and capped at LOW; no owner at all is reported as UNKNOWN, never silently dropped.
 
-Confidence follows the same six-level rule as everywhere else in this project: PROVEN needs an exact source match, a traced retaining path, real growth, **and** the independent trend agreeing; missing any one of those stops at HIGH, LOW or UNKNOWN. **No fix is proposed.** Every finding's recommended action is capped at NEEDS DEVELOPER REVIEW, because "detection and fixing must be separate" - `inspect` has no fix-generation code to point to, on purpose.
+Confidence follows the same six-level rule as everywhere else in this project: PROVEN needs an exact source match, a traced retaining path, real growth, **and** the independent trend agreeing; missing any one of those stops at HIGH, LOW or UNKNOWN. **No fix is proposed by default.** Every finding's recommended action is capped at NEEDS DEVELOPER REVIEW, because "detection and fixing must be separate". `--propose-fixes` shows a React diff and `--apply` writes it through the same git-safety path `fix` uses (section 24); the memory check (section 25) is the way to get the full review-then-apply flow.
 
 This is proven against a real leak, not a mocked adapter: `tests/inspectCommand.test.ts` serves the same page the live-watch tests already trust (one class that leaks into a global list, one that cleans up), points a genuinely plain-JavaScript-shaped project root at it, and checks that the leaking class is found in its real source file while the clean one is not reported as growing.
 
-What it does not do: it does not pick a target route for you (that still needs an explicit `--scenario` file), and it does not carry the Angular-specific lifetime knowledge (`knowledge/lifetime.ts`) that decides a subscription is meant to outlive its component - that judgement has no generic equivalent yet.
+What it does not do: it does not pick a target route for you (that still needs an explicit `--scenario` file - the memory check chooses routes itself), and it does not carry the Angular-specific lifetime knowledge (`knowledge/lifetime.ts`) that decides a subscription is meant to outlive its component - that judgement has no generic equivalent yet.
 
-## 24. `inspect --propose-fixes` - a React fix, shown, never written
+## 24. `inspect --propose-fixes` and `--apply` - React fixes, shown first, written only on request
 
-`src/fix/react/proposeFix.ts` generates one specific, minimal edit: a missing `useEffect` cleanup, added to the effect that has none. It refuses rather than guesses in every case that is not completely unambiguous:
+`src/fix/react/proposeFix.ts` generates one specific, minimal edit: the missing cleanup for ONE resource, in the place React tears it down - the `useEffect` cleanup return for a function component, a new `componentWillUnmount` for a class component. It refuses rather than guesses in every case that is not completely unambiguous:
 
 - Confidence below HIGH.
-- A class component (`componentWillUnmount` is a different insertion point, not built yet).
+- A class component that already has a `componentWillUnmount` (adding a second teardown path next to an existing one is a judgement call), has no `componentDidMount` to pair with, or keeps the resource's handle in a local variable `componentWillUnmount` cannot reach.
 - More than one `useEffect` in the component with no cleanup - picking the right one needs a person.
 - The one effect starts more than one recognised resource - clearing only one would look like the problem was solved when it was not.
 - An inline arrow handed to `addEventListener` - it cannot be matched by reference to remove it later.
 
-When none of those apply, it adds exactly one line - `return () => clearInterval(id);` or `return () => target.removeEventListener(event, handler);` - matching the file's own indentation and semicolon style, and nothing else changes. `--propose-fixes` on `memory-agent inspect` shows the diff. It never writes a file; there is no `--apply` for this pipeline yet.
+When none of those apply, it adds exactly one line, matching the file's own indentation and semicolon style, and nothing else changes. The release is the one correct call for the resource: `clearInterval`/`clearTimeout` (timer), `removeEventListener` with the same named handler (listener), `.disconnect()` (Mutation/Resize/Intersection/PerformanceObserver), `.close()` (WebSocket, EventSource, BroadcastChannel), `.terminate()` (Worker), `cancelAnimationFrame()`, or `.unsubscribe()` (an RxJS-style `.subscribe()`). `.subscribe()` counts as a resource, so an effect that starts a timer AND a subscription is refused rather than half-fixed. `--propose-fixes` shows the diff and never writes. `--apply` (implies `--propose-fixes`) writes it through `fix/apply.ts` and `fix/gitSafety.ts` - refuses a dirty working tree before running anything, optional `--branch`/`--commit`, per-file approval unless `--yes`, rollback commands - then runs the project's own build and tests. It does not re-measure for you: run `inspect` again on the same scenario, or use the memory check, which does.
 
-**This is proven against a real leak, not a syntax check.** `tests/reactFixVerified.test.ts` takes the exact text `proposeReactFix` generates - no hand correction - writes it back to the real file a real browser is serving, re-runs the identical journey, and confirms the object that was piling up before has stopped. `tests/reactFixGenerator.test.ts` covers every refusal above and the second fix shape (a named listener) that the end-to-end test does not happen to exercise.
+**This is proven against a real leak, not a syntax check.** `tests/reactFixVerified.test.ts` takes the exact text `proposeReactFix` generates - no hand correction - writes it back to the real file a real browser is serving, re-runs the identical journey, and confirms the object that was piling up before has stopped. `tests/reactFixGenerator.test.ts` covers every refusal above and the second fix shape (a named listener) that the end-to-end test does not happen to exercise. `tests/inspectApply.test.ts` drives the real `inspect --apply` command in a real git repository with a real leaking class component and re-measures afterwards: the growth stops.
 
 **A known, stated limit: this rarely fires for the most common shape.** React does not name a function component's own instances after the function in the heap - a function component's presence there is internal Fiber machinery, not a `YourComponent` object (see section 20 and `reactAdapter.test.ts`). What usually grows is whatever object the effect's closure retains - a class instance, a socket, a chart - which has no entity of its own for this generator to point at. So `--propose-fixes` fires reliably for a class component, and for the rarer case where the retained object happens to share a declared component's name - not for the ordinary function-component-plus-helper-object shape most real leaks take. The command says this plainly when nothing was eligible, rather than leaving it to be discovered as a silent gap.
 
@@ -324,28 +330,124 @@ When none of those apply, it adds exactly one line - `return () => clearInterval
 
 ## 25. The memory check - give it a URL, it does the rest (`check`, the Memory check page)
 
-The one flow a normal user needs (`src/check/`). Every stage reuses something above; what is new is only the part a person used to do by hand - choosing pages and writing the journey for each.
+The one flow a normal user needs (`src/check/`). Every stage reuses something above; what is new is only the part a person used to do by hand - choosing pages and writing the journey for each. No scenario file is needed (`--scenario` still works for the older commands).
 
-**States.** An explicit state machine (`src/check/state.ts`): `CONNECTING → (AUTHENTICATION_REQUIRED) → DISCOVERING → PLANNING → EXPLORING → BASELINE_CAPTURED → TESTING → HEAP_ANALYSIS → CORRELATING → DIAGNOSING → FIX_AVAILABLE`, then on approval `USER_REVIEW → APPLYING → BUILDING → TESTING_AFTER_FIX → VERIFYING → COMPLETED`. Failures are named states (`AUTH_FAILED`, `BROWSER_ERROR`, `HEAP_CAPTURE_FAILED`, `BUILD_FAILED`, `TEST_FAILED`, `FIX_REJECTED`, `VERIFICATION_INCONCLUSIVE`…). A move the table does not allow throws. Every move is written to `state.json` and streamed to the UI as an `@@CHECK {json}` line, so the status list is the real state, not a guess from log text.
+```
+memory-agent check <url> [--project <folder>]        or the first page of the UI: "Memory check"
+```
 
-**Which links it follows** (`routeSafety.ts`). It only ever follows links - never a button, never a form. A link is refused when it leaves the site, points at a file or an API, opens a new window, or when its address or visible text contains an action word (*logout, delete, remove, pay, checkout, reset, submit, cancel, approve…*, matched as whole words so "display" is not "pay"). Accepted links are MEDIUM confidence, never HIGH: an app can still change state on a navigation, and that cannot be ruled out from outside.
+### The states (`state.ts`)
 
-**Why only in-app navigation counts** (`explore.ts`). A marker is set on `window` before each click. If it is gone afterwards the browser loaded a new document - a reload - which frees every leaked object, so that page cannot show a leak however bad it is. Such pages are reported as not measurable rather than measured and wrongly called clean.
+`CONNECTING → (AUTHENTICATION_REQUIRED) → DISCOVERING → PLANNING → EXPLORING → BASELINE_CAPTURED → TESTING → HEAP_ANALYSIS → CORRELATING → DIAGNOSING → FIX_AVAILABLE`, then on your approval `USER_REVIEW → APPLYING → BUILDING → TESTING_AFTER_FIX → VERIFYING → COMPLETED`. Failures are named states: `AUTH_FAILED`, `BROWSER_ERROR`, `DISCOVERY_FAILED`, `HEAP_CAPTURE_FAILED`, `BUILD_FAILED`, `TEST_FAILED`, `FIX_REJECTED`, `VERIFICATION_INCONCLUSIVE`. A move the transition table does not allow throws, so a step cannot be skipped by accident. Every move is written to `state.json` and streamed to the UI as an `@@CHECK {json}` line, so the status list on screen is the real state, never a guess from log text.
 
-**The journey** (`plan.ts`): load the start page once; then repeat *click the link → wait for the route → switch its safe tabs → Back → wait for the start route*. Waiting is done from Playwright's side (`scenario/route.ts`), not by running a script in the page: the first version polled `location` with `page.evaluate`, and the heap comparison caught every evaluation compiling a new script - the measuring tool adding to what it measured.
+### Login
 
-**Modest growth is confirmed, not believed** (`runCheck.ts`). Measured on a React page that leaks nothing: the heap climbs for about five visits while the development build warms up, then goes flat. Six visits read that tail as GROWING at ~60 KB/visit; twelve read it as STABLE. So growth under 200 KB/visit is re-measured over twice the visits with twice the warm-up. A real leak keeps climbing; a warm-up flattens. Both runs are kept in the report. The same rule applies when re-measuring after a fix.
+If a password field or a login address appears, the check stops at `AUTHENTICATION_REQUIRED`. It never tries to get past it. In the UI the **Sign in** button opens a real Chrome window, you sign in yourself, press *I have signed in / continue*, and the check restarts on its own. Only the resulting session is saved; the tool never sees the password. A saved sign-in (`.auth\app.auth.json`) is picked up automatically only if it was saved **for this address** - never one for some other app that happens to be lying around (`resolveAuthFile`). If a saved one no longer works the state is `AUTH_FAILED`, not a silent retry.
 
-**What holds it** (`rootCause.ts`). Read off the real retaining path: `DOMTimer`/`ScheduledAction` → a timer; `*EventListener` → a listener; `MutationObserver`/`ResizeObserver`… → an observer; `Subscriber`/`Subject` → a subscription; `WebSocket`, `Worker`, a property on `window`, detached DOM, a closure. No mechanism on the path → "undetermined", never a plausible default. Browser-engine types (`blink::…`, `v8::…`) are counted and listed, not reported as your leaks.
+### Understanding the application (`model.ts`, `inventory.ts`)
 
-**A heap-engine fix found here.** The retaining path was being traced from the first NEW node with the grown constructor's name - which could be freshly compiled *code* named after the class, not an instance. Its path explained why the class exists, not why instances survive. `findNewNodesByName` now takes the node type the growth was counted under (`src/heap/analyze.ts`). This affects every command that traces paths.
+An `ApplicationModel` built from three real sources, none duplicated: the adapters (framework and version, through the same registry `discover` uses - from the running page, and from the project folder when given), the live page (links, scripts, DOM size, canvases, iframes, chart libraries on `window`, a version `<meta>` tag), and the browser's own events (workers and sockets the page actually opened). Framework confidence is HIGH when read off the running page, MEDIUM from the folder alone, UNKNOWN when nothing matched - and an unknown framework does not stop the check; it only means what grew can be named from the heap but not traced to a file. Everything it could not establish is listed in `unknowns` with the reason (no version declared, no project folder, only what the start page opened is listed for workers and sockets...). A blank is never left for a reader to mistake for "none".
 
-**Source maps** (`sourceMaps.ts`). With no project folder, the check fetches the page's own scripts, follows `sourceMappingURL`, and reads the original sources the maps embed (`sourcesContent`, `node_modules` excluded). A grown class is matched by exact name to its declaration there: one → exact (file and line), several → ambiguous, none → none. Minified positions are not mapped, so a build that renames classes stays UNKNOWN.
+### Which links it follows (`routeSafety.ts`)
 
-**Fixes** (`fixes.ts`): only HIGH/PROVEN findings matched to exactly one class. React: `useEffect` cleanup or a new `componentWillUnmount`. Angular: the existing `addCleanup` ngOnDestroy engine (section 13), with project knowledge. Plain JS: a line added to an existing `destroy/dispose/teardown/unmount/cleanup/detach/disconnectedCallback`, or a new `disconnectedCallback` for a custom element that starts the resource in `connectedCallback` - because the browser itself calls that. Adding a `destroy()` nothing calls would fix nothing, so it is refused.
+It only ever follows links - never a button, never a form. A link is refused when it leaves the site, points at a file or an API address, opens a new window, or when its address or visible text contains an action word (*logout, delete, remove, pay, checkout, reset, submit, cancel, approve, send, run, import, export...*), matched as whole words so "display" is not "pay". Each decision carries a plain reason and the page to return to. Accepted links are **MEDIUM** confidence, never HIGH: an app can still change state on a navigation, and that cannot be ruled out from outside.
 
-**Apply and verify** (`apply.ts`). Refused unless: the file is byte-for-byte the one the proposal was made from, the content is byte-for-byte what was reviewed (sha256 - the UI's Apply Fix sends the hash it showed), the git tree is clean. Written through `fix/apply.ts`; build and tests through `verify/checks.ts`; then the SAME journey and heap comparison again. **FIX VERIFIED** only when the object stopped accumulating *and* the page stopped growing; stopped but page still growing, or at least halved → **PARTIALLY VERIFIED**; otherwise **DID NOT RESOLVE LEAK**; re-measurement failed → **COULD NOT BE VERIFIED**.
+### Exploring (`explore.ts`)
 
-**Knowledge** (`knowledge.ts`, `.memory-agent/knowledge.json`): applied, rejected, verified, not verified, marked expected - keyed by framework, constructor, cause and file. Shown on matching findings next time. It never changes a confidence level, hides a finding, or makes a fix automatic.
+For each safe link on the start page (up to 12) it clicks, waits for the address to change, looks around, and presses Back. Then **one level deeper**: safe links found *on* those pages that lead somewhere new (up to 6 more) are reached by clicking the first page's link and then theirs, and left by pressing Back twice. It stops at two levels - beyond that a failure anywhere on the way would hide which page was at fault.
 
-**Proven end to end** in a real Chrome: `tests/checkEndToEnd.test.ts` (React app: login stop, Log out refused, leaking page found, clean page not, component named in its file, fix proposed and nothing written, then applied, built, re-measured → FIX VERIFIED, and a stale proposal refused) and `tests/checkSourceMaps.test.ts` (URL only: traced through the app's source map).
+- **In-app only counts.** A marker is set on `window` before each click. If it is gone afterwards the browser loaded a new document - a reload - which frees every leaked object, so entering and leaving that page can never show a leak. Such pages are reported as not measurable rather than measured and wrongly called clean.
+- A page that asks to sign in is skipped, not signed into. A link that redirects elsewhere is not tested as itself.
+- On each reached page it notes what is harmless to touch: **tabs** (`role="tab"`), **show/hide controls** (`aria-expanded`, currently collapsed, not inside a form - opening then closing one returns the page to where it was), and whether the page is **taller than the window** (so it is scrolled). Every label goes through the same action-word test as links, so a toggle called "Delete all" is never touched.
+- Everything else - buttons, forms, dialogs - is counted and reported as not pressed, never tried.
+
+### The plan and the journey (`plan.ts`)
+
+Routes are ranked by how much they have to leak - bigger DOM, chart libraries, canvases, tabs, show/hide controls, iframes, being in the main navigation - and the busiest 6 are measured; the rest are listed as deferred, never dropped silently. The journey for one route:
+
+```
+load the start page once                      <- the only reload
+repeat 8 times:
+  [click the parent page's link, wait]        <- only for a second-level page
+  click the route's link, wait for the address
+  switch its safe tabs
+  open and close its safe show/hide controls
+  scroll to the end and back (if it scrolls)
+  press Back (twice for a second-level page), wait for the start page
+```
+
+The scenario runner forces garbage collection and reads the heap after every repetition and discards the first 3 (first visits load code and fill caches). Waiting for an address is done from Playwright's side (the `waitForRoute` step, `scenario/route.ts`), not by running a script in the page: the first version polled `location` with `page.evaluate`, and the heap comparison caught every evaluation compiling a new script - the measuring tool adding to what it measured. A journey that fails is retried once; failing twice is reported as failed, never hidden. A baseline (start page after forced GC) is recorded first.
+
+### Modest growth is confirmed, not believed (`runCheck.ts`)
+
+Measured on a React page that leaks nothing: the heap climbs for about five visits while the development build warms up, then goes flat. Six visits read that tail as GROWING at ~60 KB per visit; twelve read it as STABLE. So growth **under 200 KB per visit** is re-measured over twice the visits (16) with twice the warm-up. A real leak keeps climbing; a warm-up flattens. Both runs are kept in the report. The same rule applies again when re-measuring after a fix.
+
+### What is holding it (`rootCause.ts`, `runCheck.ts`)
+
+Growing pages are repeated between two heap snapshots. The cause is **read off the real retaining path**: `DOMTimer`/`ScheduledAction` → a timer; `*EventListener` → a listener; Mutation/Resize/Intersection/PerformanceObserver → an observer; `Subscriber`/`Subject` → a subscription; `WebSocket`/`EventSource`, `Worker`, an animation-frame callback, a property on `window`, detached DOM, a closure. If no step on the path names a mechanism, the answer is **"undetermined"** - never a plausible default.
+
+What is deliberately *not* reported as your finding, but counted and named in the report: browser-engine types (`blink::…`, `v8::…`), timeline entries Chrome records on every navigation (`PerformanceSoftNavigation`, `PerformanceEventTiming`, `PerformanceResourceTiming`...), and Chrome's own wrapper objects for what the app registered (`V8EventListener`, `DOMTimer`...) unless the project declares a class of that name. `PerformanceMark`/`PerformanceMeasure` stay reported - app code creates those.
+
+**A heap-engine fix found while building this.** The retaining path was being traced from the first NEW node with the grown constructor's name, which could be freshly compiled *code* named after the class rather than an instance; its path explained why the class exists, not why instances survive. `findNewNodesByName` now takes the node type the growth was counted under (`src/heap/analyze.ts`). This improves every command that traces paths.
+
+### Tracing to source
+
+- **With a project folder**: exact-name correlation through the framework adapter, as in section 23.
+- **Custom elements**: Chrome names one in the heap by its tag (`<ticker-el>`), not its class. The source's own `customElements.define('ticker-el', TickerElement)` is followed from tag to class (`core/framework/customElements.ts`) - in the checkout, or in the sources a source map carries.
+- **Address only, no folder**: the check fetches the page's scripts, follows `sourceMappingURL`, and reads the original sources the maps embed (`sourcesContent`, `node_modules` excluded, same-origin only) (`sourceMaps.ts`). One declaration is exact (file and line), several are ambiguous, none is none. This locates code but cannot change it, so no fix is proposed. **Minified positions are not mapped**: a build that renames classes matches nothing and stays UNKNOWN.
+
+Confidence uses the same six levels as section 19; a finding needs an exact source match to reach HIGH or PROVEN.
+
+### Fixes (`fixes.ts`) - proposed, never written by a check
+
+Only for HIGH/PROVEN findings matched to exactly one class or component. Everything else becomes advice for a person, listed under "items requiring manual investigation".
+
+- **React**: a `useEffect` cleanup return, or a new `componentWillUnmount` (section 24).
+- **Plain JS**: a line added to an existing `destroy` / `dispose` / `teardown` / `unmount` / `cleanup` / `detach` / `disconnectedCallback`, or a new `disconnectedCallback` for a custom element that starts the resource in `connectedCallback` - because the browser itself calls that. Adding a `destroy()` that nothing calls would fix nothing, so it is refused.
+- **Angular**: the existing `addCleanup` ngOnDestroy engine (section 13), with project knowledge so a subscription meant to outlive a component is left alone. Labelled *behavioural* when it edits an existing line, *additive* when it only adds.
+- Releases covered: timers, listeners, observers, sockets, workers, animation frames, subscriptions. One resource, one handle, one correct release - or refused. A handle kept in a local variable, two resources in one place, an inline arrow handed to `addEventListener`: refused with the reason.
+
+### Apply and verify (`apply.ts`)
+
+**Fix Review** shows the issue, the evidence, the confidence, before/after side by side, the file, the risk (lines added and removed), and whether tests exist. **Apply Fix** is refused unless:
+
+1. the file on disk is byte-for-byte the one the proposal was made from,
+2. the content about to be written is byte-for-byte what was reviewed (a sha256 the page sends back - the UI never resends the file),
+3. the git working tree is clean (`fix/gitSafety.ts`, the same rule `fix` uses),
+4. you approved *this* change.
+
+It is written through `fix/apply.ts` (baseline recorded, rollback commands printed), the project's own build and tests run through `verify/checks.ts`, then the **same journey and heap comparison** run again. The result is only ever one of:
+
+| Status | When |
+|---|---|
+| **FIX VERIFIED** | the object no longer accumulates (at most 10% of before, or 1) **and** the page no longer keeps growing |
+| **FIX PARTIALLY VERIFIED** | the object stopped but the page still grows, or it accumulates at most half as much |
+| **FIX DID NOT RESOLVE LEAK** | it accumulates as before - or the running app is not serving the changed code yet |
+| **FIX COULD NOT BE VERIFIED** | build/tests failed, the app never came back, or the re-measurement did not complete |
+
+After writing, it gives the app 20 seconds and then waits up to 2 minutes for it to answer, so a dev server that rebuilds on change is picked up automatically. A server that does not rebuild gives DID NOT RESOLVE - never a false "verified" - and the message says to restart it; **Measure again** (`check-verify`) then re-measures. Build or test failure stops the process (`BUILD_FAILED` / `TEST_FAILED`); the change stays in the tree so you can look, with the rollback command shown.
+
+### Memory of your decisions (`knowledge.ts`)
+
+Applied, rejected, verified, not verified, marked expected - keyed by framework, constructor, cause and file, in `.memory-agent/knowledge.json` (no source code, no credentials). Shown on matching findings next time. It **never** changes a confidence level, hides a finding, or makes a fix automatic: a rejected fix is a proposal again next time, an accepted one still needs approval.
+
+### The report (`report.ts`)
+
+`report.html` and `report.md` in `reports\checks\<id>\`, 17 sections: application, framework, version, routes checked (and links deliberately not followed), components/modules, methodology, findings, evidence, confidence, root cause, proposed/applied changes, build result, test result, before vs after, verification status, remaining risks, items for manual investigation. Anything not run says "not run" rather than leaving a blank. The same folder holds `check.json` (what the UI reads), `state.json`, the generated journeys and the heap snapshots.
+
+### Health (`tools/registry.ts`, `doctor`)
+
+`doctor` reads a registry: each tool has a purpose, framework support, requirements, health, version, failure reason and the fallback the agent uses without it. One real Chrome launch proves the browser connection, CDP, a heap snapshot and a forced garbage collection - the four things every reading depends on. `--project` adds the project's build and test scripts; `--json` is for machines.
+
+### What proves it
+
+In a real Chrome: `tests/checkEndToEnd.test.ts` (React app: login stop, Log out never requested, a leak found only one level deep, leaking page found and clean page not, component named in its file, fix proposed and nothing written, then applied, built, re-measured → FIX VERIFIED, and a stale proposal refused), `checkPlainJs.test.ts` (plain-JS custom element: found, fixed, VERIFIED), `checkSourceMaps.test.ts` (address only, traced through the app's source map), `uiMemoryCheck.test.ts` (every button on the page: Start, Mark as expected, Reject, Apply against a server still serving old code, Measure again after a restart), `inspectApply.test.ts`. Without a browser: `checkUnits`, `reactFixGenerator`, `angularCheckFix`, `toolRegistry`, `uiCheck`.
+
+### Not yet proven, and stated limits
+
+- **Not yet run against a running IOSense.** Its source has been read (Angular 16.2.12, 3201 entities, 890 routes) and the Angular fix path was dry-run over 400 real views (145 fixes generated and all parse, 255 refused with reasons, nothing written) - but no browser check has been done on the live app; that needs its dev server up and your sign-in.
+- Buttons, forms and dialogs are never pressed; pages reachable only through them are not tested.
+- Exploration is two levels deep from the start page.
+- A plain navigation can still change state in some apps; accepted links are MEDIUM confidence for that reason.
+- React function components are rarely named in the heap, so their leaks are found and located by route but rarely fixed automatically.
+- A minified build without embedded sources cannot be traced to files.

@@ -52,6 +52,21 @@ npm run dev -- check http://localhost:4200                                  # ad
 npm run dev -- check http://localhost:4200 --project C:\Users\Taufique\IOSense  # + trace to files, prepare fixes
 ```
 
+Options and exit codes:
+
+| Option | Meaning |
+|---|---|
+| `--project <folder>` | trace leaks to files and prepare fixes (without it: named from the heap, or through the app's source maps) |
+| `--auth <file>` | a saved sign-in; the default `.authapp.auth.json` is used only when saved for this address |
+| `--max-routes <n>` | most pages to measure (default 6, busiest first; the rest are listed as deferred) |
+| `--iterations <n>` / `--warmup <n>` | visits per page (default 8, minimum 5) and how many are discarded (default 3) |
+| `--plan-only` | discover and plan, measure nothing |
+| `--out <dir>` | where checks are written (default `reportschecks`) |
+
+Exit `0` = the check ran; `1` = it could not (browser, discovery or heap failure); `3` = the app needs you to sign in first.
+
+**Address tip:** use the exact address you open the app at. A dev server may listen on `localhost` only (IPv6), so `http://127.0.0.1:<port>` can fail where `http://localhost:<port>` works.
+
 What it does, in order (each step appears in the UI's status list):
 
 | Step | What happens |
@@ -564,8 +579,17 @@ from source (no build step needed).
 ```powershell
 npm run dev -- doctor
 ```
-Checks Node, TypeScript, git, Chrome and the DevTools MCP packages. Exit code
-`0` = ready.
+Reads the tool registry and **proves** each capability rather than checking a
+file exists: one real Chrome launch shows the browser connection, the DevTools
+protocol, a real heap snapshot and a forced garbage collection all work. It
+also lists Node, the TypeScript compiler API, the three framework adapters,
+source maps, git and the package manager - each with what you lose without it.
+Exit code `0` = every *required* capability works.
+
+```powershell
+npm run dev -- doctor --project C:UsersTaufiqueIOSense   # also checks its build and test scripts
+npm run dev -- doctor --json                                  # machine-readable
+```
 
 ```powershell
 npm run dev -- selftest
@@ -692,8 +716,17 @@ npm run dev -- correlate <project> --scenario <file> --detail 10
 # adapter what each surviving object is. No fix is proposed here.
 npm run dev -- inspect <project> --scenario <file> --detail 10
 
-# Also SHOW (never write) a React useEffect-cleanup fix, where eligible
+# Also SHOW (never write) a React fix, where eligible: useEffect cleanup, or
+# componentWillUnmount for a class component - timers, listeners, observers,
+# sockets, workers, animation frames, subscriptions
 npm run dev -- inspect <project> --scenario <file> --propose-fixes
+
+# Actually write it. Refuses a dirty git tree BEFORE running anything, asks per
+# file (--yes to skip), optional --branch / --commit, prints rollback commands,
+# then runs the project's own build and tests. Re-run inspect (or use the
+# memory check) to measure that the leak stopped.
+npm run dev -- inspect <project> --scenario <file> --apply
+npm run dev -- inspect <project> --scenario <file> --apply --yes --branch --commit
 
 # Propose fixes. DRY RUN by default - nothing is written.
 npm run dev -- fix <project> --scenario <file>
@@ -1150,9 +1183,14 @@ Rules the tool enforces on itself, so you can trust the labels:
 
 ```
 src/
+  check/       THE MEMORY CHECK: state machine, link safety, exploration,
+               plan/journey, application model, root cause, source maps, fix
+               proposals, hash-bound apply + verify, knowledge, report
+  tools/       the tool registry behind `doctor`
   core/
     framework/   FrameworkAdapter contract, the framework-neutral vocabulary,
-                 and the registry that picks an adapter by evidence
+                 the registry that picks an adapter by evidence, and the
+                 custom-element tag helper
     discovery/   URL-first discovery: framework/version from a live page,
                  whether it appears to need signing in
     diagnosis/   the six recommended actions (SAFE FIX, MONITOR, ...)
@@ -1175,9 +1213,12 @@ src/
   scenario/    journey definition, validation, runner, login capture
   report/      investigation model, Markdown and HTML renderers
   commands/    one file per CLI command
-  fix/         git safety, fix proposals, guarded apply (Angular)
-    react/     the one React fix this generates: a missing useEffect
-               cleanup - shown only, no --apply yet for this pipeline
+  fix/         git safety, fix proposals, guarded apply (Angular's engine)
+    react/     useEffect cleanup / componentWillUnmount for one resource
+    javascript/ a release in an existing teardown method, or a custom
+               element's disconnectedCallback
+    angular/   the memory check's entry into the existing ngOnDestroy engine
+    shared/    the syntax helpers the React and plain-JS generators share
   heap/        snapshot capture, parsing, retaining paths
   verify/      the project's own build/lint/test, before-and-after compare
   ui/          local server, action allowlist, page, entity search, discovery endpoint
@@ -1190,7 +1231,7 @@ src/
 docs/          HOW_IT_WORKS.md - plain-English guide to the agent
 scripts/       setup-node.ps1 / .cmd - fetch the pinned Node into .node\
 .node/         Node 22, npm cache, Playwright browsers (gitignored; version in .node-version)
-tests/         41 test files, mirrors src/ - eleven drive a real Chrome
+tests/         57 test files, mirrors src/ - eighteen drive a real Chrome
                (find them with `grep -l isChromeAvailable tests/*.test.ts`)
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
@@ -1256,8 +1297,15 @@ Two constraints worth knowing before you edit:
 | — Sign-in shortcut | ✅ | discovery's "sign in now" jumps straight into the existing safe `login` action - no new credential handling |
 | — Cross-framework static candidates | ✅ | `discover` flags a view with resources and no recognised teardown for Angular/React from facts the adapters already establish; never offered for plain JavaScript, which has no hook to be missing |
 | — `inspect` (route-aware investigation) | ✅ | Angular/React/JavaScript: real scenario + real heap comparison, correlated to source through the adapter, six-level confidence. Proven against a real leak. No fix by default - detection and fixing stay separate |
-| — `inspect --propose-fixes` (React) | ◐ | Generates and shows (never writes) a missing `useEffect` cleanup - proven end to end: the generated text, written back verbatim to a real file, stops a real measured leak. No `--apply` yet. Rarely eligible for a plain function component today - explained in the docs and in the command's own output, not hidden |
+| — `inspect --propose-fixes` / `--apply` (React) | ✅ | Shows a fix (`useEffect` cleanup or `componentWillUnmount`; timers, listeners, observers, sockets, workers, frames, subscriptions); `--apply` writes it through the same git-safety path as `fix`. Proven: `inspectApply.test.ts` (real Chrome + git, the leak stops). Rarely eligible for a plain function component - explained in the docs and in the command's own output, not hidden |
 | — Retaining-path trace budget fix | ✅ | `isGenericBucket` now excludes a timer's own Blink bookkeeping (`DOMTimer`/`ScheduledAction`/`V8Function`), found by measuring a real timer leak where they starved the actual leaked object of trace budget - fixes every command that traces retaining paths, not only `inspect` |
+| — **Memory check** (`check`, first UI page) | ✅ | Address in, findings out: login stop, application model, safe-link judgement, two-level exploration (tabs, show/hide, scrolling), per-page journeys, confirmed growth, heap analysis, root cause from the real retaining path, correlation (project or source maps), 17-section report. Real-browser tests: `checkEndToEnd`, `checkPlainJs`, `checkSourceMaps`, `uiMemoryCheck` |
+| — Fix Review + safe apply + verification | ✅ | Hash-bound apply (file unchanged, content as reviewed, clean tree), build + tests, same journey re-measured: FIX VERIFIED / PARTIALLY / DID NOT RESOLVE / COULD NOT BE VERIFIED; a server still serving old code is never called verified |
+| — Fix generators | ◐ | React, plain JS, Angular (existing engine). Function components rarely eligible (React does not name them in the heap); an existing teardown method is required for plain JS |
+| — Knowledge store | ✅ | Applied / rejected / verified / marked expected, remembered in `.memory-agent/knowledge.json`; annotates only - never changes confidence or auto-applies |
+| — Tool registry + `doctor` | ✅ | Each capability proven for real, with its fallback; `--project`, `--json` |
+| — Source maps | ◐ | URL-only checks trace through the app's own maps when they embed `sourcesContent`; minified (renamed) builds stay UNKNOWN |
+| — Live check on IOSense | ⬜ | Not run yet: needs IOSense's dev server and your sign-in. Its source and the Angular fix path were checked (see docs/STATUS.md) |
 
 **Phase 12 is deliberately partial.** The evidence bundle and analysis prompt
 are complete and usable today — `writeBundleForManualUse()` writes both to
