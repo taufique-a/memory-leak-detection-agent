@@ -317,6 +317,12 @@ describe('root cause', () => {
     expect(isBrowserInternal('blink::SoftNavigationContext')).toBe(true);
     expect(isBrowserInternal('(compiled code)')).toBe(true);
     expect(isBrowserInternal('LeakyPanel')).toBe(false);
+    // Recorded by the browser on every navigation - not app code.
+    expect(isBrowserInternal('PerformanceSoftNavigation')).toBe(true);
+    expect(isBrowserInternal('PerformanceResourceTiming')).toBe(true);
+    // Created BY app code (performance.mark) - piling up is a real leak, so reported.
+    expect(isBrowserInternal('PerformanceMark')).toBe(false);
+    expect(isBrowserInternal('PerformanceMeasure')).toBe(false);
   });
 });
 

@@ -193,8 +193,34 @@ export function confirmationScenario(s: Scenario): Scenario {
  * code that does not exist. They are counted and named in the report.
  */
 export function isBrowserInternal(constructorName: string): boolean {
-  return /^(blink::|v8::|cppgc::|WTF::|gin::|base::|\(|system \/)/.test(constructorName);
+  return (
+    /^(blink::|v8::|cppgc::|WTF::|gin::|base::|\(|system \/)/.test(constructorName) ||
+    BROWSER_RECORDED_ENTRIES.has(constructorName)
+  );
 }
+
+/**
+ * Performance-timeline entries the BROWSER records on its own, on every
+ * navigation, request, paint or input - seen growing on a page that leaks
+ * nothing. Application code cannot construct these. PerformanceMark and
+ * PerformanceMeasure are deliberately absent: app code creates those
+ * (performance.mark), and piling them up is a real leak.
+ */
+const BROWSER_RECORDED_ENTRIES: ReadonlySet<string> = new Set([
+  'PerformanceSoftNavigation',
+  'PerformanceEventTiming',
+  'PerformanceResourceTiming',
+  'PerformanceNavigationTiming',
+  'PerformancePaintTiming',
+  'PerformanceLongTaskTiming',
+  'PerformanceLongAnimationFrameTiming',
+  'PerformanceScriptTiming',
+  'PerformanceElementTiming',
+  'LargestContentfulPaint',
+  'LayoutShift',
+  'LayoutShiftAttribution',
+  'TaskAttributionTiming',
+]);
 
 export function newCheckId(): string {
   return `chk-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -724,7 +750,7 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
   }
   if (internal.size > 0) {
     result.limitations.push(
-      `${internal.size} growing type(s) belong to the browser engine itself, not to any page code, and are not ` +
+      `${internal.size} growing type(s) belong to the browser itself (engine objects, or timeline entries it records on every navigation), not to any page code, and are not ` +
         `reported as findings: ${[...internal].slice(0, 8).join(', ')}${internal.size > 8 ? ', ...' : ''}.`,
     );
   }

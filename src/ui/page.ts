@@ -3874,7 +3874,7 @@ function mcRenderFix() {
       '<p style="margin:.3rem 0"><b>Evidence</b></p><ul class="state">' +
       '<li>' + f.countDelta + ' more instance(s) survived repeated visits to <code>' + esc(f.route) + '</code></li>' +
       f.rationale.map((x) => '<li>' + esc(x) + '</li>').join('') +
-      '<li>Held by: <code>' + esc(f.retainingPath) + '</code></li>' +
+      '<li>Held by (last steps): <code>' + esc(mcShortPath(f.retainingPath)) + '</code> <span class="sub">- the full path is under technical details</span></li>' +
       (f.file ? '<li>Source: ' + openLink(f.file, f.line) + '</li>' : '') + '</ul>' : '') +
     '<div class="lbl2" style="margin-top:.8rem">PROPOSED FIX</div>' +
     '<p style="margin:.3rem 0"><b>' + esc(fix.title) + '</b></p>' +
@@ -3900,6 +3900,12 @@ function mcRenderFix() {
   $('mcFixNote').textContent = writable
     ? 'Nothing is written until you press Apply Fix. It then writes exactly this change, runs your build and tests, and repeats the memory test.'
     : 'Nothing to apply here.';
+}
+
+/** The end of a retaining path is where the cause is named; the start is engine plumbing. */
+function mcShortPath(p) {
+  const hops = String(p).split(' -> ');
+  return (hops.length > 6 ? '... -> ' : '') + hops.slice(-6).map((h) => (h.length > 80 ? h.slice(0, 77) + '...' : h)).join(' -> ');
 }
 
 function mcCloseFix() {
