@@ -43,6 +43,16 @@ import type { GenericCorrelatedFinding } from '../../core/correlation/correlateG
 import type { AppEntity } from '../../core/framework/types';
 import { isRuntimeEstablished } from '../../types/index';
 import { buildUnifiedDiff, type ProposedFix } from '../propose';
+import {
+  cleanupLineFor,
+  countAcquireCalls,
+  findClass,
+  findSingleInstanceResource,
+  indentOf,
+  methodNamed,
+  scriptKindFor,
+  usesSemicolons,
+} from '../shared/tsShapes';
 
 export interface ReactFixOptions {
   projectRoot: string;
@@ -68,13 +78,6 @@ function manualOnly(
     ],
     manualInstructions: [reason],
   };
-}
-
-function scriptKindFor(file: string): ts.ScriptKind {
-  if (file.endsWith('.tsx')) return ts.ScriptKind.TSX;
-  if (file.endsWith('.ts')) return ts.ScriptKind.TS;
-  if (file.endsWith('.jsx')) return ts.ScriptKind.JSX;
-  return ts.ScriptKind.JS;
 }
 
 function isCapitalised(name: string): boolean {
@@ -143,42 +146,6 @@ function findEffectsWithoutCleanup(root: ts.Node): EffectCandidate[] {
   };
   visit(root);
   return found;
-}
-
-const ACQUIRE_NAMES = new Set([
-  'setInterval',
-  'setTimeout',
-  'addEventListener',
-  'requestAnimationFrame',
-  'MutationObserver',
-  'ResizeObserver',
-  'IntersectionObserver',
-  'PerformanceObserver',
-  'WebSocket',
-  'EventSource',
-  'Worker',
-  'SharedWorker',
-]);
-
-function recognisedCallName(node: ts.Node): string | undefined {
-  if (ts.isCallExpression(node)) {
-    if (ts.isIdentifier(node.expression)) return node.expression.text;
-    if (ts.isPropertyAccessExpression(node.expression)) return node.expression.name.text;
-  }
-  if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) return node.expression.text;
-  return undefined;
-}
-
-/** Every acquire-shaped call anywhere under `root`, at any depth. */
-function countAcquireCalls(root: ts.Node): number {
-  let count = 0;
-  const visit = (node: ts.Node): void => {
-    const name = recognisedCallName(node);
-    if (name !== undefined && ACQUIRE_NAMES.has(name)) count++;
-    ts.forEachChild(node, visit);
-  };
-  visit(root);
-  return count;
 }
 
 type ResourcePlan =
@@ -251,91 +218,6 @@ function findSingleResource(block: ts.Block, sourceFile: ts.SourceFile): Resourc
   return plan;
 }
 
-function indentOf(sourceFile: ts.SourceFile, node: ts.Node): string {
-  const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line;
-  const lineText = sourceFile.text.split('\n')[line] ?? '';
-  const match = /^[ \t]*/.exec(lineText);
-  return match?.[0] ?? '  ';
-}
-
-/** Does the last statement in this block end its line with a semicolon? Match it; otherwise omit. */
-function usesSemicolons(block: ts.Block, sourceFile: ts.SourceFile): boolean {
-  const last = block.statements[block.statements.length - 1];
-  if (last === undefined) return true;
-  const text = last.getText(sourceFile).trimEnd();
-  return text.endsWith(';');
-}
-
-/** `this.<name>` - the only handle shape `componentWillUnmount` can reach. */
-function thisProperty(node: ts.Node, sourceFile: ts.SourceFile): string | undefined {
-  if (
-    ts.isPropertyAccessExpression(node) &&
-    node.expression.kind === ts.SyntaxKind.ThisKeyword &&
-    ts.isIdentifier(node.name)
-  ) {
-    return node.getText(sourceFile);
-  }
-  return undefined;
-}
-
-type ClassPlan =
-  | { kind: 'timer'; clearCall: string; handleText: string }
-  | { kind: 'listener'; targetText: string; eventText: string; handlerText: string }
-  | { kind: 'local-handle' };
-
-/**
- * The single resource `componentDidMount` starts, as long as its handle
- * lives on the instance. A timer captured in a local variable is reported
- * as `local-handle` so the refusal can say exactly why.
- */
-function findSingleClassResource(body: ts.Block, sourceFile: ts.SourceFile): ClassPlan | undefined {
-  if (countAcquireCalls(body) !== 1) return undefined;
-
-  for (const stmt of body.statements) {
-    if (!ts.isExpressionStatement(stmt)) {
-      if (ts.isVariableStatement(stmt)) {
-        const init = stmt.declarationList.declarations[0]?.initializer;
-        const name = init !== undefined ? recognisedCallName(init) : undefined;
-        if (name === 'setInterval' || name === 'setTimeout') return { kind: 'local-handle' };
-      }
-      continue;
-    }
-    const expr = stmt.expression;
-
-    // this.<handle> = setInterval(...) / setTimeout(...)
-    if (
-      ts.isBinaryExpression(expr) &&
-      expr.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isCallExpression(expr.right) &&
-      ts.isIdentifier(expr.right.expression) &&
-      (expr.right.expression.text === 'setInterval' || expr.right.expression.text === 'setTimeout')
-    ) {
-      const handleText = thisProperty(expr.left, sourceFile);
-      if (handleText === undefined) return undefined;
-      const clearCall = expr.right.expression.text === 'setInterval' ? 'clearInterval' : 'clearTimeout';
-      return { kind: 'timer', clearCall, handleText };
-    }
-
-    // <target>.addEventListener(<event>, this.<handler>)
-    if (
-      ts.isCallExpression(expr) &&
-      ts.isPropertyAccessExpression(expr.expression) &&
-      expr.expression.name.text === 'addEventListener' &&
-      expr.arguments.length >= 2
-    ) {
-      const handlerText = thisProperty(expr.arguments[1] as ts.Expression, sourceFile);
-      if (handlerText === undefined) return undefined;
-      return {
-        kind: 'listener',
-        targetText: expr.expression.expression.getText(sourceFile),
-        eventText: (expr.arguments[0] as ts.Expression).getText(sourceFile),
-        handlerText,
-      };
-    }
-  }
-  return undefined;
-}
-
 function proposeClassComponentFix(
   finding: GenericCorrelatedFinding,
   entity: AppEntity,
@@ -344,26 +226,12 @@ function proposeClassComponentFix(
   sourceFile: ts.SourceFile,
 ): ProposedFix {
   const site = 'componentWillUnmount';
-  let cls: ts.ClassDeclaration | undefined;
-  const visit = (node: ts.Node): void => {
-    if (cls !== undefined) return;
-    if (ts.isClassDeclaration(node) && node.name?.text === entity.name) {
-      cls = node;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
+  const cls = findClass(sourceFile, entity.name);
   if (cls === undefined) {
     return manualOnly(finding, relativeFile, `${entity.name} could not be found in this file as currently written.`, site);
   }
 
-  const methodNamed = (name: string): ts.MethodDeclaration | undefined =>
-    (cls as ts.ClassDeclaration).members.find(
-      (m): m is ts.MethodDeclaration => ts.isMethodDeclaration(m) && m.name.getText(sourceFile) === name,
-    );
-
-  if (methodNamed('componentWillUnmount') !== undefined) {
+  if (methodNamed(cls, 'componentWillUnmount', sourceFile) !== undefined) {
     return manualOnly(
       finding,
       relativeFile,
@@ -373,7 +241,7 @@ function proposeClassComponentFix(
     );
   }
 
-  const didMount = methodNamed('componentDidMount');
+  const didMount = methodNamed(cls, 'componentDidMount', sourceFile);
   if (didMount?.body === undefined) {
     return manualOnly(
       finding,
@@ -383,7 +251,7 @@ function proposeClassComponentFix(
     );
   }
 
-  const plan = findSingleClassResource(didMount.body, sourceFile);
+  const plan = findSingleInstanceResource(didMount.body, sourceFile);
   if (plan === undefined) {
     return manualOnly(
       finding,
@@ -406,10 +274,7 @@ function proposeClassComponentFix(
 
   const semi = usesSemicolons(didMount.body, sourceFile) ? ';' : '';
   const memberIndent = indentOf(sourceFile, didMount);
-  const cleanupLine =
-    plan.kind === 'timer'
-      ? `${plan.clearCall}(${plan.handleText})${semi}`
-      : `${plan.targetText}.removeEventListener(${plan.eventText}, ${plan.handlerText})${semi}`;
+  const cleanupLine = cleanupLineFor(plan, semi);
 
   const insertPos = didMount.getEnd();
   const insertion = `\n\n${memberIndent}componentWillUnmount() {\n${memberIndent}  ${cleanupLine}\n${memberIndent}}`;
