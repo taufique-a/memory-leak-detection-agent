@@ -38,6 +38,7 @@ import { enableMetrics } from '../runtime/metrics';
 import type { Scenario, Step } from '../scenario/types';
 import { detectExpiredSession, diagnoseLoginRedirect, ScenarioError } from '../scenario/runner';
 import { explainSessionMismatch, readSavedSession } from '../scenario/session';
+import { waitForRoute } from '../scenario/route';
 import { describeStep } from '../scenario/validate';
 
 export interface HeapInvestigationOptions {
@@ -299,8 +300,8 @@ export async function investigateHeap(
     for (const delta of toTrace) {
       if (reverse === undefined) break;
       // An instance the loop created, not whichever one happens to come first.
-      const fresh = findNewNodesByName(snapAfter, delta.name, maxIdBefore, 1);
-      const target = fresh[0] ?? findNodesByName(snapAfter, delta.name, 1)[0];
+      const fresh = findNewNodesByName(snapAfter, delta.name, maxIdBefore, 1, delta.type);
+      const target = fresh[0] ?? findNodesByName(snapAfter, delta.name, 1, delta.type)[0];
       if (target === undefined) continue;
 
       const paths = findRetainingPaths(snapAfter, reverse, target, { maxPaths: 3 });
@@ -412,6 +413,9 @@ async function perform(
       return;
     case 'wait':
       await page.waitForTimeout(step.ms);
+      return;
+    case 'waitForRoute':
+      await waitForRoute(page, step.route, step.timeoutMs);
       return;
     case 'back':
       await page.goBack();

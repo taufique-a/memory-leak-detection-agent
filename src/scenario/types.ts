@@ -43,6 +43,11 @@ export type Step =
   | { action: 'waitForText'; text: string; timeoutMs?: number }
   /** Fixed pause. Use sparingly - prefer waitFor, which is not flaky. */
   | { action: 'wait'; ms: number }
+  /**
+   * Wait until the address is this in-app route (path + query + hash-route),
+   * watched from outside the page so nothing is compiled inside it.
+   */
+  | { action: 'waitForRoute'; route: string; timeoutMs?: number }
   /** Browser back button. In an SPA this is in-app navigation. */
   | { action: 'back' }
   | { action: 'forward' }
@@ -64,6 +69,7 @@ export const STEP_ACTIONS = [
   'fill',
   'waitFor',
   'waitForText',
+  'waitForRoute',
   'wait',
   'back',
   'forward',

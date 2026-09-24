@@ -441,10 +441,20 @@ export function findNewNodesByName(
   name: string,
   maxIdBefore: number,
   limit = 1,
+  /**
+   * The node type the growth was counted under (e.g. "object"). V8 names a
+   * function's compiled code after the function, so without this a class
+   * whose code was re-optimised during the loop hands back a fresh CODE node
+   * called "MyComponent" - and its retaining path explains why the class
+   * exists, not why its instances survive.
+   */
+  type?: string,
 ): number[] {
   const found: number[] = [];
   for (let i = 0; i < snapshot.nodeCount && found.length < limit; i++) {
-    if (snapshot.nodeName(i) === name && snapshot.nodeId(i) > maxIdBefore) found.push(i);
+    if (snapshot.nodeName(i) === name && snapshot.nodeId(i) > maxIdBefore && (type === undefined || snapshot.nodeType(i) === type)) {
+      found.push(i);
+    }
   }
   return found;
 }
@@ -494,10 +504,11 @@ export function findNodesByName(
   snapshot: HeapSnapshot,
   name: string,
   limit = 5,
+  type?: string,
 ): number[] {
   const found: number[] = [];
   for (let i = 0; i < snapshot.nodeCount && found.length < limit; i++) {
-    if (snapshot.nodeName(i) === name) found.push(i);
+    if (snapshot.nodeName(i) === name && (type === undefined || snapshot.nodeType(i) === type)) found.push(i);
   }
   return found;
 }

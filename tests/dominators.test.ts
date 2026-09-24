@@ -26,6 +26,8 @@ type EdgeKind = 'property' | 'weak' | 'shortcut';
 interface N {
   name: string;
   size: number;
+  /** Index into node_types below; defaults to 3 (object). 4 is code. */
+  type?: number;
 }
 type E = [from: number, to: number, kind?: EdgeKind];
 
@@ -48,7 +50,7 @@ function snapshotOf(nodes: N[], edges: E[]): HeapSnapshot {
   const nodeArray: number[] = [];
   const edgeArray: number[] = [];
   nodes.forEach((n, i) => {
-    nodeArray.push(i === 0 ? 9 : 3, i + 1, i + 1, n.size, (bySource[i] as E[]).length, 0);
+    nodeArray.push(i === 0 ? 9 : (n.type ?? 3), i + 1, i + 1, n.size, (bySource[i] as E[]).length, 0);
     for (const [, to, kind] of bySource[i] as E[]) {
       edgeArray.push(EDGE_TYPE[kind ?? 'property'], edgeName, to * FIELDS);
     }
@@ -288,6 +290,17 @@ describe('choosing which object to explain', () => {
     const s = snapshotOf([root, n('X', 1), n('Y', 1), n('X', 1)], [[0, 1], [0, 2], [0, 3]]);
     expect(findNewNodesByName(s, 'X', 3)).toEqual([3]);
     expect(findNewNodesByName(s, 'X', 4)).toEqual([]);
+  });
+
+  it('picks an instance of the TYPE that grew - not freshly compiled code named after the class', () => {
+    // V8 names a function's compiled code after the function. Node 1 is new
+    // CODE called X (re-optimised during the loop); node 2 is the new X
+    // OBJECT the growth was counted under. Tracing the code node explains
+    // why the class exists, not why its instances survive.
+    const s = snapshotOf([root, { name: 'X', size: 1, type: 4 }, n('X', 1)], [[0, 1], [0, 2]]);
+    expect(findNewNodesByName(s, 'X', 0)).toEqual([1]);
+    expect(findNewNodesByName(s, 'X', 0, 1, 'object')).toEqual([2]);
+    expect(findNewNodesByName(s, 'X', 0, 1, 'code')).toEqual([1]);
   });
 
   it('does not spend the trace budget on Array, Object and V8 internals', () => {

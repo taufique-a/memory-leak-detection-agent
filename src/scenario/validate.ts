@@ -222,6 +222,9 @@ function validateSteps(steps: unknown, field: string, errors: string[]): void {
       case 'press':
         requireString('key');
         break;
+      case 'waitForRoute':
+        requireString('route');
+        break;
       case 'evaluate':
         requireString('script');
         break;
@@ -333,6 +336,8 @@ export function describeStep(step: Step): string {
       return `wait for text "${step.text}"`;
     case 'wait':
       return `wait ${step.ms}ms`;
+    case 'waitForRoute':
+      return `wait for route ${step.route}`;
     case 'back':
       return 'browser back';
     case 'forward':

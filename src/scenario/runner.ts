@@ -25,6 +25,7 @@ import { LiveDevTools, type LiveDevToolsResult } from '../mcp/live';
 import { launchBrowser, type BrowserSession } from '../runtime/browser';
 import { enableMetrics, takeMemorySample, type MemorySample } from '../runtime/metrics';
 import { analyseTrend, type TrendAnalysis } from '../runtime/trend';
+import { waitForRoute } from './route';
 import { explainSessionMismatch, originOf, readSavedSession } from './session';
 import { describeStep } from './validate';
 import type { AuthConfig, ConsoleEntry, Scenario, Step, StepResult } from './types';
@@ -528,6 +529,10 @@ async function performStep(
       await page.waitForTimeout(step.ms);
       return;
 
+    case 'waitForRoute':
+      await waitForRoute(page, step.route, step.timeoutMs);
+      return;
+
     case 'back':
       await page.goBack();
       return;
@@ -641,7 +646,8 @@ export function withMoreTime(step: Step, factor: number): Step {
     step.action !== 'click' &&
     step.action !== 'clickText' &&
     step.action !== 'waitFor' &&
-    step.action !== 'waitForText'
+    step.action !== 'waitForText' &&
+    step.action !== 'waitForRoute'
   ) {
     return step;
   }
