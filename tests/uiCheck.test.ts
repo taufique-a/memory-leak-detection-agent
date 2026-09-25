@@ -66,7 +66,9 @@ describe('memory check screen', () => {
     expect(page).not.toContain('data-page="setup"');
     expect(page).toContain('id="mcUrl"');
     expect(page).toContain('Advanced options (optional)');
-    expect(page).toContain('view=advanced');
+    // No way out into the older tools from the page: one workflow, nothing to configure.
+    expect(page).not.toContain('view=advanced');
+    expect(page).not.toContain('Advanced tools');
     expect(page).toContain('Start Memory Check');
     expect(page).toContain('id="mcFixBack"');
     expect(page).toContain('Show technical details');

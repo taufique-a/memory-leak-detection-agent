@@ -36,6 +36,8 @@ export interface RunOptions {
   /** Directory for screenshots. */
   artifactDir?: string;
   onProgress?: (message: string) => void;
+  /** Each per-iteration reading, the moment it is taken - for a live chart. */
+  onSample?: (sample: MemorySample) => void;
   /**
    * Watch the app through Chrome DevTools MCP while it is driven: after every
    * round, record the page address, console problems and failed requests, and
@@ -385,9 +387,9 @@ export async function runScenario(
 
       if (abortedReason !== undefined) break;
 
-      samples.push(
-        await takeMemorySample(session.cdp, `iteration ${iteration}`, iteration, startedAt),
-      );
+      const sample = await takeMemorySample(session.cdp, `iteration ${iteration}`, iteration, startedAt);
+      samples.push(sample);
+      options.onSample?.(sample);
       if (iterationOk) iterationsCompleted++;
       if (live !== undefined) await live.observe(iteration);
 

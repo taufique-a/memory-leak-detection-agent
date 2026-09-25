@@ -87,6 +87,27 @@ export async function describeUnreachable(
   probe: PortProbe = probePort,
 ): Promise<{ message: string; short: string; found: RunningApp[] }> {
   const found = await findRunningApps(url, probe);
+  // The address itself accepts connections, but the page never finished
+  // loading: not "nothing is there", the app is slow or still building.
+  const same = found.find((f) => {
+    try {
+      const a = new URL(f.url);
+      const b = new URL(url);
+      return a.port === b.port && a.hostname === b.hostname;
+    } catch {
+      return false;
+    }
+  });
+  if (same !== undefined) {
+    return {
+      found,
+      short: `${url} accepts connections but the page did not finish loading`,
+      message:
+        `${url} accepts connections, but the page did not finish loading within the time allowed. The application may ` +
+        'still be starting or building - try again in a minute. If it opens in your own browser, check that it does not ' +
+        'wait on something only your browser has.',
+    };
+  }
   if (found.length === 0) {
     return {
       found,
