@@ -511,6 +511,57 @@ ul.state{list-style:none;padding:0;margin:.4rem 0 0;font-size:.83rem}
 ul.state li{padding:.15rem 0;color:var(--muted)}
 code{background:var(--code);padding:.1em .35em;border-radius:3px;font-size:.85em}
 a{color:var(--accent)}
+/* ---- the memory check wizard ---- */
+.wiz{list-style:none;display:flex;gap:.4rem;margin:0 0 1.2rem;padding:0;flex-wrap:wrap}
+.wiz li{display:flex;align-items:center;gap:.45rem;color:var(--muted);font-size:.86rem;padding:.3rem .6rem;border-radius:999px}
+.wiz li .n{display:inline-grid;place-items:center;width:1.5rem;height:1.5rem;border-radius:50%;border:2px solid var(--line);font-size:.75rem;font-weight:700}
+.wiz li.on{color:var(--fg);font-weight:600}
+.wiz li.on .n{border-color:var(--accent);color:var(--accent)}
+.wiz li.done .n{border-color:var(--ok);color:var(--ok)}
+.wz{display:none}.wz.on{display:block;animation:fadein .15s ease-out}
+.hero{border:1px solid var(--line);border-radius:12px;padding:1.4rem 1.5rem;background:var(--card);margin-bottom:1rem}
+.hero h2{font-size:1.7rem;line-height:1.2;margin:0 0 .6rem}
+.hero .accent{color:var(--accent)}
+.hero p{max-width:46rem;color:var(--muted);margin:0 0 1rem}
+.hero .row > input{flex:1 1 20rem;padding:.7rem .9rem;font-size:1rem}
+.hero .row > button{padding:.7rem 1.2rem;font-size:1rem}
+.tech{margin-top:.8rem}.tech summary{cursor:pointer;color:var(--accent);font-size:.85rem}
+.tech label{display:block;margin-top:.6rem}.tech input{width:100%;max-width:40rem}
+.facts4{display:grid;grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:.6rem}
+.facts4 > div{border:1px solid var(--line);border-radius:8px;padding:.7rem .9rem;background:var(--card);font-size:.85rem}
+.facts4 b{display:block}.facts4 span{color:var(--muted)}
+.split2{display:grid;grid-template-columns:1.6fr 1fr;gap:1rem}
+@media (max-width:900px){.split2{grid-template-columns:1fr}}
+.checks{list-style:none;margin:.6rem 0 0;padding:0}
+.checks li{display:flex;gap:.6rem;align-items:flex-start;padding:.45rem 0;border-bottom:1px solid var(--line);font-size:.9rem}
+.checks li:last-child{border-bottom:0}
+.checks .dot{flex:0 0 1.35rem;height:1.35rem;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;font-size:.75rem;font-weight:700;margin-top:.05rem}
+.checks li.done .dot{border-color:var(--ok);color:var(--ok)}
+.checks li.active .dot{border-color:var(--accent);border-top-color:transparent;animation:spin .9s linear infinite}
+.checks li.warn .dot{border-color:var(--warn);color:var(--warn)}
+.checks li.bad .dot{border-color:var(--bad);color:var(--bad)}
+.checks .lbl{flex:1}.checks .val{color:var(--muted);font-size:.8rem;white-space:nowrap}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:.3rem .9rem;font-size:.88rem;margin-top:.6rem}
+.kv b{color:var(--muted);font-weight:500}
+.pagelist{list-style:none;margin:.6rem 0 0;padding:0}
+.pagelist li{display:flex;gap:.6rem;align-items:center;padding:.45rem 0;border-bottom:1px solid var(--line);font-size:.9rem}
+.pagelist li:last-child{border-bottom:0}
+.pagelist .fill{flex:1}
+.pagepick{list-style:none;margin:.6rem 0 0;padding:0;max-height:22rem;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.pagepick li{padding:.45rem .7rem;border-bottom:1px solid var(--line);font-size:.9rem}
+.pagepick li:last-child{border-bottom:0}
+.pagepick label{display:flex;gap:.6rem;align-items:center;cursor:pointer;max-width:none}
+.pagepick .why{color:var(--muted);font-size:.78rem;margin-left:auto}
+.finding{border:1px solid var(--line);border-left-width:5px;border-radius:8px;padding:.9rem 1rem;margin:.7rem 0;background:var(--card)}
+.finding.confirmed{border-left-color:var(--bad)}.finding.strong{border-left-color:var(--bad)}
+.finding.possible{border-left-color:var(--warn)}.finding.inconclusive{border-left-color:var(--line)}
+.finding h3{margin:0 0 .3rem;font-size:1rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.finding .grid{display:grid;grid-template-columns:auto 1fr;gap:.25rem .9rem;font-size:.88rem;margin:.5rem 0}
+.finding .grid b{color:var(--muted);font-weight:500}
+.finding .evidence{display:none;margin:.5rem 0}.finding.open .evidence{display:block}
+.tag{display:inline-block;padding:.1em .55em;border-radius:999px;font-size:.72rem;font-weight:600;border:1px solid var(--line)}
+.tag.confirmed,.tag.strong{color:var(--bad);border-color:var(--bad)}.tag.possible{color:var(--warn);border-color:var(--warn)}
+.big{font-size:1.05rem}
 </style>
 </head>
 <body>
@@ -528,7 +579,7 @@ a{color:var(--accent)}
     <nav class="nav" id="nav">
       <button class="navitem on" data-page="check">
         <span class="num">&#9654;</span>
-        <span class="lbl">Memory check<small>Paste the URL, press start</small></span>
+        <span class="lbl">Memory check<small>Just give it the URL</small></span>
       </button>
       <button class="navitem" data-page="setup">
         <span class="num">1</span>
@@ -553,49 +604,91 @@ a{color:var(--accent)}
 
   <section id="content">
 
-    <!-- ============ MEMORY CHECK (the main screen) ============ -->
+    <!-- ============ MEMORY CHECK: the wizard ============ -->
     <div class="page on" id="page-check">
-      <div class="pagehead">
-        <h2>Memory check</h2>
-        <p>Give it your application's address. It works out what the app is, finds the pages it can
-          safely move between, measures each one, and explains what leaks &mdash; with evidence. It never
-          changes your code on its own: fixes wait for you in Fix Review.</p>
-      </div>
+      <ol class="wiz" id="wzSteps">
+        <li class="on" data-step="1"><span class="n">1</span>Application</li>
+        <li data-step="2"><span class="n">2</span>Access</li>
+        <li data-step="3"><span class="n">3</span>Pages</li>
+        <li data-step="4"><span class="n">4</span>Analysis</li>
+        <li data-step="5"><span class="n">5</span>Results</li>
+      </ol>
 
-      <div class="banner">
-        <div class="ffform">
-          <label>Application URL
-            <input type="text" id="mcUrl" placeholder="http://localhost:4200"></label>
-          <label>Project folder <span class="sub">(optional &mdash; lets it trace leaks to your files and prepare fixes)</span>
-            <input type="text" id="mcProject" placeholder="E:\\path\\to\\your\\project"></label>
+      <!-- 1. URL -->
+      <section class="wz on" id="wz1">
+        <div class="hero">
+          <h2>Just give me the URL.<br><span class="accent">I'll handle the rest.</span></h2>
+          <p>Enter your application URL. The agent inspects the application, checks for a login, finds the pages
+            it can safely check, measures their memory, and explains what leaks - with evidence. It never changes
+            your code without your approval.</p>
+          <div class="row">
+            <input type="text" id="mcUrl" placeholder="Enter your application URL (e.g. http://localhost:4200)" autocomplete="off">
+            <button id="wzContinue" type="button">Continue &rarr;</button>
+          </div>
+          <div class="sub" id="wzUrlHint"></div>
+          <details class="tech">
+            <summary>Advanced options (optional)</summary>
+            <label>Project folder - the one your dev server runs from. Lets the agent trace leaks to your files and prepare fixes.
+              <input type="text" id="mcProject" placeholder="D:\\projects\\my-app"></label>
+            <div class="sub">Nothing else needs configuring: framework, login, routes and Chrome are detected automatically.</div>
+          </details>
         </div>
-        <div class="row" style="margin-top:.7rem">
-          <button id="mcStart" type="button">Start Memory Check</button>
-          <span class="sub" id="mcHint"></span>
+        <div class="facts4">
+          <div><b>Automatic detection</b><span>No manual setup</span></div>
+          <div><b>Safe &amp; secure</b><span>No credentials stored</span></div>
+          <div><b>Fixes to review</b><span>Nothing changes without approval</span></div>
+          <div><b>Verified results</b><span>Build, test &amp; re-check</span></div>
         </div>
-      </div>
+      </section>
 
-      <div id="mcAuth"></div>
+      <!-- 2. Application / Access -->
+      <section class="wz" id="wz2">
+        <div class="split2">
+          <div class="panel">
+            <h2><span id="wzDetectTitle">Analyzing your application...</span></h2>
+            <div class="sub" id="wzDetectSub">Opening it in Chrome and reading what it says about itself.</div>
+            <ul class="checks" id="wzChecks"></ul>
+            <div id="wzAccess"></div>
+          </div>
+          <div class="panel">
+            <h2>Detected application</h2>
+            <div id="wzAppCard" class="sub">Not yet.</div>
+          </div>
+        </div>
+      </section>
 
-      <div class="panel" id="mcStatusBox" style="display:none;margin-bottom:1rem">
-        <h2><span>Status</span><span class="sub" id="mcCheckId"></span></h2>
-        <ol class="stepper" id="mcStages"></ol>
-      </div>
+      <!-- 3. Pages -->
+      <section class="wz" id="wz3">
+        <div class="panel">
+          <h2 id="wzPagesTitle">Pages</h2>
+          <div class="sub" id="wzPagesSub"></div>
+          <div id="wzPages"></div>
+          <div class="row" id="wzPagesActions" style="margin-top:.8rem"></div>
+        </div>
+      </section>
 
-      <div id="mcSummary"></div>
-      <div id="mcRoutes"></div>
-      <div id="mcFindings"></div>
-      <div id="mcVerification"></div>
+      <!-- 4. Analysis -->
+      <section class="wz" id="wz4">
+        <div class="panel">
+          <h2>Checking memory...</h2>
+          <div class="sub" id="wzAnalysisSub"></div>
+          <ul class="pagelist" id="wzAnalysis"></ul>
+          <div class="sub" id="wzAnalysisDetail" style="margin-top:.6rem"></div>
+        </div>
+      </section>
 
-      <div class="row" id="mcButtons" style="display:none;margin-bottom:1rem">
-        <button class="ghost" id="mcReport" type="button">View Report</button>
-        <button id="mcReview" type="button">Review Fixes</button>
-      </div>
-
-      <details class="banner" id="mcTechBox">
-        <summary>Show technical details</summary>
-        <div id="mcTech" class="sub" style="margin-top:.5rem">Nothing yet.</div>
-      </details>
+      <!-- 5. Results -->
+      <section class="wz" id="wz5">
+        <div id="wzSummary"></div>
+        <div id="wzFindings"></div>
+        <div id="wzFixResults"></div>
+        <div id="wzGit"></div>
+        <div class="row" id="wzResultActions" style="margin:1rem 0"></div>
+        <details class="tech" id="mcTechBox">
+          <summary>Show technical details</summary>
+          <div id="mcTech" class="sub" style="margin-top:.5rem">Nothing yet.</div>
+        </details>
+      </section>
     </div>
 
     <!-- ============ 1. SET UP ============ -->
@@ -829,14 +922,14 @@ a{color:var(--accent)}
 
   <div class="modalback" id="mcFixBack">
     <div class="modal split" role="dialog" aria-modal="true" aria-labelledby="mcFixTitle">
-      <h3 id="mcFixTitle">Fix Review</h3>
+      <h3 id="mcFixTitle">Fix Review - nothing is changed until you approve</h3>
       <div class="body" id="mcFixBody"></div>
       <div class="foot">
         <span class="sub" id="mcFixNote">Nothing is written until you press Apply Fix.</span>
         <button class="ghost" id="mcFixPrev" type="button">previous</button>
         <button class="ghost" id="mcFixNext" type="button">next</button>
         <button class="ghost" id="mcFixClose" type="button">close</button>
-        <button class="ghost" id="mcFixReject" type="button">Reject</button>
+        <button class="ghost" id="mcFixReject" type="button">Reject Fix</button>
         <button id="mcFixApply" type="button">Apply Fix</button>
       </div>
     </div>
@@ -1395,7 +1488,7 @@ function attachRun(result, action) {
 async function finish(exitCode) {
   const finishedAction = currentActionId;
   if (finishedAction === 'live') liveEnded();
-  if (['memoryCheck', 'checkApply', 'checkReject', 'checkVerify', 'checkExpected'].includes(finishedAction)) {
+  if (['memoryCheck', 'checkPlan', 'checkRun', 'checkApply', 'checkReject', 'checkVerify', 'checkExpected', 'checkCommit'].includes(finishedAction)) {
     void mcLoadCheck(mc.checkId || localStorage.getItem('memoryAgentLastCheck') || '');
   }
   if (finishedAction === 'login' && mcResumeAfterLogin) {
@@ -3552,37 +3645,44 @@ $('sourcePath').addEventListener('keydown', (e) => {
 /* ------------------------------------------------------------------ */
 
 /* ================================================================== */
-/* Memory check - the main screen                                      */
+/* Memory check - the wizard                                           */
 /* ================================================================== */
 
 /**
- * The stages a person sees, in order. The check command streams its real
- * state machine as "@@CHECK {json}" lines; this list only gives each state
- * a plain name. A state never reached stays an empty circle - nothing here
- * marks a stage done that the check did not actually report.
+ * One address in, a report out. Five screens:
+ *
+ *   1 Application  the URL (and, folded away, the project folder)
+ *   2 Access       what was detected, and a Sign in button if needed
+ *   3 Pages        a single page to confirm, or a list to choose from
+ *   4 Analysis     each chosen page, as it is measured
+ *   5 Results      findings in plain words, Fix Review, verification,
+ *                  source control, the report
+ *
+ * The screen never guesses: everything shown comes from the check's own
+ * "@@CHECK {json}" events (its real state machine) or from check.json.
  */
-const MC_STAGES = [
-  ['CONNECTING', 'Connecting to the application'],
-  ['AUTHENTICATION_REQUIRED', 'Sign-in needed'],
-  ['DISCOVERING', 'Understanding the application'],
-  ['PLANNING', 'Choosing links that are safe to follow'],
-  ['EXPLORING', 'Exploring pages'],
-  ['BASELINE_CAPTURED', 'Memory baseline captured'],
-  ['TESTING', 'Testing pages'],
-  ['HEAP_ANALYSIS', 'Heap analysis'],
-  ['CORRELATING', 'Source correlation'],
-  ['DIAGNOSING', 'Diagnosis'],
-  ['FIX_AVAILABLE', 'Fixes prepared for review'],
-  ['USER_REVIEW', 'Your review'],
-  ['APPLYING', 'Applying the approved change'],
-  ['BUILDING', 'Build and tests'],
-  ['TESTING_AFTER_FIX', 'Repeating the memory test'],
-  ['VERIFYING', 'Verifying'],
-  ['COMPLETED', 'Completed'],
-];
-const MC_FAILURES = {
+
+const WZ_STATE_LABEL = {
+  CONNECTING: 'Connecting to the application',
+  AUTHENTICATION_REQUIRED: 'Sign-in needed',
+  DISCOVERING: 'Understanding the application',
+  PLANNING: 'Judging which links are safe to follow',
+  EXPLORING: 'Exploring pages',
+  PAGES_FOUND: 'Pages found',
+  BASELINE_CAPTURED: 'Baseline captured',
+  TESTING: 'Measuring pages',
+  HEAP_ANALYSIS: 'Looking at what stays in memory',
+  CORRELATING: 'Matching it to your code',
+  DIAGNOSING: 'Working out the cause',
+  FIX_AVAILABLE: 'Fixes ready for your review',
+  USER_REVIEW: 'Your review',
+  APPLYING: 'Applying the approved change',
+  BUILDING: 'Build and tests',
+  TESTING_AFTER_FIX: 'Repeating the memory test',
+  VERIFYING: 'Verifying',
+  COMPLETED: 'Completed',
   AUTH_FAILED: 'Sign-in did not work',
-  BROWSER_ERROR: 'Browser problem',
+  BROWSER_ERROR: 'Could not reach the application',
   DISCOVERY_FAILED: 'Discovery failed',
   HEAP_CAPTURE_FAILED: 'Heap snapshots failed',
   BUILD_FAILED: 'Build failed',
@@ -3590,53 +3690,73 @@ const MC_FAILURES = {
   FIX_REJECTED: 'Fix rejected',
   VERIFICATION_INCONCLUSIVE: 'Verification inconclusive',
 };
+const WZ_FAILURES = ['AUTH_FAILED', 'BROWSER_ERROR', 'DISCOVERY_FAILED', 'HEAP_CAPTURE_FAILED', 'BUILD_FAILED', 'TEST_FAILED', 'VERIFICATION_INCONCLUSIVE'];
 
 let mc = mcFresh();
-/** Set when the person pressed Sign in: the check restarts itself once sign-in finishes. */
+/** Set when the person pressed Sign in: the check starts again once sign-in finishes. */
 let mcResumeAfterLogin = false;
 let mcFixIndex = 0;
+let wzStep = 1;
+/** Which planned pages are ticked on screen 3. */
+let wzPicked = new Set();
 
 function mcFresh() {
-  return { checkId: '', history: [], model: null, explored: [], plan: [], routes: {}, findings: [], check: null };
+  return { checkId: '', history: [], connected: null, model: null, explored: [], plan: [], routes: {}, findings: [], check: null, running: '' };
 }
 
-function mcConfidencePill(level) {
-  const tone = level === 'PROVEN' || level === 'HIGH' ? 'bad' : level === 'MEDIUM' ? 'warn' : '';
-  return '<span class="pill ' + tone + '">' + esc(level) + '</span>';
+function wzShow(step) {
+  wzStep = step;
+  for (const el of document.querySelectorAll('.wz')) el.classList.toggle('on', el.id === 'wz' + step);
+  for (const li of document.querySelectorAll('#wzSteps li')) {
+    const n = Number(li.getAttribute('data-step'));
+    li.classList.toggle('on', n === step);
+    li.classList.toggle('done', n < step);
+  }
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+
+function wzState() {
+  const h = mc.history;
+  return h.length ? h[h.length - 1].state : '';
+}
+function wzDetail(state) {
+  for (let i = mc.history.length - 1; i >= 0; i--) if (mc.history[i].state === state) return mc.history[i].detail || '';
+  return '';
+}
+function wzSeen(state) { return mc.history.some((t) => t.state === state); }
+
+/* ---- plain words for the six confidence levels ---- */
+function wzClassOf(level) {
+  if (level === 'PROVEN') return { cls: 'confirmed', label: 'Confirmed leak' };
+  if (level === 'HIGH') return { cls: 'strong', label: 'Strong evidence of a leak' };
+  if (level === 'MEDIUM' || level === 'LOW') return { cls: 'possible', label: 'Possible leak' };
+  if (level === 'UNKNOWN') return { cls: 'possible', label: 'Possible leak - not traced to your code' };
+  return { cls: 'inconclusive', label: 'Inconclusive' };
 }
 
 function mcKb(bytes) {
   if (bytes === undefined || bytes === null) return '';
   const kb = bytes / 1024;
-  return (kb >= 0 ? '+' : '') + kb.toFixed(0) + ' KB per visit';
+  return (kb >= 0 ? '+' : '') + (kb >= 1024 ? (kb / 1024).toFixed(1) + ' MB' : kb.toFixed(0) + ' KB') + ' per visit';
 }
 
-function startMemoryCheck() {
-  const url = $('mcUrl').value.trim();
-  const project = $('mcProject').value.trim();
-  if (!/^https?:[/][/]/i.test(url)) {
-    $('mcHint').textContent = 'Paste the address you open the app at, starting with http:// or https://';
-    return;
-  }
-  if (currentRun) {
-    $('mcHint').textContent = 'Something else is running - wait for it to finish, or press stop.';
-    return;
-  }
-  localStorage.setItem('memoryAgentCheckUrl', url);
-  localStorage.setItem('memoryAgentCheckProject', project);
-  $('mcHint').textContent = '';
-  mc = mcFresh();
-  $('mcAuth').innerHTML = '';
-  mcRender();
-  void mcRunAction('memoryCheck', { url: url, project: project });
+/** The end of a retaining path is where the cause is named; the start is engine plumbing. */
+function mcShortPath(p) {
+  const hops = String(p).split(' -> ');
+  return (hops.length > 6 ? '... -> ' : '') + hops.slice(-6).map((h) => (h.length > 80 ? h.slice(0, 77) + '...' : h)).join(' -> ');
 }
+
+/* ------------------------------------------------------------------ */
+/* Starting things                                                      */
+/* ------------------------------------------------------------------ */
 
 async function mcRunAction(actionId, params) {
   const action = ACTIONS.find((a) => a.id === actionId);
-  if (!action || currentRun) return;
+  if (!action || currentRun) return false;
   // A follow-up continues the same check: keep its history so the new
   // states are added to it rather than replacing it.
-  if (actionId !== 'memoryCheck' && actionId !== 'login' && mc.check) mc.history = mc.check.state.history.slice();
+  if (actionId !== 'checkPlan' && actionId !== 'login' && mc.check) mc.history = mc.check.state.history.slice();
+  mc.running = actionId;
   $('out').textContent = '';
   const result = await api('/api/run', {
     method: 'POST',
@@ -3644,211 +3764,34 @@ async function mcRunAction(actionId, params) {
     body: JSON.stringify({ action: actionId, params: params }),
   });
   if (result.error) {
-    $('mcHint').textContent = result.error;
-    return;
+    $('wzUrlHint').textContent = result.error;
+    mc.running = '';
+    return false;
   }
   attachRun(result, action);
+  return true;
 }
 
-function handleCheckLine(line) {
-  let e;
-  try { e = JSON.parse(line.slice('@@CHECK '.length)); } catch { return; }
-  if (e.type === 'started') {
-    mc.checkId = e.checkId;
-    localStorage.setItem('memoryAgentLastCheck', e.checkId);
-  } else if (e.type === 'state') {
-    mc.history.push(e.transition);
-  } else if (e.type === 'model') {
-    mc.model = e;
-  } else if (e.type === 'explored') {
-    mc.explored.push(e);
-  } else if (e.type === 'plan') {
-    mc.plan = e.routes;
-    for (const r of e.routes) mc.routes[r] = mc.routes[r] || { status: 'waiting' };
-  } else if (e.type === 'route') {
-    mc.routes[e.route] = e;
-  } else if (e.type === 'finding') {
-    mc.findings.push(e.finding);
-  } else if (e.type === 'followup') {
-    $('mcHint').textContent = e.message || '';
+/** Screen 1 -> 2: find the application and its pages. */
+function startMemoryCheck() {
+  const url = $('mcUrl').value.trim();
+  const project = $('mcProject').value.trim();
+  if (!/^https?:[/][/]/i.test(url)) {
+    $('wzUrlHint').textContent = 'Paste the address you open the app at, starting with http:// or https://';
+    return;
   }
-  mcRender();
-}
-
-function mcCurrentState() {
-  const h = mc.check ? mc.check.state.history : mc.history;
-  return h.length ? h[h.length - 1].state : '';
-}
-
-function mcRenderStages() {
-  const history = mc.check && mc.check.state.history.length >= mc.history.length ? mc.check.state.history : mc.history;
-  const seen = new Map(history.map((t) => [t.state, t.detail]));
-  const current = history.length ? history[history.length - 1].state : '';
-  const failed = MC_FAILURES[current] !== undefined;
-  const lastSeenIndex = MC_STAGES.reduce((acc, s, i) => (seen.has(s[0]) ? i : acc), -1);
-  let html = '';
-  MC_STAGES.forEach((s, i) => {
-    const state = s[0];
-    if (state === 'AUTHENTICATION_REQUIRED' && !seen.has(state)) return;
-    if (i > lastSeenIndex && ['USER_REVIEW', 'APPLYING', 'BUILDING', 'TESTING_AFTER_FIX', 'VERIFYING'].includes(state)) return;
-    let cls = '';
-    let mark = '';
-    if (state === current && !failed) {
-      cls = state === 'COMPLETED' || state === 'FIX_AVAILABLE' ? 'done' : currentRun ? 'active' : 'done';
-      mark = cls === 'done' ? '&#10003;' : '';
-    } else if (seen.has(state)) {
-      cls = 'done';
-      mark = '&#10003;';
-    } else if (i < lastSeenIndex) {
-      cls = 'skip';
-    }
-    const detail = seen.get(state);
-    html += '<li class="stage ' + cls + '"><span class="dot">' + mark + '</span><span class="txt"><b>' +
-      esc(s[1]) + '</b>' + (detail ? '<span class="det">' + esc(detail) + '</span>' : '') + '</span></li>';
-  });
-  if (failed) {
-    html += '<li class="stage fail"><span class="dot">!</span><span class="txt"><b>' + esc(MC_FAILURES[current]) +
-      '</b><span class="det">' + esc(seen.get(current) || '') + '</span></span></li>';
+  if (currentRun) {
+    $('wzUrlHint').textContent = 'Something else is running - wait for it to finish, or press stop.';
+    return;
   }
-  $('mcStages').innerHTML = html;
-}
-
-function mcRender() {
-  const any = mc.history.length > 0 || mc.check;
-  $('mcStatusBox').style.display = any ? '' : 'none';
-  $('mcCheckId').textContent = mc.checkId ? mc.checkId : '';
-  mcRenderStages();
-
-  /* ---- authentication ---- */
-  if (mcCurrentState() === 'AUTHENTICATION_REQUIRED' || mcCurrentState() === 'AUTH_FAILED') {
-    $('mcAuth').innerHTML = '<div class="banner warn"><strong>' +
-      (mcCurrentState() === 'AUTH_FAILED' ? 'Your saved sign-in no longer works' : 'This application needs you to sign in') +
-      '</strong><p class="sub" style="margin:.3rem 0 .6rem">A real Chrome window opens. You sign in there yourself, then press ' +
-      '"I have signed in / continue" under the console. Only the resulting session is saved - this tool never sees your ' +
-      'password. The memory check then starts again on its own.</p>' +
-      '<button id="mcSignIn" type="button">Sign in</button></div>';
-    $('mcSignIn').addEventListener('click', mcSignIn);
-  }
-
-  /* ---- what it found out ---- */
-  const c = mc.check;
-  const m = c && c.model ? c.model : null;
-  let summary = '';
-  if (m) {
-    summary = '<div class="banner"><div class="facts2">' +
-      '<span><b>Framework</b> ' + esc(m.framework.displayName) + (m.framework.version ? ' ' + esc(m.framework.version) : '') +
-      ' ' + mcConfidencePill(m.framework.confidence) + '</span>' +
-      '<span><b>Links</b> ' + m.routes.length + ' found, ' + m.routes.filter((r) => r.safeToVisit).length + ' safe to follow</span>' +
-      '<span><b>Areas</b> ' + m.modules.length + '</span>' +
-      '<span><b>Components known</b> ' + m.entities.length + '</span>' +
-      '<span><b>Charts</b> ' + (m.chartLibraries.length ? esc(m.chartLibraries.join(', ')) : 'none') + '</span>' +
-      '<span><b>Workers / sockets</b> ' + m.workers.length + ' / ' + m.sockets.length + '</span>' +
-      '</div>' + (c.conclusion ? '<p style="margin:.6rem 0 0"><b>' + esc(c.conclusion) + '</b></p>' : '') + '</div>';
-  } else if (c && c.conclusion) {
-    // Stopped before the application was understood (an address that does not
-    // answer, a login): the conclusion IS the answer, so show it.
-    summary = '<div class="banner warn"><b>' + esc(c.conclusion) + '</b></div>';
-  } else if (mc.model) {
-    summary = '<div class="banner">' + esc(mc.model.framework) + (mc.model.version ? ' ' + esc(mc.model.version) : '') +
-      ' &middot; ' + mc.model.safeRoutes + ' of ' + mc.model.routes + ' links safe to follow</div>';
-  }
-  $('mcSummary').innerHTML = summary;
-
-  /* ---- pages ---- */
-  const results = c ? c.routeResults : null;
-  let routes = '';
-  if (results && results.length) {
-    routes = results.map((r) => {
-      const tone = r.verdict === 'GROWING' ? 'bad' : r.verdict === 'FAILED' || r.verdict === 'INCONCLUSIVE' ? 'warn' : 'ok';
-      const leaks = c.findings.filter((f) => f.route === r.route).map((f) => f.constructorName);
-      return '<li><span class="pill ' + tone + '">' + esc(r.verdict) + '</span> <code>' + esc(r.route) + '</code> ' +
-        '<span class="sub">' + esc(mcKb(r.bytesPerIteration)) + (r.confirmation ? ' (confirmed over ' + r.confirmation.iterations + ' visits)' : '') +
-        (r.error ? ' - ' + esc(r.error) : '') + '</span>' +
-        (leaks.length ? '<div class="sub">Leaks here: <b>' + esc(leaks.join(', ')) + '</b></div>' : (r.verdict === 'GROWING' ? '' : '<div class="sub">No leak found on this page.</div>')) +
-        '</li>';
-    }).join('');
-  } else if (mc.plan.length || mc.explored.length) {
-    const list = mc.plan.length ? mc.plan : mc.explored.map((x) => x.route);
-    routes = list.map((route) => {
-      const r = mc.routes[route];
-      const ex = mc.explored.find((x) => x.route === route);
-      if (r && r.status === 'testing') return '<li><span class="spinner"></span><code>' + esc(route) + '</code> <span class="sub">testing...</span></li>';
-      if (r && r.status === 'done') return '<li><span class="pill ' + (r.verdict === 'GROWING' ? 'bad' : 'ok') + '">' + esc(r.verdict) + '</span> <code>' + esc(route) + '</code> <span class="sub">' + esc(mcKb(r.bytesPerIteration)) + '</span></li>';
-      if (r && r.status === 'failed') return '<li><span class="pill warn">FAILED</span> <code>' + esc(route) + '</code> <span class="sub">' + esc(r.detail || '') + '</span></li>';
-      if (ex && !ex.measurable) return '<li><span class="pill">skipped</span> <code>' + esc(route) + '</code> <span class="sub">' + esc(ex.note) + '</span></li>';
-      return '<li><span class="pill">waiting</span> <code>' + esc(route) + '</code></li>';
-    }).join('');
-  }
-  $('mcRoutes').innerHTML = routes ? '<div class="banner"><strong>Pages</strong><ul class="state">' + routes + '</ul></div>' : '';
-
-  /* ---- findings ---- */
-  const findings = c ? c.findings : mc.findings;
-  if (findings.length) {
-    $('mcFindings').innerHTML = '<div class="banner"><strong>Findings</strong>' + findings.map((f) => {
-      const fix = c && f.fixIndex !== undefined ? c.fixes[f.fixIndex] : undefined;
-      const canApply = fix && fix.proposedHash;
-      return '<div class="verdict ' + (f.confidence === 'PROVEN' || f.confidence === 'HIGH' ? 'bad' : 'warn') + '" style="margin-top:.6rem">' +
-        '<h3>' + mcConfidencePill(f.confidence) + ' ' + esc(f.constructorName) + ' <span class="sub">on ' + esc(f.route) + '</span></h3>' +
-        '<div>' + esc(f.rootCause.summary) + '</div>' +
-        '<div class="sub">+' + f.countDelta + ' instance(s) stayed behind after the page was left. ' +
-        (f.file ? 'Source: ' + openLink(f.file, f.line) : 'Not traced to a source file.') + '</div>' +
-        (f.knowledge && f.knowledge.length ? '<div class="sub">Earlier: ' + f.knowledge.map((k) => esc(k.decision + ' on ' + k.at.slice(0, 10))).join('; ') + '</div>' : '') +
-        '<div class="row" style="margin-top:.4rem">' +
-        (fix ? '<button class="mini" data-mcfix="' + fix.index + '" type="button">' + (canApply ? 'Review fix' : 'Read the advice') + '</button>' : '') +
-        (c ? '<button class="ghost mini" data-mcexpected="' + esc(f.id) + '" type="button">Mark as expected</button>' : '') +
-        '</div></div>';
-    }).join('') + '</div>';
-    for (const b of document.querySelectorAll('[data-mcfix]')) b.addEventListener('click', () => mcOpenFix(Number(b.getAttribute('data-mcfix'))));
-    for (const b of document.querySelectorAll('[data-mcexpected]')) b.addEventListener('click', () => {
-      if (!mc.check) return;
-      void mcRunAction('checkExpected', { check: mc.check.checkId, finding: b.getAttribute('data-mcexpected') });
-    });
-  } else {
-    $('mcFindings').innerHTML = '';
-  }
-
-  /* ---- verification ---- */
-  if (c && c.verifications.length) {
-    $('mcVerification').innerHTML = '<div class="banner"><strong>Fix results</strong>' + c.verifications.map((v) => {
-      const tone = v.status === 'FIX VERIFIED' ? 'ok' : v.status === 'FIX PARTIALLY VERIFIED' ? 'warn' : 'bad';
-      return '<div class="verdict ' + tone + '" style="margin-top:.6rem"><h3>' + esc(v.status) + ' <span class="sub">fix ' + v.fixIndex + '</span></h3>' +
-        '<div>' + esc(v.explanation) + '</div>' +
-        (v.before && v.after ? '<div class="sub">Instances left behind: before ' + v.before.countDelta + ', after ' + v.after.countDelta + '</div>' : '') +
-        (v.build ? '<div class="sub">Build and tests: ' + (v.build.passed ? 'passed' : 'FAILED') + '</div>' : '') +
-        (v.applied && v.status !== 'FIX VERIFIED' ? '<div class="row" style="margin-top:.4rem"><button class="ghost mini" data-mcverify="' + v.fixIndex + '" type="button">Measure again</button></div>' : '') +
-        (v.rollback && v.rollback.length ? '<details><summary>How to undo</summary><pre>' + esc(v.rollback.join('\\n')) + '</pre></details>' : '') +
-        '</div>';
-    }).join('') + '</div>';
-    for (const b of document.querySelectorAll('[data-mcverify]')) b.addEventListener('click', () => {
-      void mcRunAction('checkVerify', { check: mc.check.checkId, fix: b.getAttribute('data-mcverify') });
-    });
-  } else {
-    $('mcVerification').innerHTML = '';
-  }
-
-  /* ---- buttons and technical details ---- */
-  const writable = c ? c.fixes.filter((x) => x.proposedHash) : [];
-  $('mcButtons').style.display = c ? '' : 'none';
-  $('mcReview').style.display = c && c.fixes.length ? '' : 'none';
-  $('mcReview').textContent = writable.length ? 'Review Fixes (' + writable.length + ')' : 'Read the advice';
-  if (c) {
-    const lines = [];
-    for (const f of c.findings) lines.push(f.constructorName + ': ' + f.retainingPath);
-    for (const l of c.limitations) lines.push(l);
-    for (const u of (c.model ? c.model.unknowns : [])) lines.push(u);
-    for (const x of c.manualItems) lines.push('Needs a person: ' + x);
-    $('mcTech').innerHTML = '<ul class="state">' + lines.map((l) => '<li>' + esc(l) + '</li>').join('') + '</ul>';
-  }
-}
-
-async function mcLoadCheck(id) {
-  if (!id) return;
-  let r;
-  try { r = await api('/api/memcheck?id=' + encodeURIComponent(id)); } catch { return; }
-  if (!r || !r.check) return;
-  mc.check = r.check;
-  mc.checkId = r.check.checkId;
-  mcRender();
+  localStorage.setItem('memoryAgentCheckUrl', url);
+  localStorage.setItem('memoryAgentCheckProject', project);
+  $('wzUrlHint').textContent = '';
+  mc = mcFresh();
+  wzPicked = new Set();
+  wzShow(2);
+  wzRenderDetect();
+  void mcRunAction('checkPlan', { url: url, project: project });
 }
 
 function mcSignIn() {
@@ -3858,7 +3801,377 @@ function mcSignIn() {
   void mcRunAction('login', { url: url });
 }
 
-/* ---- Fix Review ---- */
+/** Screen 3 -> 4: measure the chosen pages. */
+function wzRunPages(pages) {
+  if (!mc.check) return;
+  wzShow(4);
+  mc.routes = {};
+  const list = pages === 'all' ? mc.check.plan.planned.map((p) => p.route) : pages === 'current' ? [mc.check.plan.startRoute] : pages;
+  for (const r of list) mc.routes[r] = { status: 'waiting' };
+  wzRenderAnalysis();
+  void mcRunAction('checkRun', { check: mc.check.checkId, pages: pages === 'all' || pages === 'current' ? pages : pages.join(',') });
+}
+
+/* ------------------------------------------------------------------ */
+/* Events from the running check                                        */
+/* ------------------------------------------------------------------ */
+
+function handleCheckLine(line) {
+  let e;
+  try { e = JSON.parse(line.slice('@@CHECK '.length)); } catch { return; }
+  if (e.type === 'started') {
+    mc.checkId = e.checkId;
+    localStorage.setItem('memoryAgentLastCheck', e.checkId);
+  } else if (e.type === 'state') {
+    mc.history.push(e.transition);
+  } else if (e.type === 'connected') {
+    mc.connected = e;
+  } else if (e.type === 'model') {
+    mc.model = e;
+  } else if (e.type === 'explored') {
+    mc.explored.push(e);
+  } else if (e.type === 'plan') {
+    mc.plan = e.routes;
+  } else if (e.type === 'route') {
+    mc.routes[e.route] = e;
+  } else if (e.type === 'finding') {
+    mc.findings.push(e.finding);
+  } else if (e.type === 'followup') {
+    if (e.message) $('wzUrlHint').textContent = '';
+  }
+  if (wzStep === 2) wzRenderDetect();
+  else if (wzStep === 4) wzRenderAnalysis();
+}
+
+async function mcLoadCheck(id) {
+  if (!id) return;
+  let r;
+  try { r = await api('/api/memcheck?id=' + encodeURIComponent(id)); } catch { return; }
+  if (!r || !r.check) return;
+  mc.check = r.check;
+  mc.checkId = r.check.checkId;
+  mc.history = r.check.state.history.slice();
+  wzRoute();
+}
+
+/** After a run finishes: put the person on the screen the check's state calls for. */
+function wzRoute() {
+  const c = mc.check;
+  if (!c) return;
+  const s = c.state.current;
+  if (s === 'PAGES_FOUND') { wzShow(3); wzRenderPages(); return; }
+  if (s === 'AUTHENTICATION_REQUIRED' || s === 'AUTH_FAILED' || s === 'BROWSER_ERROR' || s === 'DISCOVERY_FAILED') { wzShow(2); wzRenderDetect(); return; }
+  if (c.routeResults && c.routeResults.length) { wzShow(5); wzRenderResults(); return; }
+  wzShow(2); wzRenderDetect();
+}
+
+/* ------------------------------------------------------------------ */
+/* Screen 2: what was detected                                          */
+/* ------------------------------------------------------------------ */
+
+function wzRenderDetect() {
+  const c = mc.check;
+  const m = c && c.model ? c.model : null;
+  const state = wzState();
+  const failed = WZ_FAILURES.includes(state);
+  const running = !!currentRun;
+
+  const reachable = mc.connected || (m && m.finalUrl);
+  const framework = m ? m.framework : (mc.model ? { displayName: mc.model.framework, version: mc.model.version } : null);
+  const authKnown = m ? true : (state === 'AUTHENTICATION_REQUIRED' || state === 'AUTH_FAILED');
+  const authRequired = m ? m.authentication.required : (state === 'AUTHENTICATION_REQUIRED' || state === 'AUTH_FAILED');
+  const item = (cls, label, value) =>
+    '<li class="' + cls + '"><span class="dot">' + (cls === 'done' ? '&#10003;' : cls === 'bad' ? '!' : cls === 'warn' ? '!' : '') + '</span>' +
+    '<span class="lbl">' + esc(label) + '</span><span class="val">' + value + '</span></li>';
+
+  let checks = '';
+  checks += item(reachable ? 'done' : state === 'BROWSER_ERROR' ? 'bad' : running ? 'active' : '', 'Application reachable',
+    reachable ? esc((mc.connected && mc.connected.url) || (m && m.finalUrl) || '') : state === 'BROWSER_ERROR' ? 'no' : '');
+  checks += item(framework ? 'done' : reachable && running ? 'active' : '', 'Framework detected',
+    framework ? esc(framework.displayName + (framework.version ? ' ' + framework.version : '')) : '');
+  checks += item(reachable ? 'done' : running ? 'active' : '', 'Chrome DevTools connected', reachable ? 'ready' : '');
+  checks += item(authKnown ? (authRequired ? 'warn' : 'done') : reachable && running ? 'active' : '', 'Login status',
+    authKnown ? (authRequired ? '<span class="pill warn">required</span>' : 'not required') : '');
+  if (m || state === 'PAGES_FOUND') {
+    const n = c && c.plan ? c.plan.planned.length : mc.plan.length;
+    checks += item(state === 'PAGES_FOUND' ? 'done' : running ? 'active' : '', 'Pages found',
+      state === 'PAGES_FOUND' ? (c.mode === 'single-page' ? 'a single page' : n + ' page(s)') : '');
+  }
+  $('wzChecks').innerHTML = checks;
+
+  const title = $('wzDetectTitle');
+  const sub = $('wzDetectSub');
+  if (failed) {
+    title.textContent = WZ_STATE_LABEL[state] || 'Stopped';
+    sub.textContent = wzDetail(state);
+  } else if (state === 'AUTHENTICATION_REQUIRED') {
+    title.textContent = 'Login required';
+    sub.textContent = 'The application asks you to sign in before it can be checked.';
+  } else if (state === 'PAGES_FOUND') {
+    title.textContent = 'Application found';
+    sub.textContent = 'Everything needed is known. Next: the pages.';
+  } else if (running) {
+    title.textContent = 'Analyzing your application...';
+    sub.textContent = (WZ_STATE_LABEL[state] || 'Working') + (wzDetail(state) ? ' - ' + wzDetail(state) : '');
+  }
+
+  /* access box: login, an address that does not answer, or continue */
+  let access = '';
+  if (state === 'AUTHENTICATION_REQUIRED' || state === 'AUTH_FAILED') {
+    access = '<div class="banner warn" style="margin-top:.8rem"><strong>' +
+      (state === 'AUTH_FAILED' ? 'Your saved sign-in no longer works' : 'Login required') + '</strong>' +
+      '<p class="sub" style="margin:.3rem 0 .6rem">A real Chrome window opens. Sign in there yourself, then press ' +
+      '"I have signed in / continue" under the console. Only the resulting session is saved - the agent never sees your ' +
+      'password - and the check continues on its own.</p><button id="mcSignIn" type="button">Open Login</button></div>';
+  } else if (failed && c) {
+    access = '<div class="banner warn" style="margin-top:.8rem"><b>' + esc(c.conclusion) + '</b>' +
+      '<div class="row" style="margin-top:.6rem"><button class="ghost" id="wzBack1" type="button">Change the address</button></div></div>';
+  } else if (state === 'PAGES_FOUND') {
+    access = '<div class="row" style="margin-top:.8rem"><button id="wzToPages" type="button">Continue &rarr;</button></div>';
+  }
+  $('wzAccess').innerHTML = access;
+  const signIn = $('mcSignIn'); if (signIn) signIn.addEventListener('click', mcSignIn);
+  const back = $('wzBack1'); if (back) back.addEventListener('click', () => wzShow(1));
+  const next = $('wzToPages'); if (next) next.addEventListener('click', () => { wzShow(3); wzRenderPages(); });
+
+  /* the card */
+  if (m) {
+    $('wzAppCard').innerHTML = '<div class="big"><b>' + esc(m.title || 'Untitled') + '</b></div>' +
+      '<div class="kv">' +
+      '<b>Framework</b><span>' + esc(m.framework.displayName) + (m.framework.version ? ' ' + esc(m.framework.version) : '') + ' ' + mcConfidencePill(m.framework.confidence) + '</span>' +
+      '<b>Address</b><span><code>' + esc(m.finalUrl) + '</code></span>' +
+      '<b>Current route</b><span><code>' + esc(c.plan ? c.plan.startRoute : '/') + '</code></span>' +
+      '<b>Application type</b><span>' + (c.mode === 'single-page' ? 'Single page' : c.mode === 'multi-page' ? 'Several pages' : 'not known yet') + '</span>' +
+      '<b>Links</b><span>' + m.routes.length + ' found, ' + m.routes.filter((r) => r.safeToVisit).length + ' safe to follow</span>' +
+      (m.applicationVersion ? '<b>App version</b><span>' + esc(m.applicationVersion.value) + '</span>' : '') +
+      '<b>Sign-in</b><span>' + (m.authentication.required ? 'required' : m.authentication.signedIn ? 'saved sign-in used' : 'not required') + '</span>' +
+      (c.projectRoot ? '<b>Source</b><span><code>' + esc(c.projectRoot) + '</code></span>' : '<b>Source</b><span class="sub">not given - leaks can be named but not fixed</span>') +
+      '</div>';
+  } else if (mc.connected) {
+    $('wzAppCard').innerHTML = '<div class="big"><b>' + esc(mc.connected.title || 'Untitled') + '</b></div><div class="sub">' + esc(mc.connected.url) + '</div>';
+  } else {
+    $('wzAppCard').innerHTML = '<span class="sub">Not yet.</span>';
+  }
+}
+
+function mcConfidencePill(level) {
+  const tone = level === 'PROVEN' || level === 'HIGH' ? 'ok' : level === 'MEDIUM' ? 'warn' : '';
+  return '<span class="pill ' + tone + '">' + esc(level) + '</span>';
+}
+
+/* ------------------------------------------------------------------ */
+/* Screen 3: the pages                                                  */
+/* ------------------------------------------------------------------ */
+
+function wzRenderPages() {
+  const c = mc.check;
+  if (!c || !c.plan) return;
+  const offered = c.plan.planned;
+  const start = c.plan.startRoute;
+
+  if (c.mode === 'single-page' || offered.length <= 1) {
+    $('wzPagesTitle').textContent = 'Single page detected';
+    $('wzPagesSub').textContent = "We'll analyze this page while it stays open: what is safe to touch on it is used, and its memory is watched.";
+    $('wzPages').innerHTML = '<div class="kv" style="margin-top:.8rem"><b>Page</b><span><code>' + esc(start) + '</code></span>' +
+      (offered[0] ? '<b>Why</b><span>' + esc(offered[0].priorityReasons.join('; ')) + '</span>' : '') + '</div>';
+    $('wzPagesActions').innerHTML = '<button id="wzStartSingle" type="button">Start Memory Check</button>';
+    $('wzStartSingle').addEventListener('click', () => wzRunPages('current'));
+    return;
+  }
+
+  $('wzPagesTitle').textContent = 'Multiple pages detected (' + offered.length + ')';
+  $('wzPagesSub').textContent = 'Choose which pages to check. The busiest are ticked already; the page you gave is always included.';
+  if (wzPicked.size === 0) offered.slice(0, 6).forEach((p) => wzPicked.add(p.route));
+  wzPicked.add(start);
+  $('wzPages').innerHTML = '<ul class="pagepick">' + offered.map((p) =>
+    '<li><label><input type="checkbox" data-route="' + esc(p.route) + '"' + (wzPicked.has(p.route) ? ' checked' : '') + (p.route === start ? ' disabled' : '') + '> ' +
+    '<code>' + esc(p.route) + '</code>' + (p.route === start ? ' <span class="sub">(the page you gave)</span>' : '') +
+    '<span class="why">' + esc(p.priorityReasons[0] || '') + '</span></label></li>').join('') + '</ul>';
+  for (const box of document.querySelectorAll('#wzPages input[type=checkbox]')) {
+    box.addEventListener('change', () => {
+      const r = box.getAttribute('data-route');
+      if (box.checked) wzPicked.add(r); else wzPicked.delete(r);
+      wzPicked.add(start);
+      const btn = $('wzCheckSelected'); if (btn) btn.textContent = 'Check Selected Pages (' + wzPicked.size + ')';
+    });
+  }
+  $('wzPagesActions').innerHTML =
+    '<button id="wzCheckSelected" type="button">Check Selected Pages (' + wzPicked.size + ')</button>' +
+    '<button class="ghost" id="wzCheckAll" type="button">Check All Pages</button>' +
+    '<button class="ghost" id="wzCheckCurrent" type="button">Check current page only</button>';
+  $('wzCheckSelected').addEventListener('click', () => wzRunPages([...wzPicked]));
+  $('wzCheckAll').addEventListener('click', () => wzRunPages('all'));
+  $('wzCheckCurrent').addEventListener('click', () => wzRunPages('current'));
+}
+
+/* ------------------------------------------------------------------ */
+/* Screen 4: measuring                                                  */
+/* ------------------------------------------------------------------ */
+
+function wzRenderAnalysis() {
+  const state = wzState();
+  $('wzAnalysisSub').textContent = (WZ_STATE_LABEL[state] || '') + (wzDetail(state) ? ' - ' + wzDetail(state) : '');
+  const routes = Object.keys(mc.routes);
+  $('wzAnalysis').innerHTML = routes.map((route) => {
+    const r = mc.routes[route];
+    let mark = '<span class="pill">waiting</span>';
+    let note = '';
+    if (r.status === 'testing') { mark = '<span class="spinner"></span>'; note = 'measuring...'; }
+    else if (r.status === 'done') { mark = '<span class="pill ' + (r.verdict === 'GROWING' ? 'bad' : 'ok') + '">' + (r.verdict === 'GROWING' ? 'memory keeps growing' : 'no growth') + '</span>'; note = mcKb(r.bytesPerIteration); }
+    else if (r.status === 'failed') { mark = '<span class="pill warn">could not measure</span>'; note = r.detail || ''; }
+    return '<li>' + mark + ' <code>' + esc(route) + '</code><span class="fill"></span><span class="sub">' + esc(note) + '</span></li>';
+  }).join('');
+  const later = ['HEAP_ANALYSIS', 'CORRELATING', 'DIAGNOSING'].includes(state)
+    ? 'Memory kept growing on at least one page. Taking heap snapshots around the same journey to name what stays behind and what holds it. This takes a few minutes.'
+    : '';
+  $('wzAnalysisDetail').textContent = later;
+}
+
+/* ------------------------------------------------------------------ */
+/* Screen 5: results                                                    */
+/* ------------------------------------------------------------------ */
+
+function wzRenderResults() {
+  const c = mc.check;
+  if (!c) return;
+  const findings = c.findings || [];
+  const pages = c.routeResults || [];
+  const growing = pages.filter((p) => p.verdict === 'GROWING');
+  const confirmed = findings.filter((f) => f.confidence === 'PROVEN' || f.confidence === 'HIGH').length;
+  const possible = findings.length - confirmed;
+  const failed = pages.filter((p) => p.verdict === 'FAILED').length;
+
+  /* summary */
+  let tone = growing.length ? 'bad' : 'ok';
+  let head = growing.length ? 'Memory leak detected' : 'No memory leak found';
+  if (!pages.length || failed === pages.length) { tone = 'warn'; head = 'Nothing could be measured'; }
+  $('wzSummary').innerHTML = '<div class="verdict ' + tone + '"><h3>' + esc(head) + '</h3>' +
+    '<div>' + esc(c.conclusion) + '</div>' +
+    (findings.length ? '<div class="sub" style="margin-top:.3rem">' + confirmed + ' confirmed or strong, ' + possible + ' possible, across ' + growing.length + ' page(s).</div>' : '') +
+    '<ul class="pagelist" style="margin-top:.6rem">' + pages.map((p) => {
+      const leaks = findings.filter((f) => f.route === p.route).map((f) => f.constructorName);
+      const mark = p.verdict === 'GROWING' ? '<span class="pill bad">memory keeps growing</span>' : p.verdict === 'FAILED' ? '<span class="pill warn">could not measure</span>' : p.verdict === 'INCONCLUSIVE' ? '<span class="pill warn">inconclusive</span>' : '<span class="pill ok">no leak found</span>';
+      return '<li>' + mark + ' <code>' + esc(p.route) + '</code><span class="fill"></span><span class="sub">' + (leaks.length ? esc(leaks.join(', ')) : esc(mcKb(p.bytesPerIteration))) + '</span></li>';
+    }).join('') + '</ul></div>';
+
+  /* findings: WHAT / WHERE / WHY / EVIDENCE / IMPACT / FIX */
+  $('wzFindings').innerHTML = findings.map((f) => {
+    const k = wzClassOf(f.confidence);
+    const fix = f.fixIndex !== undefined ? c.fixes[f.fixIndex] : undefined;
+    const canApply = !!(fix && fix.proposedHash);
+    const decided = fix ? c.verifications.find((v) => v.fixIndex === fix.index) : undefined;
+    const where = f.file ? openLink(f.file, f.line) + (f.entityName ? ' (' + esc(f.entityName) + ')' : '') : 'not traced to a source file' + (c.projectRoot ? '' : ' - no project folder was given');
+    const why = f.rootCause.kind === 'undetermined'
+      ? 'Possible cause - additional investigation is required. ' + esc(f.rootCause.summary)
+      : esc(f.rootCause.summary);
+    const impact = 'Every visit leaves ' + f.countDelta + ' more behind' + (f.retainedBytesDelta ? ' (' + (f.retainedBytesDelta / 1024).toFixed(0) + ' KB kept alive)' : '') + '; memory keeps growing for as long as the app is open.';
+    const fixText = fix
+      ? (canApply ? esc(fix.title) + (decided ? ' - ' + esc(decided.status) : '') : 'Needs a person: ' + esc(fix.rationale))
+      : (f.file ? 'No safe automatic change could be generated. ' : '') + esc(f.rootCause.cleanup);
+    return '<div class="finding ' + k.cls + '" id="wzf-' + esc(f.id) + '">' +
+      '<h3><span class="tag ' + k.cls + '">' + esc(k.label) + '</span> ' + esc(f.constructorName) + ' <span class="sub">on ' + esc(f.route) + '</span></h3>' +
+      '<div class="grid">' +
+      '<b>What</b><span>' + esc(f.constructorName) + ' instances stay in memory after the page is used' + (f.countDelta ? ' (' + f.countDelta + ' more per journey)' : '') + '.</span>' +
+      '<b>Where</b><span>' + where + '</span>' +
+      '<b>Why</b><span>' + why + '</span>' +
+      '<b>Impact</b><span>' + esc(impact) + '</span>' +
+      '<b>Fix</b><span>' + fixText + '</span>' +
+      '</div>' +
+      '<div class="evidence"><b>Evidence</b><ul class="state">' +
+      f.rationale.map((x) => '<li>' + esc(x) + '</li>').join('') +
+      (f.rootCause.evidence.length ? '<li>Seen on the retaining path: ' + esc(f.rootCause.evidence.join(', ')) + '</li>' : '') +
+      '<li>Held by (last steps): <code>' + esc(mcShortPath(f.retainingPath)) + '</code></li>' +
+      '<li>' + esc(f.correlationNote) + '</li>' +
+      (f.knowledge && f.knowledge.length ? '<li>Earlier: ' + f.knowledge.map((kk) => esc(kk.decision + ' on ' + kk.at.slice(0, 10))).join('; ') + '</li>' : '') +
+      '<li class="sub">Confidence level: ' + esc(f.confidence) + ' - ' + esc(f.action) + '</li></ul></div>' +
+      '<div class="row" style="margin-top:.5rem">' +
+      '<button class="ghost mini" data-wzev="' + esc(f.id) + '" type="button">View evidence</button>' +
+      (f.file ? '<button class="ghost mini" data-open="' + esc(f.file) + '" data-line="' + (f.line || 1) + '" type="button">View code</button>' : '') +
+      (canApply && !decided ? '<button class="mini" data-mcfix="' + fix.index + '" type="button">Fix</button>' : '') +
+      (fix && !canApply ? '<button class="ghost mini" data-mcfix="' + fix.index + '" type="button">Read the advice</button>' : '') +
+      '<button class="ghost mini" data-mcexpected="' + esc(f.id) + '" type="button">This is expected</button>' +
+      '</div></div>';
+  }).join('');
+  for (const b of document.querySelectorAll('[data-wzev]')) b.addEventListener('click', () => { $('wzf-' + b.getAttribute('data-wzev')).classList.toggle('open'); });
+  for (const b of document.querySelectorAll('[data-mcfix]')) b.addEventListener('click', () => mcOpenFix(Number(b.getAttribute('data-mcfix'))));
+  for (const b of document.querySelectorAll('[data-mcexpected]')) b.addEventListener('click', () => {
+    void mcRunAction('checkExpected', { check: c.checkId, finding: b.getAttribute('data-mcexpected') });
+  });
+
+  /* fix results + source control */
+  const vs = (c.verifications || []).filter((v) => v.fixIndex !== undefined);
+  $('wzFixResults').innerHTML = vs.length ? '<div class="banner"><strong>Fix results</strong>' + vs.map((v) => {
+    const t = v.status === 'FIX VERIFIED' ? 'ok' : v.status === 'FIX PARTIALLY VERIFIED' ? 'warn' : v.status === 'NOT APPLIED' ? '' : 'bad';
+    const plain = v.status === 'FIX VERIFIED' ? 'Leak no longer reproduced' : v.status === 'FIX PARTIALLY VERIFIED' ? 'Improved, but not gone' : v.status === 'FIX DID NOT RESOLVE LEAK' ? 'Leak still reproduced' : v.status === 'NOT APPLIED' ? 'Not applied' : 'Inconclusive';
+    return '<div class="verdict ' + t + '" style="margin-top:.6rem"><h3>' + esc(plain) + ' <span class="sub">fix ' + v.fixIndex + ' - ' + esc(v.status) + '</span></h3>' +
+      '<div>' + esc(v.explanation) + '</div>' +
+      (v.before && v.after ? '<div class="kv"><b>Before</b><span>' + v.before.countDelta + ' left behind per journey' + (v.before.bytesPerIteration !== undefined ? ', ' + esc(mcKb(v.before.bytesPerIteration)) : '') + '</span>' +
+        '<b>After</b><span>' + v.after.countDelta + ' left behind' + (v.after.bytesPerIteration !== undefined ? ', ' + esc(mcKb(v.after.bytesPerIteration)) : '') + ' (' + esc(v.after.verdict || '') + ')</span></div>' : '') +
+      (v.build ? '<div class="sub">Build and tests: ' + (v.build.passed ? 'passed' : 'FAILED') + ' - ' + esc(v.build.summary) + '</div>' : '') +
+      (v.applied && v.status !== 'FIX VERIFIED' ? '<div class="row" style="margin-top:.4rem"><button class="ghost mini" data-mcverify="' + v.fixIndex + '" type="button">Measure again</button></div>' : '') +
+      (v.rollback && v.rollback.length ? '<details><summary>How to undo</summary><pre>' + esc(v.rollback.join('\\n')) + '</pre></details>' : '') +
+      '</div>';
+  }).join('') + '</div>' : '';
+  for (const b of document.querySelectorAll('[data-mcverify]')) b.addEventListener('click', () => {
+    void mcRunAction('checkVerify', { check: c.checkId, fix: b.getAttribute('data-mcverify') });
+  });
+
+  const verified = vs.filter((v) => v.applied && (v.status === 'FIX VERIFIED' || v.status === 'FIX PARTIALLY VERIFIED'));
+  if (c.git) {
+    $('wzGit').innerHTML = '<div class="banner"><strong>Source control</strong><div>' +
+      (c.git.committed ? 'Committed <code>' + esc((c.git.commit || '').slice(0, 10)) + '</code> on <code>' + esc(c.git.branch || '') + '</code>' + (c.git.pushed ? ' and pushed to ' + esc(c.git.remote || '') + '.' : '. Not pushed.') : 'Not committed.') +
+      (c.git.error ? '<div class="sub">' + esc(c.git.error) + '</div>' : '') + '</div></div>';
+  } else if (verified.length && c.projectRoot) {
+    $('wzGit').innerHTML = '<div class="banner" id="wzGitBox"><strong>Source control</strong><div class="sub">Loading what a commit would contain...</div></div>';
+    void wzLoadCommitPreview(verified[0].fixIndex);
+  } else {
+    $('wzGit').innerHTML = '';
+  }
+
+  /* actions */
+  let actions = '<button class="ghost" id="mcReport" type="button">View Full Report</button>';
+  const writable = (c.fixes || []).filter((x) => x.proposedHash && !c.verifications.some((v) => v.fixIndex === x.index));
+  if (writable.length) actions = '<button id="mcReview" type="button">Fix Issues (' + writable.length + ')</button>' + actions;
+  if (!c.projectRoot && findings.length) {
+    actions += '<span class="sub">To prepare fixes, the agent needs the source folder your dev server runs from - add it under Advanced options on the first screen and check again.</span>';
+  }
+  actions += '<button class="ghost" id="wzAgain" type="button">Check another application</button>';
+  $('wzResultActions').innerHTML = actions;
+  $('mcReport').addEventListener('click', () => { window.open('/api/memcheck/report?id=' + encodeURIComponent(c.checkId) + '&token=' + TOKEN, '_blank', 'noopener'); });
+  const rv = $('mcReview'); if (rv) rv.addEventListener('click', () => mcOpenFix(writable[0].index));
+  $('wzAgain').addEventListener('click', () => { mc = mcFresh(); wzShow(1); });
+
+  /* technical details */
+  const lines = [];
+  for (const f of findings) lines.push(f.constructorName + ': ' + f.retainingPath);
+  for (const l of c.limitations) lines.push(l);
+  for (const u of (c.model ? c.model.unknowns : [])) lines.push(u);
+  for (const x of c.manualItems) lines.push('Needs a person: ' + x);
+  for (const x of c.remainingRisks) lines.push('Remaining risk: ' + x);
+  $('mcTech').innerHTML = '<ul class="state">' + lines.map((l) => '<li>' + esc(l) + '</li>').join('') + '</ul>';
+}
+
+async function wzLoadCommitPreview(fixIndex) {
+  let r;
+  try { r = await api('/api/memcheck/commit-preview?id=' + encodeURIComponent(mc.check.checkId) + '&fix=' + fixIndex); } catch { return; }
+  const box = $('wzGitBox');
+  if (!box) return;
+  if (!r || !r.ok || !r.preview) { box.innerHTML = '<strong>Source control</strong><div class="sub">' + esc((r && r.message) || 'unavailable') + '</div>'; return; }
+  const p = r.preview;
+  box.innerHTML = '<strong>Source control</strong><div class="sub">Changes ready on branch <code>' + esc(p.branch) + '</code>' + (p.remote ? ', remote <code>' + esc(p.remote) + '</code>' : ', no remote') + '</div>' +
+    '<div class="kv"><b>Files changed</b><span>' + (p.files.length ? p.files.map((f) => '<code>' + esc(f) + '</code>').join(', ') : 'none') + '</span>' +
+    '<b>Commit message</b><span><code>' + esc(p.message.split('\\n')[0]) + '</code></span></div>' +
+    (p.diffStat ? '<pre style="margin:.5rem 0">' + esc(p.diffStat) + '</pre>' : '') +
+    '<div class="row" style="margin-top:.5rem">' +
+    (p.files.length ? '<button id="wzCommit" type="button">Commit</button>' + (p.remote ? '<button id="wzCommitPush" type="button">Commit &amp; Push</button>' : '') : '<span class="sub">Nothing to commit.</span>') +
+    '</div><div class="sub" style="margin-top:.3rem">Only these files are committed; anything else in your working tree is left alone. Nothing is pushed unless you choose Commit &amp; Push.</div>';
+  const cm = $('wzCommit'); if (cm) cm.addEventListener('click', () => { void mcRunAction('checkCommit', { check: mc.check.checkId, fix: String(fixIndex) }); });
+  const cp = $('wzCommitPush'); if (cp) cp.addEventListener('click', () => { void mcRunAction('checkCommit', { check: mc.check.checkId, fix: String(fixIndex), push: 'true' }); });
+}
+
+/* ------------------------------------------------------------------ */
+/* Fix Review                                                           */
+/* ------------------------------------------------------------------ */
 
 function mcOpenFix(index) {
   if (!mc.check) return;
@@ -3874,20 +4187,22 @@ function mcRenderFix() {
   const f = c.findings.find((x) => x.fixIndex === fix.index);
   const verification = c.verifications.find((v) => v.fixIndex === fix.index);
   const writable = !!fix.proposedHash && !verification;
+  const k = f ? wzClassOf(f.confidence) : null;
   let html = '<div style="padding:.9rem 1.1rem">' +
-    '<div class="lbl2">MEMORY ISSUE</div>' +
-    (f ? '<p style="margin:.3rem 0"><b>Component</b> ' + esc(f.entityName || f.constructorName) + ' ' + mcConfidencePill(f.confidence) + '</p>' +
-      '<p style="margin:.3rem 0"><b>Problem</b> ' + esc(f.rootCause.summary) + '</p>' +
-      '<p style="margin:.3rem 0"><b>Evidence</b></p><ul class="state">' +
+    '<div class="lbl2">PROBLEM</div>' +
+    (f ? '<p style="margin:.3rem 0"><b>' + esc(f.entityName || f.constructorName) + '</b> on <code>' + esc(f.route) + '</code> ' + (k ? '<span class="tag ' + k.cls + '">' + esc(k.label) + '</span>' : '') + '</p>' +
+      '<div class="lbl2" style="margin-top:.6rem">ROOT CAUSE</div><p style="margin:.3rem 0">' + esc(f.rootCause.summary) + '</p>' +
+      '<div class="lbl2" style="margin-top:.6rem">EVIDENCE</div><ul class="state">' +
       '<li>' + f.countDelta + ' more instance(s) survived repeated visits to <code>' + esc(f.route) + '</code></li>' +
       f.rationale.map((x) => '<li>' + esc(x) + '</li>').join('') +
-      '<li>Held by (last steps): <code>' + esc(mcShortPath(f.retainingPath)) + '</code> <span class="sub">- the full path is under technical details</span></li>' +
+      '<li>Held by (last steps): <code>' + esc(mcShortPath(f.retainingPath)) + '</code></li>' +
       (f.file ? '<li>Source: ' + openLink(f.file, f.line) + '</li>' : '') + '</ul>' : '') +
-    '<div class="lbl2" style="margin-top:.8rem">PROPOSED FIX</div>' +
+    '<div class="lbl2" style="margin-top:.8rem">PROPOSED CHANGE</div>' +
     '<p style="margin:.3rem 0"><b>' + esc(fix.title) + '</b></p>' +
     '<p style="margin:.3rem 0">' + esc(fix.rationale) + '</p>' +
-    '<p class="sub" style="margin:.3rem 0">Files changed: 1 (<code>' + esc(fix.file) + '</code>) &middot; Risk: ' + esc(fix.risk) +
-    ' &middot; Tests: ' + (fix.testsAvailable ? 'available - they run after the change' : 'unavailable - only the build is run') + '</p>' +
+    '<div class="kv"><b>Files changed</b><span><code>' + esc(fix.file) + '</code></span>' +
+    '<b>Potential impact</b><span>' + esc(fix.risk) + (fix.functionalRisks && fix.functionalRisks.length ? ' ' + esc(fix.functionalRisks[0]) : '') + '</span>' +
+    '<b>Validation plan</b><span>build' + (fix.testsAvailable ? ', tests' : ' (the project has no test script)') + ', then the same journey and memory measurement again - it is only called fixed if the leak no longer reproduces</span></div>' +
     '</div>';
   if (fix.diff) {
     html += '<div class="split-row" style="font-weight:600"><span class="cell">Before</span><span class="cell">After</span></div>' +
@@ -3909,26 +4224,19 @@ function mcRenderFix() {
     : 'Nothing to apply here.';
 }
 
-/** The end of a retaining path is where the cause is named; the start is engine plumbing. */
-function mcShortPath(p) {
-  const hops = String(p).split(' -> ');
-  return (hops.length > 6 ? '... -> ' : '') + hops.slice(-6).map((h) => (h.length > 80 ? h.slice(0, 77) + '...' : h)).join(' -> ');
-}
-
 function mcCloseFix() {
   $('mcFixBack').classList.remove('on');
 }
 
-$('mcStart').addEventListener('click', startMemoryCheck);
+$('wzContinue').addEventListener('click', startMemoryCheck);
 $('mcUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); startMemoryCheck(); } });
-$('mcReport').addEventListener('click', () => {
-  if (mc.check) window.open('/api/memcheck/report?id=' + encodeURIComponent(mc.check.checkId) + '&token=' + TOKEN, '_blank', 'noopener');
-});
-$('mcReview').addEventListener('click', () => {
-  if (!mc.check || !mc.check.fixes.length) return;
-  const first = mc.check.fixes.find((x) => x.proposedHash);
-  mcOpenFix(first ? first.index : 0);
-});
+for (const li of document.querySelectorAll('#wzSteps li')) {
+  li.addEventListener('click', () => {
+    const n = Number(li.getAttribute('data-step'));
+    if (n === 1) wzShow(1);
+    else if (mc.check) { if (n === 2) { wzShow(2); wzRenderDetect(); } else if (n === 3 && mc.check.plan) { wzShow(3); wzRenderPages(); } else if (n === 5 && mc.check.routeResults && mc.check.routeResults.length) { wzShow(5); wzRenderResults(); } }
+  });
+}
 $('mcFixClose').addEventListener('click', mcCloseFix);
 $('mcFixPrev').addEventListener('click', () => { if (mcFixIndex > 0) { mcFixIndex--; mcRenderFix(); } });
 $('mcFixNext').addEventListener('click', () => { if (mc.check && mcFixIndex < mc.check.fixes.length - 1) { mcFixIndex++; mcRenderFix(); } });

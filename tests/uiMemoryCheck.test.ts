@@ -1,14 +1,17 @@
 /**
- * The Memory check page, driven by a real browser the way a person uses it.
+ * The memory check wizard, driven by a real browser the way a person uses it.
  *
- * Every button on the screen is pressed at least once:
+ * Every button on the screens is pressed at least once:
  *
- *   Start Memory Check -> Mark as expected -> Review Fixes -> Reject
- *   Start again: the earlier decisions are shown on the finding
- *   Review Fixes -> Apply Fix, while the app server still serves the OLD
- *     code (a server that does not rebuild on change): the result must be
- *     "did not resolve", never a false "verified"
- *   the server is "restarted" -> Measure again -> FIX VERIFIED
+ *   URL -> Continue -> (detected) -> Continue -> pages listed -> Check
+ *   Selected Pages -> results -> This is expected -> Fix -> Reject
+ *   Again: the earlier decisions are shown on the finding
+ *   Fix Issues -> Apply Fix, while the app server still serves the OLD code
+ *     (a server that does not rebuild on change): the result must be "still
+ *     reproduced", never a false "verified"
+ *   the server is "restarted" -> Measure again -> Leak no longer reproduced
+ *   Commit -> only the fixed file is committed; the person's own uncommitted
+ *     work is left alone
  *
  * The UI runs the real CLI as a child process, exactly as it does for a
  * person; check folders go to the agent's own gitignored reports/checks and
@@ -142,60 +145,125 @@ async function idle(): Promise<void> {
   await waitText('#running', '^nothing running$', 900_000);
 }
 
-async function startCheck(): Promise<void> {
+/** Screen 1 -> 2 -> 3: give the address, let the agent find the app and its pages. */
+async function findPages(): Promise<void> {
+  await page.click('#wzSteps li[data-step="1"]');
   await page.fill('#mcUrl', appUrl);
+  // The project folder is folded away under "Advanced options" - a person
+  // opens it once; the wizard keeps it out of the way otherwise.
+  if ((await page.getAttribute('#wz1 details.tech', 'open')) === null) await page.click('#wz1 details.tech summary');
   await page.fill('#mcProject', project);
-  await page.click('#mcStart');
+  await page.click('#wzContinue');
   await waitText('#running', '^(?!nothing running$)', 30_000);
   await idle();
+  // The check stopped once the pages were known; the wizard moved to the pages screen.
+  await page.waitForSelector('#wz3.on', { timeout: 30_000 });
+}
+
+/** Screen 3 -> 4 -> 5: check the ticked pages, wait for the results. */
+async function checkPages(): Promise<void> {
+  await page.click('#wzCheckSelected');
+  await waitText('#running', '^(?!nothing running$)', 30_000);
+  await idle();
+  await page.waitForSelector('#wz5.on', { timeout: 30_000 });
   await page.waitForSelector('[data-mcfix]', { timeout: 30_000 });
 }
 
-describe('the Memory check page, every button', () => {
-  it('start -> mark as expected -> reject; the decisions come back on the next check', async () => {
+describe('the memory check wizard, every button', () => {
+  it('URL -> detected -> pages listed -> checked -> results, then "this is expected" and Reject; both remembered next time', async () => {
     if (!chrome) return;
-    await startCheck();
-    expect(await page.textContent('#mcFindings')).toContain('LeakyPanel');
+    await findPages();
 
+    // Screen 2 said what it found - in words, not settings.
+    await page.click('#wzSteps li[data-step="2"]');
+    const checks = (await page.textContent('#wzChecks')) ?? '';
+    expect(checks).toContain('Application reachable');
+    expect(checks).toContain('React 18');
+    expect(checks).toContain('not required');
+    expect((await page.textContent('#wzAppCard')) ?? '').toContain('Several pages');
+    await page.click('#wzToPages');
+
+    // Screen 3 listed the pages: the one given (ticked, cannot be unticked) and /orders.
+    expect((await page.textContent('#wzPagesTitle')) ?? '').toContain('Multiple pages detected');
+    const boxes = await page.$$eval('#wzPages input[type=checkbox]', (els) => els.map((e) => [(e as { getAttribute(n: string): string | null }).getAttribute('data-route'), (e as { checked: boolean }).checked]));
+    expect(boxes).toEqual(expect.arrayContaining([['/', true], ['/orders', true]]));
+
+    await checkPages();
+    const summary = (await page.textContent('#wzSummary')) ?? '';
+    expect(summary).toContain('Memory leak detected');
+    expect(summary).toContain('/orders');
+    const findings = (await page.textContent('#wzFindings')) ?? '';
+    expect(findings).toContain('LeakyPanel');
+    expect(findings).toMatch(/Confirmed leak|Strong evidence/);
+    expect(findings).toContain('A timer');
+
+    // "This is expected" and Reject: nothing written, both remembered.
     await page.click('[data-mcexpected]');
     await idle();
-
-    await page.click('#mcReview');
+    await page.click('[data-mcfix]');
     await page.waitForSelector('#mcFixBack.on');
-    expect(await page.textContent('#mcFixBody')).toContain('componentWillUnmount');
+    const review = (await page.textContent('#mcFixBody')) ?? '';
+    expect(review).toContain('PROPOSED CHANGE');
+    expect(review).toContain('componentWillUnmount');
+    expect(review).toContain('Validation plan');
     await page.click('#mcFixReject');
     await idle();
-    await waitText('#mcVerification', 'NOT APPLIED', 30_000);
-    expect(await page.textContent('#mcStages')).toContain('Fix rejected');
+    await waitText('#wzFixResults', 'Not applied', 30_000);
     expect(fs.readFileSync(path.join(project, 'src', 'Panels.js'), 'utf8')).toBe(PANELS);
 
-    // A new check shows both earlier decisions on the same finding.
-    await startCheck();
-    const findings = (await page.textContent('#mcFindings')) ?? '';
-    expect(findings).toContain('marked-expected');
-    expect(findings).toContain('fix-rejected');
-  }, 1_200_000);
+    await findPages();
+    await checkPages();
+    await page.click('[data-wzev]');
+    const again = (await page.textContent('#wzFindings')) ?? '';
+    expect(again).toContain('marked-expected');
+    expect(again).toContain('fix-rejected');
+  }, 1_500_000);
 
-  it('apply against a server that has not picked up the change says so; Measure again after a restart verifies it', async () => {
+  it('Apply while the server still serves old code says so; Measure again after a restart verifies; Commit commits only that file', async () => {
     if (!chrome) return;
+    // Stands on its own: get to results with a fix waiting if the first test did not leave us there.
+    if ((await page.$('#mcReview')) === null) {
+      await findPages();
+      await checkPages();
+    }
     await page.click('#mcReview');
     await page.waitForSelector('#mcFixBack.on');
     await page.click('#mcFixApply');
     await idle();
-    await waitText('#mcVerification', 'FIX (VERIFIED|PARTIALLY|DID NOT|COULD NOT)', 60_000);
+    await waitText('#wzFixResults', 'fix [0-9]+ - FIX (VERIFIED|PARTIALLY|DID NOT|COULD NOT)', 60_000);
 
     // The file was written...
     expect(fs.readFileSync(path.join(project, 'src', 'Panels.js'), 'utf8')).toContain('clearInterval(this.timer)');
     // ...but the server still hands out the old code, so it must NOT say verified.
-    const first = (await page.textContent('#mcVerification')) ?? '';
-    expect(first).toContain('FIX DID NOT RESOLVE LEAK');
+    const first = (await page.textContent('#wzFixResults')) ?? '';
+    expect(first).toContain('Leak still reproduced');
     expect(first).toMatch(/restart it/);
+    expect(await page.$('#wzCommit')).toBeNull();
 
     // "Restart" the server: it now serves what is on disk.
     servedPanels = fs.readFileSync(path.join(project, 'src', 'Panels.js'), 'utf8');
     await page.click('[data-mcverify]');
     await idle();
-    await waitText('#mcVerification', 'FIX VERIFIED', 60_000);
-    expect(await page.textContent('#mcStages')).toContain('Completed');
-  }, 1_200_000);
+    await waitText('#wzFixResults', 'Leak no longer reproduced', 60_000);
+
+    // Source control: only after verification, only that file, only on request.
+    try {
+      await page.waitForSelector('#wzCommit', { timeout: 30_000 });
+    } catch (err) {
+      // Say what the screen showed instead, so a failure here explains itself.
+      throw new Error(`No Commit button. Source control box: "${(await page.textContent('#wzGit')) ?? ''}". Console tail: "${((await page.textContent('#out')) ?? '').slice(-600)}"`);
+    }
+    const preview = (await page.textContent('#wzGit')) ?? '';
+    expect(preview).toContain('src/Panels.js');
+    expect(preview).toMatch(/fix: timer leak in LeakyPanel on \/orders/);
+    fs.writeFileSync(path.join(project, 'notes.txt'), 'my own uncommitted work\n');
+    await page.click('#wzCommit');
+    await idle();
+    await waitText('#wzGit', 'Committed', 30_000);
+    const log = execFileSync('git', ['log', '-1', '--format=%s'], { cwd: project, encoding: 'utf8' }).trim();
+    expect(log).toBe('fix: timer leak in LeakyPanel on /orders');
+    const status = execFileSync('git', ['status', '--porcelain'], { cwd: project, encoding: 'utf8' });
+    expect(status).toContain('notes.txt');
+    expect(status).not.toContain('Panels.js');
+  }, 1_500_000);
 });

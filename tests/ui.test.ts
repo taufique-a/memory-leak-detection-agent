@@ -36,9 +36,9 @@ describe('action allowlist', () => {
     expect('args' in built && built.args[0]).toBe('compile');
   });
 
-  it('ONLY the two apply actions and undo can write, and all are started by the page, never as a card', () => {
+  it('ONLY the apply actions, the commit and undo can write, and all are started by the page, never as a card', () => {
     const writers = ACTIONS.filter((a) => a.writes === true).map((a) => a.id).sort();
-    expect(writers).toEqual(['checkApply', 'findfixApply', 'findfixUndo']);
+    expect(writers).toEqual(['checkApply', 'checkCommit', 'findfixApply', 'findfixUndo']);
     for (const id of writers) expect(findAction(id)?.driven).toBe(true);
 
     // Nothing else can reach the code-changing commands at all.

@@ -48,7 +48,9 @@ export type ParamType =
   /** A finding id inside one check, e.g. f3. */
   | 'findingId'
   /** A sha256 of the exact content that was reviewed. */
-  | 'sha256';
+  | 'sha256'
+  /** Routes the check offered, comma-separated, or the words "all" / "current". */
+  | 'routes';
 
 export interface ActionParam {
   name: string;
@@ -392,6 +394,67 @@ export const ACTIONS: readonly ActionDefinition[] = [
     driven: true,
   },
   {
+    id: 'checkPlan',
+    step: 2,
+    title: 'Find the application and its pages',
+    summary: 'Opens the address, detects the framework and login, lists the pages it can safely check',
+    why:
+      'The first half of a memory check: nothing is measured yet. It stops once the pages are known so ' +
+      'you can choose which to check - or, for a single page, confirm it.',
+    expect: 'about a minute',
+    params: [
+      { name: 'url', type: 'url', required: true, label: 'Application URL' },
+      { name: 'project', type: 'project', required: false, label: 'Project folder (optional)' },
+      { name: 'authFile', type: 'authFile', required: false, label: 'Saved sign-in' },
+    ],
+    build: (v) => [
+      'check',
+      v['url'] ?? '',
+      '--plan-only',
+      ...(v['project'] !== undefined && v['project'] !== '' ? ['--project', v['project']] : []),
+      ...(v['authFile'] !== undefined && v['authFile'] !== '' ? ['--auth', v['authFile']] : []),
+    ],
+    needsApp: false,
+    driven: true,
+  },
+  {
+    id: 'checkRun',
+    step: 2,
+    title: 'Check the chosen pages',
+    summary: 'Measures the pages you chose, names what leaks and prepares fixes for review',
+    why: 'The second half of a memory check, on the pages found by the first. Nothing in your project is changed.',
+    expect: 'a few minutes per page',
+    params: [
+      { name: 'check', type: 'checkId', required: true, label: 'Check' },
+      { name: 'pages', type: 'routes', required: true, label: 'Pages' },
+    ],
+    build: (v) => {
+      const pages = v['pages'] ?? 'all';
+      return ['check-run', '--check', v['check'] ?? '', ...(pages === 'all' ? ['--all'] : pages === 'current' ? ['--current'] : ['--pages', pages])];
+    },
+    needsApp: true,
+    driven: true,
+  },
+  {
+    id: 'checkCommit',
+    step: 2,
+    title: 'Commit the verified fix',
+    summary: 'Commits only the files the fix changed; pushes only if you chose Commit & Push',
+    why:
+      'Never runs on its own. Commits exactly the files the applied fix wrote, with a message that names the ' +
+      'finding, on the branch the project is on. A push goes to the remote the project already has.',
+    expect: 'a few seconds',
+    params: [
+      { name: 'check', type: 'checkId', required: true, label: 'Check' },
+      { name: 'fix', type: 'number', required: true, label: 'Fix' },
+      { name: 'push', type: 'flag', required: false, label: 'Also push' },
+    ],
+    build: (v) => ['check-commit', '--check', v['check'] ?? '', '--fix', v['fix'] ?? '', ...(v['push'] === 'true' ? ['--push'] : [])],
+    needsApp: false,
+    driven: true,
+    writes: true,
+  },
+  {
     id: 'checkApply',
     step: 2,
     title: 'Apply the reviewed fix and verify it',
@@ -585,6 +648,13 @@ function validate(type: ParamType, value: string): string | undefined {
 
     case 'sha256':
       return /^[a-f0-9]{64}$/.test(value) ? value : undefined;
+
+    case 'routes': {
+      if (value === 'all' || value === 'current') return value;
+      const routes = value.split(',');
+      if (routes.length > 200) return undefined;
+      return routes.every((r) => /^\/[A-Za-z0-9_./#?=&%:+~-]*$/.test(r)) ? value : undefined;
+    }
 
     case 'project':
     case 'scenario':

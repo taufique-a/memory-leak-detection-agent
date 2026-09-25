@@ -151,6 +151,15 @@ describe('memory check endpoints', () => {
     expect(res.headers.get('content-security-policy')).toContain("script-src 'none'");
   });
 
+  it('answers a commit preview for a real fix number - and only refuses numbers that are not numbers', async () => {
+    const noFix = (await (await get('/api/memcheck/commit-preview?id=chk-newer1&fix=0')).json()) as { ok: boolean; message: string };
+    expect(noFix.ok).toBe(false);
+    // A fix number that parses reaches the real check - which, here, has no project folder.
+    expect(noFix.message).toMatch(/nothing to commit|has not been applied/);
+    const bad = (await (await get('/api/memcheck/commit-preview?id=chk-newer1&fix=x')).json()) as { error?: string };
+    expect(bad.error).toBe('Not a valid fix number.');
+  });
+
   it('needs the token like every other API call', async () => {
     const res = await fetch(`http://127.0.0.1:${server.port}/api/memchecks`);
     expect(res.status).toBe(403);
