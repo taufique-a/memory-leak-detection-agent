@@ -4,6 +4,7 @@
  *   GET /api/memchecks            the most recent checks, newest first
  *   GET /api/memcheck?id=chk-...  one check's full record, for the dashboard and Fix Review
  *   GET /api/memcheck/report?id=  its HTML report, locked down like every other report
+ *   GET /api/memcheck/commit-preview?id=&fix=  what Commit would do: files, diff stat, message
  *
  * Nothing here starts, changes or applies anything - that only happens
  * through the action allowlist (actions.ts). The id is validated against a
@@ -16,6 +17,7 @@ import * as fs from 'node:fs';
 import type * as http from 'node:http';
 import * as path from 'node:path';
 
+import { previewCheckCommit } from '../check/apply';
 import { readCheckResult, type CheckResult } from '../check/runCheck';
 
 const ID = /^chk-[a-z0-9]{6,40}$/;
@@ -63,7 +65,7 @@ export async function handleCheck(
     return true;
   }
 
-  if (url.pathname !== '/api/memcheck' && url.pathname !== '/api/memcheck/report') return false;
+  if (url.pathname !== '/api/memcheck' && url.pathname !== '/api/memcheck/report' && url.pathname !== '/api/memcheck/commit-preview') return false;
 
   const id = url.searchParams.get('id') ?? '';
   if (!ID.test(id)) {
@@ -71,6 +73,16 @@ export async function handleCheck(
     return true;
   }
   const dir = path.join(checksRoot(deps.agentRoot), id);
+
+  if (url.pathname === '/api/memcheck/commit-preview') {
+    const fix = url.searchParams.get('fix') ?? '';
+    if (!/^\d{1,4}$/.test(fix)) {
+      deps.sendJson(res, { error: 'Not a valid fix number.' });
+      return true;
+    }
+    deps.sendJson(res, previewCheckCommit(dir, Number(fix)));
+    return true;
+  }
 
   if (url.pathname === '/api/memcheck') {
     const result = readCheckResult(dir);

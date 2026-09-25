@@ -42,6 +42,7 @@ import { runScenario } from '../scenario/runner';
 import type { Scenario } from '../scenario/types';
 import { runVerification } from '../verify/checks';
 import { sha256, toProposedFix } from './fixes';
+import { commitFix, commitMessageFor, previewCommit, type GitOutcome, type GitPreview } from './git';
 import { findingSignature, recordDecision } from './knowledge';
 import { writeCheckReport } from './report';
 import {
@@ -315,6 +316,7 @@ export async function applyCheckFix(options: ApplyCheckFixOptions): Promise<Appl
     at: new Date().toISOString(),
     applied: true,
     branch: applied.branch.name,
+    changedFiles: applied.changedFiles,
     rollback: applied.rollback,
   };
 
@@ -435,4 +437,63 @@ export function markFindingExpected(dir: string, findingId: string, note?: strin
     checkId: result.checkId,
   });
   return { ok: true, message: `${finding.constructorName} is marked as expected. It will still be reported next time, under "marked as expected".` };
+}
+
+/* ------------------------------------------------------------------ */
+/* Source control - only when the person asks                          */
+/* ------------------------------------------------------------------ */
+
+export interface CommitPreviewResult {
+  ok: boolean;
+  message: string;
+  preview?: GitPreview;
+}
+
+/** What "Commit" would do for an applied fix - files, diff stat, message - without doing it. */
+export function previewCheckCommit(dir: string, fixIndex: number): CommitPreviewResult {
+  const result = readCheckResult(dir);
+  if (result === undefined) return { ok: false, message: `No memory check found in ${dir}.` };
+  const projectRoot = result.projectRoot;
+  if (projectRoot === undefined) return { ok: false, message: 'The check has no project folder, so there is nothing to commit.' };
+  const v = result.verifications.find((x) => x.fixIndex === fixIndex);
+  if (v === undefined || !v.applied || v.changedFiles === undefined || v.changedFiles.length === 0) {
+    return { ok: false, message: 'That fix has not been applied, so there is nothing to commit.' };
+  }
+  const finding = findingFor(result, fixIndex);
+  const fix = result.fixes[fixIndex];
+  const message = commitMessageFor(
+    finding ?? { constructorName: fix?.findingId ?? 'unknown', route: fix?.route ?? '/', rootCause: { kind: 'undetermined' } },
+    fix?.title ?? 'memory fix',
+  );
+  try {
+    return { ok: true, message: 'ready', preview: previewCommit(projectRoot, v.changedFiles, message) };
+  } catch (err) {
+    return { ok: false, message: `git could not be read: ${(err as Error).message.split('\n')[0] ?? ''}` };
+  }
+}
+
+/** Commit exactly the files the applied fix changed; push only when asked. Recorded on the check. */
+export function commitCheckFix(dir: string, fixIndex: number, options: { push: boolean }): { ok: boolean; message: string; git?: GitOutcome } {
+  const preview = previewCheckCommit(dir, fixIndex);
+  if (!preview.ok || preview.preview === undefined) return { ok: false, message: preview.message };
+  const result = readCheckResult(dir) as CheckResult;
+  const v = result.verifications.find((x) => x.fixIndex === fixIndex) as FixVerification;
+  if (v.status !== 'FIX VERIFIED' && v.status !== 'FIX PARTIALLY VERIFIED') {
+    return {
+      ok: false,
+      message: `This fix is ${v.status}, not verified. Only a verified fix is offered for commit - measure it again first, or commit by hand if you have looked at it.`,
+    };
+  }
+  const outcome = commitFix(result.projectRoot as string, fixIndex, v.changedFiles as string[], preview.preview.message, options);
+  result.git = outcome;
+  writeCheckResult(dir, result);
+  writeCheckReport(dir, result);
+  if (outcome.error !== undefined) return { ok: outcome.committed, message: outcome.error, git: outcome };
+  return {
+    ok: true,
+    message: outcome.pushed
+      ? `Committed ${outcome.commit?.slice(0, 10)} on ${outcome.branch} and pushed to ${outcome.remote}.`
+      : `Committed ${outcome.commit?.slice(0, 10)} on ${outcome.branch}. Not pushed.`,
+    git: outcome,
+  };
 }
