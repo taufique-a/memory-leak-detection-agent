@@ -5,6 +5,10 @@
  *   GET /api/memcheck?id=chk-...  one check's full record, for the dashboard and Fix Review
  *   GET /api/memcheck/report?id=  its HTML report, locked down like every other report
  *   GET /api/memcheck/commit-preview?id=&fix=  what Commit would do: files, diff stat, message
+ *   GET /api/memcheck/open?id=&file=&line=    open a file the check named, in the editor
+ *
+ * The one action here (open) only ever opens a file the check itself named -
+ * a finding's or a fix's - inside the check's own project folder.
  *
  * Nothing here starts, changes or applies anything - that only happens
  * through the action allowlist (actions.ts). The id is validated against a
@@ -19,6 +23,7 @@ import * as path from 'node:path';
 
 import { previewCheckCommit } from '../check/apply';
 import { readCheckResult, type CheckResult } from '../check/runCheck';
+import { openInEditor } from '../utils/openInEditor';
 
 const ID = /^chk-[a-z0-9]{6,40}$/;
 
@@ -65,7 +70,7 @@ export async function handleCheck(
     return true;
   }
 
-  if (url.pathname !== '/api/memcheck' && url.pathname !== '/api/memcheck/report' && url.pathname !== '/api/memcheck/commit-preview') return false;
+  if (!['/api/memcheck', '/api/memcheck/report', '/api/memcheck/commit-preview', '/api/memcheck/open'].includes(url.pathname)) return false;
 
   const id = url.searchParams.get('id') ?? '';
   if (!ID.test(id)) {
@@ -73,6 +78,23 @@ export async function handleCheck(
     return true;
   }
   const dir = path.join(checksRoot(deps.agentRoot), id);
+
+  if (url.pathname === '/api/memcheck/open') {
+    const result = readCheckResult(dir);
+    const file = url.searchParams.get('file') ?? '';
+    const line = Number(url.searchParams.get('line') ?? '1');
+    if (result === undefined || result.projectRoot === undefined) {
+      deps.sendJson(res, { error: 'This check has no project folder to open files from.' });
+      return true;
+    }
+    const named = result.findings.some((x) => x.file === file) || result.fixes.some((x) => x.file === file);
+    if (!named) {
+      deps.sendJson(res, { error: 'Not a file this check named.' });
+      return true;
+    }
+    deps.sendJson(res, openInEditor(result.projectRoot, file, Number.isFinite(line) && line > 0 ? line : 1));
+    return true;
+  }
 
   if (url.pathname === '/api/memcheck/commit-preview') {
     const fix = url.searchParams.get('fix') ?? '';

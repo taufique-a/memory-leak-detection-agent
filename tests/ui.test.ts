@@ -462,7 +462,7 @@ describe('page', () => {
   it("shows exactly one page at a time", () => {
     const markup = page.slice(page.indexOf('<main>'), page.indexOf('</main>'));
     const open = [...markup.matchAll(/class="page( on)?"/g)].map((m) => m[1] ?? '');
-    expect(open).toHaveLength(5); // Memory check, Set up, Find & fix, Live watch, Report
+    expect(open).toHaveLength(4); // Set up, Find & fix, Live watch, Report (the memory check is its own page now)
     expect(open.filter((x) => x.trim() === 'on')).toHaveLength(1);
   });
 

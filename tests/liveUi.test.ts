@@ -58,7 +58,8 @@ it('shows the live heap, follows navigation, and reports what the page left behi
       [fixture.baseUrl, fixture.projectRoot],
     );
     const ui = await context.newPage();
-    await ui.goto(server.url);
+    // Live watch lives with the older tools; the front page is the memory check wizard.
+    await ui.goto(server.url.replace('/?token=', '/?view=advanced&token='));
     await ui.click('button[data-page="live"]');
 
     /** Poll a DOM expression in the UI page until it is truthy. */

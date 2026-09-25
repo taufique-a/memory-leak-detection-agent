@@ -18,6 +18,7 @@ import type { CheckResult } from '../src/check/runCheck';
 import { buildArgs, findAction } from '../src/ui/actions';
 import { forThePage, listChecks } from '../src/ui/checkEndpoints';
 import { renderPage } from '../src/ui/page';
+import { renderWizardPage } from '../src/ui/wizard';
 import { ACTIONS } from '../src/ui/actions';
 import { startUiServer, type UiServer } from '../src/ui/server';
 
@@ -59,19 +60,28 @@ describe('memory check actions', () => {
 });
 
 describe('memory check screen', () => {
-  const page = renderPage({ token: 't', actions: ACTIONS, defaultProject: '' });
+  const page = renderWizardPage({ token: 't', actions: ACTIONS });
 
-  it('is the first page, with a URL box, a Start button and a Fix Review panel', () => {
-    expect(page.indexOf('data-page="check"')).toBeLessThan(page.indexOf('data-page="setup"'));
+  it('is the whole page: a URL box first, a Start button, a Fix Review panel, and nothing else to configure', () => {
+    expect(page).not.toContain('data-page="setup"');
     expect(page).toContain('id="mcUrl"');
+    expect(page).toContain('Advanced options (optional)');
+    expect(page).toContain('view=advanced');
     expect(page).toContain('Start Memory Check');
     expect(page).toContain('id="mcFixBack"');
     expect(page).toContain('Show technical details');
   });
 
-  it('asks for no scenario file anywhere on it', () => {
-    const screen = page.slice(page.indexOf('id="page-check"'), page.indexOf('id="page-setup"'));
-    expect(screen.toLowerCase()).not.toContain('scenario');
+  it('asks for no scenario file, route, threshold or framework anywhere on it', () => {
+    const visible = page.replace(/<script>[\s\S]*<\/script>/, '').replace(/<style>[\s\S]*<\/style>/, '').toLowerCase();
+    for (const word of ['scenario', 'threshold', 'heap snapshot setting', 'select framework']) expect(visible).not.toContain(word);
+  });
+
+  it('the older tools are still served, one link away', () => {
+    const old = renderPage({ token: 't', actions: ACTIONS, defaultProject: '' });
+    expect(old).toContain('data-page="setup"');
+    expect(old).not.toContain('id="mcUrl"');
+    expect(old).toContain('href="/?token=t"');
   });
 });
 

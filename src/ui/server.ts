@@ -31,6 +31,7 @@ import * as path from 'node:path';
 import { ACTIONS, buildArgs, findAction } from './actions';
 import { getEntityIndex, searchEntities } from './entities';
 import { renderPage } from './page';
+import { renderWizardPage } from './wizard';
 import { readSavedSession } from '../scenario/session';
 import { handleCheck } from './checkEndpoints';
 import { handleDiscover } from './discoverEndpoint';
@@ -155,11 +156,12 @@ async function handle(
       );
       return;
     }
-    const body = renderPage({
-      token: ctx.token,
-      actions: ACTIONS,
-      defaultProject: ctx.options.defaultProject ?? '',
-    });
+    // The wizard is the page. The older step-by-step tools are still there,
+    // one link away, for anyone who wants them.
+    const body =
+      url.searchParams.get('view') === 'advanced'
+        ? renderPage({ token: ctx.token, actions: ACTIONS, defaultProject: ctx.options.defaultProject ?? '' })
+        : renderWizardPage({ token: ctx.token, actions: ACTIONS });
     res.writeHead(200, {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',

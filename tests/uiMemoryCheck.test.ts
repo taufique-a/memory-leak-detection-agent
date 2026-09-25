@@ -180,18 +180,19 @@ describe('the memory check wizard, every button', () => {
     expect(checks).toContain('Application reachable');
     expect(checks).toContain('React 18');
     expect(checks).toContain('not required');
-    expect((await page.textContent('#wzAppCard')) ?? '').toContain('Several pages');
+    expect((await page.textContent('#wzAppCard')) ?? '').toContain('Multiple pages');
     await page.click('#wzToPages');
 
     // Screen 3 listed the pages: the one given (ticked, cannot be unticked) and /orders.
-    expect((await page.textContent('#wzPagesTitle')) ?? '').toContain('Multiple pages detected');
+    expect((await page.textContent('#wzPagesTitle')) ?? '').toMatch(/Pages detected \(\d+\)/);
     const boxes = await page.$$eval('#wzPages input[type=checkbox]', (els) => els.map((e) => [(e as { getAttribute(n: string): string | null }).getAttribute('data-route'), (e as { checked: boolean }).checked]));
     expect(boxes).toEqual(expect.arrayContaining([['/', true], ['/orders', true]]));
 
     await checkPages();
     const summary = (await page.textContent('#wzSummary')) ?? '';
     expect(summary).toContain('Memory leak detected');
-    expect(summary).toContain('/orders');
+    // The per-page list sits in "Memory details", beside the findings.
+    expect((await page.textContent('#wzDetails')) ?? '').toContain('/orders');
     const findings = (await page.textContent('#wzFindings')) ?? '';
     expect(findings).toContain('LeakyPanel');
     expect(findings).toMatch(/Confirmed leak|Strong evidence/);
@@ -203,7 +204,7 @@ describe('the memory check wizard, every button', () => {
     await page.click('[data-mcfix]');
     await page.waitForSelector('#mcFixBack.on');
     const review = (await page.textContent('#mcFixBody')) ?? '';
-    expect(review).toContain('PROPOSED CHANGE');
+    expect(review).toMatch(/proposed change/i);
     expect(review).toContain('componentWillUnmount');
     expect(review).toContain('Validation plan');
     await page.click('#mcFixReject');
