@@ -41,12 +41,12 @@ and how to do it by hand if you need to.
 
 ## Memory check — start here
 
-**In the UI:** the page IS the memory check - a five-step wizard and nothing else to configure. (The older step-by-step tools are one link away: *Advanced tools* in the footer, or `/?view=advanced`.)
+**In the UI:** the page IS the memory check - a five-step wizard and nothing else to configure. (The older step-by-step tools are not linked from it; they are still served at `/?view=advanced&token=...` for anyone who needs them.)
 
 1. **Application** — paste the address you open your app at, press **Continue**. (The project folder your dev server runs from is under *Advanced options*; it is what lets the agent trace leaks to files and prepare fixes.)
 2. **Access** — it shows what it found: reachable, framework and version, Chrome connected, login status. If a login is needed, **Open Login** opens a real Chrome for you to sign in; the check continues by itself afterwards.
 3. **Pages** — *Single page detected* → **Start Memory Check**; *Multiple pages detected* → tick pages, then **Check Selected Pages**, **Check All Pages** or **Check current page only**. The page you gave is always included.
-4. **Analysis** — each page as it is measured.
+4. **Analysis** — each page as it is measured, with the heap chart moving reading by reading (live JS heap after each visit, after forced garbage collection).
 5. **Results** — each page, and each finding in plain words (what, where, why, impact, fix) with **View evidence**, **View code**, **Fix**, **This is expected**; then Fix Review, the fix result, **Measure again**, source control (**Commit** / **Commit & Push**, only for a verified fix, only the files it changed), and **View Full Report**.
 
 That is all it needs — no scenario file, no routes, no settings. If a measurement is interrupted (stop pressed, browser closed), the Pages screen offers the same pages again; nothing gets stuck at "TESTING".
@@ -87,7 +87,7 @@ What it does, in order (each step appears in the UI's status list):
 | Choosing safe links | Every link on the start page is judged. Refused: other sites, files, API addresses, new-window links, and anything whose address or text says *logout, delete, pay, checkout, reset, submit…* It never presses buttons or submits forms. |
 | Exploring | Clicks each safe link, checks it stayed inside the running page (a reload would hide leaks), presses Back, and notes safe tabs, show/hide controls and whether the page scrolls. Then one level deeper: safe links found on those pages, reached through them. |
 | Testing | For the busiest pages (charts, big DOM, tabs, navigation first; default 6): enter → switch tabs, open/close show/hide controls, scroll to the end and back → Back, 8 times, forcing garbage collection before every reading, first 3 discarded. Modest growth (<200 KB/visit) is re-measured over twice as many visits before it is believed. |
-| Heap analysis | Growing pages are repeated between two heap snapshots: what accumulated, what holds it (retaining path), and the cause read off that path (timer, listener, observer, subscription, socket, worker, global, detached DOM — or "undetermined", never a guess). |
+| Heap analysis | Growing and inconclusive pages are repeated between two heap snapshots (heap total before/after, object counts, detached DOM, console problems, and per object type instances / shallow / retained): what accumulated, what holds it (retaining path), and the cause read off that path (timer, listener, observer, subscription, socket, worker, global, detached DOM — or "undetermined", never a guess). |
 | Source correlation | With a project folder: matched by exact name through the framework adapter. Without one: through the source maps the app serves, when they embed their original sources. |
 | Fixes prepared | Only for HIGH/PROVEN findings matched to exactly one class/component: React (`useEffect` cleanup / `componentWillUnmount` - timers, listeners, observers, sockets, workers, animation frames, subscriptions), Angular (the existing ngOnDestroy engine), plain JS (existing `destroy()`/`dispose()`, or a custom element's `disconnectedCallback`). Everything else becomes advice for a person. **Nothing is written.** |
 
