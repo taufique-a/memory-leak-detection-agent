@@ -171,11 +171,14 @@ CHECK OPTIONS
   --max-routes <n>   Most pages to measure (default 6, busiest first)
   --iterations <n>   Repetitions per page (default 8, min 5)
   --warmup <n>       Repetitions discarded as warm-up (default 3)
-  --plan-only        Discover and plan, measure nothing
+  --plan-only        Stop once the pages are found (state PAGES_FOUND) so you can
+                     choose them; continue with check-run
   --out <dir>        Where checks are written (default reports/checks)
   Exit code 3 means the app needs you to sign in first ("scenario login").
 
 CHECK FOLLOW-UPS (on a finished check)
+  check-run      --check <id> --pages </a,/b> | --all | --current   measure the chosen pages
+  check-commit   --check <id> --fix <n> [--push]   commit only the files a verified fix changed
   check-apply    --check <id> --fix <n> [--yes] [--branch] [--commit] [--settle <sec>]
   check-verify   --check <id> --fix <n>     re-measure an applied fix again
   check-reject   --check <id> --fix <n> [--note <text>]
@@ -256,7 +259,14 @@ export function run(argv: string[]): number | Promise<number> {
     return runCheckCommand(args.slice(1));
   }
 
-  if (first === 'check-apply' || first === 'check-verify' || first === 'check-reject' || first === 'check-expected') {
+  if (
+    first === 'check-run' ||
+    first === 'check-apply' ||
+    first === 'check-verify' ||
+    first === 'check-reject' ||
+    first === 'check-expected' ||
+    first === 'check-commit'
+  ) {
     return runCheckFollowUp(first, args.slice(1));
   }
 

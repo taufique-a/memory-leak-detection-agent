@@ -48,6 +48,7 @@ import { writeCheckReport } from './report';
 import { classifyRootCause, type RootCause } from './rootCause';
 import { buildSourceMapIndex, withSourceMaps } from './sourceMaps';
 import { classifyLinks, routeOf } from './routeSafety';
+import type { GitOutcome } from './git';
 import { CheckStateMachine, type StateRecord, type StateTransition } from './state';
 
 export interface CheckOptions {
@@ -68,6 +69,8 @@ export interface CheckOptions {
 
 export type CheckEvent =
   | { type: 'started'; checkId: string; dir: string }
+  /** The address answered and the page loaded in Chrome. */
+  | { type: 'connected'; url: string; title: string }
   | { type: 'state'; transition: StateTransition }
   | { type: 'model'; framework: string; version?: string; routes: number; safeRoutes: number; entities: number; authRequired: boolean }
   | { type: 'explored'; route: string; measurable: boolean; note: string; index: number; total: number }
@@ -127,6 +130,8 @@ export interface FixVerification {
   at: string;
   applied: boolean;
   branch?: string;
+  /** The files the change was written to, for a later commit of exactly those. */
+  changedFiles?: string[];
   rollback: string[];
   build?: { passed: boolean; summary: string; checks: Array<{ name: string; passed: boolean; skipped: boolean }> };
   status: 'FIX VERIFIED' | 'FIX PARTIALLY VERIFIED' | 'FIX DID NOT RESOLVE LEAK' | 'FIX COULD NOT BE VERIFIED' | 'NOT APPLIED';
@@ -161,6 +166,12 @@ export interface CheckResult {
    * pages (checked while it stays open), or an application with several.
    */
   mode?: 'single-page' | 'multi-page';
+  /** Scripts the start page loaded - kept so a continued check can read their source maps. */
+  scriptUrls?: string[];
+  /** The pages the person chose, when the check stopped at PAGES_FOUND and was continued. */
+  selectedPages?: string[];
+  /** What happened when the applied change was committed (and pushed), if the person asked. */
+  git?: GitOutcome;
   /** URL-only checks: what the application's own source maps provided. */
   sourceMaps?: { scriptsMapped: number; originalSources: number; skipped: Array<{ script: string; reason: string }> };
 }
@@ -365,6 +376,8 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
       return finish(advice.message);
     }
 
+    emit({ type: 'connected', url: session.page.url(), title: await session.page.title().catch(() => '') });
+
     const authDetection = await detectAuthRequirement(session.page);
     if (authDetection.required) {
       if (auth.file !== undefined) {
@@ -493,7 +506,9 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
     baseUrl: origin,
     startRoute,
     ...(auth.file !== undefined ? { authFile: path.resolve(auth.file) } : {}),
-    maxRoutes: options.maxRoutes ?? 6,
+    // When the pages are going to be OFFERED (plan only), every measurable
+    // page is listed; the cap applies only when the agent chooses alone.
+    maxRoutes: options.planOnly === true ? Number.MAX_SAFE_INTEGER : (options.maxRoutes ?? 6),
     iterations: options.iterations ?? DEFAULT_ITERATIONS,
     warmupIterations: options.warmupIterations ?? DEFAULT_WARMUP,
     inNavigation: nav,
@@ -502,22 +517,17 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
   });
   const scenarioDir = path.join(dir, 'scenarios');
   fs.mkdirSync(scenarioDir, { recursive: true });
-  const scenarioFiles = new Map<string, string>();
-  for (const p of plan.planned) {
-    const file = path.join(scenarioDir, `${p.scenario.name}.json`);
-    fs.writeFileSync(file, JSON.stringify(p.scenario, null, 2), 'utf8');
-    scenarioFiles.set(p.route, file);
-  }
+  const planned: PlannedEntry[] = plan.planned.map((p) => {
+    const scenarioFile = path.join(scenarioDir, `${p.scenario.name}.json`);
+    fs.writeFileSync(scenarioFile, JSON.stringify(p.scenario, null, 2), 'utf8');
+    return { route: p.route, label: p.label, priorityReasons: p.priorityReasons, scenario: p.scenario, scenarioFile };
+  });
   result.plan = {
     ...plan,
-    planned: plan.planned.map((p) => ({
-      route: p.route,
-      label: p.label,
-      priorityReasons: p.priorityReasons,
-      scenarioFile: scenarioFiles.get(p.route) as string,
-    })),
+    planned: planned.map((p) => ({ route: p.route, label: p.label, priorityReasons: p.priorityReasons, scenarioFile: p.scenarioFile })),
   };
-  emit({ type: 'plan', routes: plan.planned.map((p) => p.route) });
+  result.scriptUrls = scriptUrls;
+  emit({ type: 'plan', routes: planned.map((p) => p.route) });
   for (const n of plan.notMeasurable) result.manualItems.push(`${n.route}: not measured - ${n.reason}`);
   if (plan.deferred.length > 0) {
     result.remainingRisks.push(
@@ -525,7 +535,7 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
     );
   }
 
-  if (plan.planned.length === 0) {
+  if (planned.length === 0) {
     machine.to('COMPLETED', 'no page could be entered and left inside the running application');
     return finish(
       'None of the pages the agent could reach can be measured: each either reloaded the whole page, redirected, ' +
@@ -533,9 +543,173 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
     );
   }
   if (options.planOnly === true) {
-    machine.to('COMPLETED', 'plan only - nothing measured');
-    return finish(`Plan only: ${plan.planned.length} page(s) would be measured. Nothing was measured.`);
+    // Stop here and offer the pages. `resumeCheck` carries on from this
+    // record once the person has chosen.
+    machine.to('PAGES_FOUND', result.mode === 'single-page' ? 'a single page - ready to check' : `${planned.length} page(s) found - waiting for you to choose`);
+    return finish(
+      result.mode === 'single-page'
+        ? `Single page detected (${startRoute}). Nothing has been measured yet.`
+        : `${planned.length} page(s) found. Choose which to check. Nothing has been measured yet.`,
+    );
   }
+
+  return measureAndDiagnose({
+    dir,
+    result,
+    machine,
+    emit,
+    progress,
+    finish,
+    url: options.url,
+    ...(projectRoot !== undefined ? { projectRoot } : {}),
+    scriptUrls,
+    startRoute,
+    iterations: plan.iterations,
+    planned,
+    framework: {
+      id: sourceOutcome?.adapter !== undefined ? sourceOutcome.framework : (runtimeOutcome?.framework ?? 'unknown'),
+      ...(sourceOutcome?.adapter !== undefined || runtimeOutcome?.adapter !== undefined
+        ? { adapter: (sourceOutcome?.adapter ?? runtimeOutcome?.adapter) as FrameworkAdapter }
+        : {}),
+    },
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Continuing a check whose pages were offered                          */
+/* ------------------------------------------------------------------ */
+
+interface PlannedEntry {
+  route: string;
+  label: string;
+  priorityReasons: string[];
+  scenario: Scenario;
+  scenarioFile: string;
+}
+
+interface MeasureContext {
+  dir: string;
+  result: CheckResult;
+  machine: CheckStateMachine;
+  emit: (event: CheckEvent) => void;
+  progress: (message: string) => void;
+  finish: (conclusion: string) => CheckResult;
+  url: string;
+  projectRoot?: string;
+  scriptUrls: string[];
+  startRoute: string;
+  iterations: number;
+  planned: PlannedEntry[];
+  framework: { id: string; adapter?: FrameworkAdapter };
+}
+
+export interface ResumeOptions {
+  /** Routes to check, as offered in `plan.planned`; 'all' for every offered page; 'current' for the page given. */
+  pages: string[] | 'all' | 'current';
+  onEvent?: (event: CheckEvent) => void;
+  onProgress?: (message: string) => void;
+}
+
+/**
+ * Continue a check that stopped at PAGES_FOUND, measuring only the pages
+ * the person chose. The journeys were written when the pages were found,
+ * so nothing is re-explored; the browser is opened again only to measure.
+ */
+export async function resumeCheck(dir: string, options: ResumeOptions): Promise<CheckResult> {
+  const emit = options.onEvent ?? ((): void => {});
+  const progress = options.onProgress ?? ((): void => {});
+  const result = readCheckResult(dir);
+  if (result === undefined) throw new Error(`No memory check found in ${dir}.`);
+  const machine = new CheckStateMachine(
+    result.checkId,
+    { file: path.join(dir, 'state.json'), onChange: (transition) => emit({ type: 'state', transition }) },
+    CheckStateMachine.load(path.join(dir, 'state.json')) ?? result.state,
+  );
+  if (machine.current !== 'PAGES_FOUND') {
+    throw new Error(`This check is at ${machine.current}, not waiting for a choice of pages.`);
+  }
+  if (result.plan === undefined) throw new Error('This check has no plan to continue from.');
+  emit({ type: 'started', checkId: result.checkId, dir });
+
+  const finish = (conclusion: string): CheckResult => {
+    result.conclusion = conclusion;
+    result.finishedAt = new Date().toISOString();
+    result.state = machine.snapshot();
+    writeCheckResult(dir, result);
+    writeCheckReport(dir, result);
+    emit({ type: 'done', checkId: result.checkId, state: machine.current, findings: result.findings.length, fixes: result.fixes.filter((f) => f.newContent !== undefined).length });
+    return result;
+  };
+
+  const offered = result.plan.planned;
+  const wanted =
+    options.pages === 'all'
+      ? offered.map((p) => p.route)
+      : options.pages === 'current'
+        ? [result.plan.startRoute]
+        : options.pages;
+  const unknown = wanted.filter((r) => !offered.some((p) => p.route === r));
+  if (unknown.length > 0) throw new Error(`Not among the pages found: ${unknown.join(', ')}`);
+
+  const planned: PlannedEntry[] = [];
+  for (const p of offered) {
+    if (!wanted.includes(p.route)) continue;
+    let scenario: Scenario;
+    try {
+      scenario = JSON.parse(fs.readFileSync(p.scenarioFile, 'utf8')) as Scenario;
+    } catch {
+      throw new Error(`The journey for ${p.route} is missing (${p.scenarioFile}).`);
+    }
+    planned.push({ ...p, scenario });
+  }
+  if (planned.length === 0) throw new Error('No page was chosen.');
+  result.selectedPages = planned.map((p) => p.route);
+  const skipped = offered.filter((p) => !wanted.includes(p.route)).map((p) => p.route);
+  // The "left out to keep it short" note belongs to an unattended run.
+  result.remainingRisks = result.remainingRisks.filter((r) => !/left out to keep the check short/.test(r));
+  if (skipped.length > 0) result.remainingRisks.push(`Not chosen for this check: ${skipped.join(', ')}.`);
+  result.startedAt = new Date().toISOString();
+  delete result.finishedAt;
+
+  // The adapters cannot be stored in check.json; get them back the same way
+  // they were found - from the project folder, or by the framework the
+  // running page declared.
+  const registry = defaultRegistry();
+  const projectRoot = result.projectRoot;
+  let adapter: FrameworkAdapter | undefined;
+  let frameworkId = result.model?.framework.id ?? 'unknown';
+  if (projectRoot !== undefined) {
+    const source = await registry.detect({ projectRoot });
+    if (source.adapter !== undefined) {
+      adapter = source.adapter;
+      frameworkId = source.framework;
+    }
+  }
+  if (adapter === undefined && frameworkId !== 'unknown') adapter = registry.get(frameworkId as Parameters<typeof registry.get>[0]);
+
+  return measureAndDiagnose({
+    dir,
+    result,
+    machine,
+    emit,
+    progress,
+    finish,
+    url: result.url,
+    ...(projectRoot !== undefined ? { projectRoot } : {}),
+    scriptUrls: result.scriptUrls ?? [],
+    startRoute: result.plan.startRoute,
+    iterations: result.plan.iterations,
+    planned,
+    framework: { id: frameworkId, ...(adapter !== undefined ? { adapter } : {}) },
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Measuring, explaining, proposing                                     */
+/* ------------------------------------------------------------------ */
+
+async function measureAndDiagnose(ctx: MeasureContext): Promise<CheckResult> {
+  const { dir, result, machine, emit, progress, finish, projectRoot, startRoute, planned } = ctx;
 
   machine.to(
     'BASELINE_CAPTURED',
@@ -545,11 +719,11 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
   );
 
   /* ================= TESTING ================= */
-  machine.to('TESTING', `${plan.planned.length} page(s), ${plan.iterations} repetitions each`);
+  machine.to('TESTING', `${planned.length} page(s), ${ctx.iterations} repetitions each`);
   const runs = new Map<string, { run: ScenarioRun; scenario: Scenario }>();
-  for (const p of plan.planned) {
+  for (const p of planned) {
     emit({ type: 'route', route: p.route, status: 'testing' });
-    const scenarioFile = scenarioFiles.get(p.route) as string;
+    const scenarioFile = p.scenarioFile;
     let attempts = 0;
     let run: ScenarioRun | undefined;
     let error: string | undefined;
@@ -666,19 +840,19 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
   }
 
   /* ================= CORRELATING ================= */
-  const framework = sourceOutcome?.adapter !== undefined ? sourceOutcome.framework : (runtimeOutcome?.framework ?? 'unknown');
-  let adapter: FrameworkAdapter | undefined = sourceOutcome?.adapter ?? runtimeOutcome?.adapter;
+  const framework = ctx.framework.id;
+  let adapter: FrameworkAdapter | undefined = ctx.framework.adapter;
   let viaSourceMaps = false;
   if (projectRoot === undefined) {
     // URL only: the app's own source maps may carry its original sources.
-    const index = await buildSourceMapIndex(scriptUrls, new URL(options.url).origin);
+    const index = await buildSourceMapIndex(ctx.scriptUrls, new URL(ctx.url).origin);
     result.sourceMaps = { scriptsMapped: index.mapped.length, originalSources: index.sources.length, skipped: index.skipped };
     if (index.sources.length > 0) {
       adapter = withSourceMaps(adapter, index);
       viaSourceMaps = true;
     }
   }
-  const correlationContext: AdapterContext = { baseUrl: options.url, ...(projectRoot !== undefined ? { projectRoot } : {}) };
+  const correlationContext: AdapterContext = { baseUrl: ctx.url, ...(projectRoot !== undefined ? { projectRoot } : {}) };
   machine.to(
     'CORRELATING',
     projectRoot === undefined

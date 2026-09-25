@@ -27,7 +27,7 @@ import * as path from 'node:path';
 
 import { applyCheckFix } from '../src/check/apply';
 import { readKnowledge } from '../src/check/knowledge';
-import { runCheck } from '../src/check/runCheck';
+import { resumeCheck, runCheck } from '../src/check/runCheck';
 import { isChromeAvailable } from '../src/runtime/browser';
 
 const REACT_JS = fs.readFileSync(path.join(__dirname, '..', 'node_modules', 'react', 'umd', 'react.development.js'), 'utf8');
@@ -289,6 +289,39 @@ describe('memory check - URL only, end to end', () => {
     expect(report).toContain('FIX VERIFIED');
     expect(readKnowledge().map((k) => k.decision)).toEqual(['fix-accepted', 'fix-verified']);
   }, 600_000);
+
+  it('can stop once the pages are found, let a person choose, and continue with only those', async () => {
+    if (!chrome) return;
+    fs.writeFileSync(path.join(projectRoot, 'src', 'Panels.js'), PANELS_SOURCE);
+    execFileSync('git', ['commit', '--allow-empty', '-qam', 'restore for the two-phase run'], { cwd: projectRoot, stdio: 'ignore' });
+
+    /* ---- first half: find the app and its pages, measure nothing ---- */
+    const found = await runCheck({ url: `${baseUrl}/`, projectRoot, outDir, planOnly: true });
+    expect(found.state.current).toBe('PAGES_FOUND');
+    expect(found.mode).toBe('multi-page');
+    expect(found.routeResults).toEqual([]);
+    const offered = found.plan?.planned.map((p) => p.route) ?? [];
+    // Every measurable page is offered - not just the busiest few - and the page given comes first.
+    expect(offered[0]).toBe('/');
+    for (const r of ['/leaky', '/clean', '/clean/deep']) expect(offered).toContain(r);
+
+    /* ---- second half: only the pages chosen ---- */
+    const states: string[] = [];
+    const result = await resumeCheck(path.join(outDir, found.checkId), {
+      pages: ['/leaky'],
+      onEvent: (e) => { if (e.type === 'state') states.push(e.transition.state); },
+    });
+    expect(result.checkId).toBe(found.checkId);
+    expect(result.selectedPages).toEqual(['/leaky']);
+    expect(result.routeResults.map((r) => r.route)).toEqual(['/leaky']);
+    expect(result.routeResults[0]?.verdict).toBe('GROWING');
+    expect(result.findings.some((f) => f.constructorName === 'LeakyPanel' && f.file === 'src/Panels.js')).toBe(true);
+    expect(states[0]).toBe('BASELINE_CAPTURED');
+    expect(result.remainingRisks.join(' ')).toMatch(/Not chosen for this check: \/, \/clean/);
+
+    // Continuing twice, or with a page that was never offered, is refused.
+    await expect(resumeCheck(path.join(outDir, found.checkId), { pages: ['/leaky'] })).rejects.toThrow(/not waiting for a choice/);
+  }, 900_000);
 
   it('refuses to apply when the file changed after the fix was proposed', async () => {
     if (!chrome) return;

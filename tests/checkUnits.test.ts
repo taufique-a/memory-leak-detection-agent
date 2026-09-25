@@ -30,6 +30,7 @@ import {
   type CheckResult,
 } from '../src/check/runCheck';
 import { canTransition, CheckStateMachine, isFailureState } from '../src/check/state';
+import { run } from '../src/cli';
 import { parseCheckArgs, parseFollowUpArgs } from '../src/commands/check';
 import type { DetectionOutcome } from '../src/core/framework/registry';
 import type { RetainingPath } from '../src/heap/retainers';
@@ -114,6 +115,13 @@ describe('state machine', () => {
     expect(canTransition('DISCOVERING', 'FIX_AVAILABLE')).toBe(false);
     expect(canTransition('FIX_AVAILABLE', 'APPLYING')).toBe(false); // review first
     expect(canTransition('USER_REVIEW', 'APPLYING')).toBe(true);
+  });
+
+  it('can stop once the pages are found, and continue from there', () => {
+    expect(canTransition('EXPLORING', 'PAGES_FOUND')).toBe(true);
+    expect(canTransition('PAGES_FOUND', 'BASELINE_CAPTURED')).toBe(true);
+    expect(canTransition('PAGES_FOUND', 'TESTING')).toBe(false);
+    expect(isFailureState('PAGES_FOUND')).toBe(false);
   });
 
   it('treats failures as terminal and names them as failures', () => {
@@ -460,6 +468,30 @@ describe('check CLI arguments', () => {
     expect(parseCheckArgs(['http://x', '--iterations', '3'])).toMatch(/at least 5/);
     expect(parseCheckArgs(['http://x', '--bogus'])).toMatch(/Unknown option/);
   });
+  it('check-run takes the pages found, all of them, or the current one - and nothing that is not a route', () => {
+    expect(parseFollowUpArgs(['--check', 'chk-abc123', '--pages', '/a,/b/c?x=1'], 'check-run')).toMatchObject({ pages: ['/a', '/b/c?x=1'] });
+    expect(parseFollowUpArgs(['--check', 'chk-abc123', '--all'], 'check-run')).toMatchObject({ pages: 'all' });
+    expect(parseFollowUpArgs(['--check', 'chk-abc123', '--current'], 'check-run')).toMatchObject({ pages: 'current' });
+    expect(parseFollowUpArgs(['--check', 'chk-abc123'], 'check-run')).toMatch(/requires --pages/);
+    expect(parseFollowUpArgs(['--check', 'chk-abc123', '--pages', '/a;rm -rf'], 'check-run')).toMatch(/not a route/);
+    expect(parseFollowUpArgs(['--check', 'chk-abc123', '--fix', '0', '--push'], 'check-commit')).toMatchObject({ fix: 0, push: true });
+  });
+
+  it('every check command is reachable from the CLI - a missing dispatch is not an "unknown command"', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      for (const cmd of ['check-run', 'check-apply', 'check-verify', 'check-reject', 'check-expected', 'check-commit']) {
+        errSpy.mockClear();
+        expect(await run(['node', 'cli.js', cmd])).toBe(1);
+        const said = errSpy.mock.calls.flat().join(' ');
+        expect(said).not.toMatch(/Unknown command/);
+        expect(said).toMatch(/requires --check/);
+      }
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
   it('validates follow-up ids, fix numbers and hashes', () => {
     expect(parseFollowUpArgs(['--check', 'chk-abc123', '--fix', '0'], 'check-apply')).toMatchObject({ checkId: 'chk-abc123', fix: 0 });
     expect(parseFollowUpArgs(['--check', '../x', '--fix', '0'], 'check-apply')).toMatch(/requires --check/);

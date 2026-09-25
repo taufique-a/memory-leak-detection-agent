@@ -23,8 +23,8 @@
 
 import * as path from 'node:path';
 
-import { applyCheckFix, markFindingExpected, rejectCheckFix, verifyAppliedFix } from '../check/apply';
-import { checkDir, runCheck, type CheckEvent } from '../check/runCheck';
+import { applyCheckFix, commitCheckFix, markFindingExpected, rejectCheckFix, verifyAppliedFix } from '../check/apply';
+import { checkDir, resumeCheck, runCheck, type CheckEvent } from '../check/runCheck';
 import { askLine } from '../utils/prompt';
 import { colour, field, heading, info, warn } from '../utils/logger';
 
@@ -166,7 +166,15 @@ export async function runCheckCommand(args: string[]): Promise<number> {
     onProgress: (m) => console.log(colour.dim(`    ${m}`)),
   });
 
-  const dir = checkDir(path.resolve(parsed.outDir), result.checkId);
+  printCheckResult(result, path.resolve(parsed.outDir));
+
+  if (result.state.current === 'AUTHENTICATION_REQUIRED') return 3;
+  const failed = ['AUTH_FAILED', 'BROWSER_ERROR', 'DISCOVERY_FAILED', 'HEAP_CAPTURE_FAILED'].includes(result.state.current);
+  return failed ? 1 : 0;
+}
+
+function printCheckResult(result: Awaited<ReturnType<typeof runCheck>>, outDir: string): void {
+  const dir = checkDir(outDir, result.checkId);
   heading('RESULT');
   field('Check', result.checkId);
   field('State', result.state.current);
@@ -200,10 +208,6 @@ export async function runCheckCommand(args: string[]): Promise<number> {
   console.log('');
   field('Report', path.join(dir, 'report.html'));
   console.log('');
-
-  if (result.state.current === 'AUTHENTICATION_REQUIRED') return 3;
-  const failed = ['AUTH_FAILED', 'BROWSER_ERROR', 'DISCOVERY_FAILED', 'HEAP_CAPTURE_FAILED'].includes(result.state.current);
-  return failed ? 1 : 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -221,13 +225,20 @@ interface FollowUpArgs {
   commit: boolean;
   settleSeconds?: number;
   outDir: string;
+  /** check-run: which of the pages found to check. */
+  pages?: string[] | 'all' | 'current';
+  /** check-commit: also push to the project's remote. */
+  push: boolean;
 }
 
+/** A route as the check offered it: a path, optionally with a query or a hash route. Nothing that could start a new argument. */
+export const ROUTE_PATTERN = /^\/[A-Za-z0-9_./#?=&%:+~-]*$/;
+
 export function parseFollowUpArgs(args: string[], command: string): FollowUpArgs | string {
-  const out: FollowUpArgs = { checkId: '', yes: false, newBranch: false, commit: false, outDir: path.join('reports', 'checks') };
+  const out: FollowUpArgs = { checkId: '', yes: false, newBranch: false, commit: false, push: false, outDir: path.join('reports', 'checks') };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] as string;
-    const named = ['--check', '--fix', '--finding', '--expect', '--note', '--settle', '--out'].find(
+    const named = ['--check', '--fix', '--finding', '--expect', '--note', '--settle', '--out', '--pages'].find(
       (n) => arg === n || arg.startsWith(`${n}=`),
     );
     if (named !== undefined) {
@@ -242,11 +253,20 @@ export function parseFollowUpArgs(args: string[], command: string): FollowUpArgs
       else if (named === '--expect') out.expect = v.value;
       else if (named === '--note') out.note = v.value;
       else if (named === '--out') out.outDir = v.value;
-      else {
+      else if (named === '--pages') {
+        const list = v.value.split(',').map((r) => r.trim()).filter((r) => r !== '');
+        if (list.length === 0) return '--pages requires a comma-separated list of routes';
+        const bad = list.find((r) => !ROUTE_PATTERN.test(r));
+        if (bad !== undefined) return `"${bad}" is not a route the check could have offered`;
+        out.pages = list;
+      } else {
         if (!/^\d+$/.test(v.value)) return '--settle requires a number of seconds';
         out.settleSeconds = Number(v.value);
       }
-    } else if (arg === '--yes') out.yes = true;
+    } else if (arg === '--all') out.pages = 'all';
+    else if (arg === '--current') out.pages = 'current';
+    else if (arg === '--push') out.push = true;
+    else if (arg === '--yes') out.yes = true;
     else if (arg === '--branch') out.newBranch = true;
     else if (arg === '--commit') out.commit = true;
     else return `Unknown option for ${command}: ${arg}`;
@@ -254,6 +274,8 @@ export function parseFollowUpArgs(args: string[], command: string): FollowUpArgs
   if (!CHECK_ID_PATTERN.test(out.checkId)) return `${command} requires --check <id> (e.g. chk-...)`;
   if (command === 'check-expected') {
     if (out.finding === undefined || !/^f\d+$/.test(out.finding)) return 'check-expected requires --finding <fN>';
+  } else if (command === 'check-run') {
+    if (out.pages === undefined) return 'check-run requires --pages <route,route>, --all or --current';
   } else if (out.fix === undefined) return `${command} requires --fix <n>`;
   if (out.expect !== undefined && !/^[a-f0-9]{64}$/.test(out.expect)) return '--expect must be a sha256 hash';
   return out;
@@ -268,7 +290,39 @@ export async function runCheckFollowUp(command: string, args: string[]): Promise
   const dir = checkDir(path.resolve(parsed.outDir), parsed.checkId);
   const progress = (m: string): void => console.log(colour.dim(`  ${m}`));
 
+  if (command === 'check-run') {
+    console.log('');
+    console.log(colour.bold(`Memory check ${parsed.checkId}: measuring the chosen pages`));
+    console.log('');
+    let result;
+    try {
+      result = await resumeCheck(dir, {
+        pages: parsed.pages as NonNullable<FollowUpArgs['pages']>,
+        onEvent: (event) => {
+          console.log(`@@CHECK ${JSON.stringify(event)}`);
+          const text = describe(event);
+          if (text !== undefined) console.log(text);
+        },
+        onProgress: progress,
+      });
+    } catch (err) {
+      console.error((err as Error).message);
+      return 1;
+    }
+    printCheckResult(result, path.resolve(parsed.outDir));
+    return ['BROWSER_ERROR', 'HEAP_CAPTURE_FAILED'].includes(result.state.current) ? 1 : 0;
+  }
+
   let outcome;
+  if (command === 'check-commit') {
+    const c = commitCheckFix(dir, parsed.fix as number, { push: parsed.push });
+    console.log('');
+    if (c.ok) info(c.message);
+    else warn(c.message);
+    console.log(`@@CHECK ${JSON.stringify({ type: 'followup', command, ok: c.ok, message: c.message, ...(c.git !== undefined ? { git: c.git } : {}) })}`);
+    console.log('');
+    return c.ok ? 0 : 1;
+  }
   if (command === 'check-apply') {
     outcome = await applyCheckFix({
       dir,
