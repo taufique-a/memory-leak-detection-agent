@@ -121,6 +121,9 @@ describe('state machine', () => {
     expect(canTransition('EXPLORING', 'PAGES_FOUND')).toBe(true);
     expect(canTransition('PAGES_FOUND', 'BASELINE_CAPTURED')).toBe(true);
     expect(canTransition('PAGES_FOUND', 'TESTING')).toBe(false);
+    // A run stopped part-way is started again from the plan, never left stuck.
+    for (const s of ['BASELINE_CAPTURED', 'TESTING', 'HEAP_ANALYSIS', 'CORRELATING', 'DIAGNOSING']) expect(canTransition(s as never, 'PAGES_FOUND')).toBe(true);
+    expect(canTransition('FIX_AVAILABLE', 'PAGES_FOUND')).toBe(false);
     expect(isFailureState('PAGES_FOUND')).toBe(false);
   });
 

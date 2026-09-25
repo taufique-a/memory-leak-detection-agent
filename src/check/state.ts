@@ -69,11 +69,13 @@ const NEXT: Record<CheckState, readonly CheckState[]> = {
   EXPLORING: ['PAGES_FOUND', 'BASELINE_CAPTURED', 'COMPLETED', 'BROWSER_ERROR', 'AUTH_FAILED'],
   /** Discovery is done and the pages are listed; the check waits for the person to choose. */
   PAGES_FOUND: ['BASELINE_CAPTURED', 'COMPLETED'],
-  BASELINE_CAPTURED: ['TESTING'],
-  TESTING: ['HEAP_ANALYSIS', 'COMPLETED', 'BROWSER_ERROR'],
-  HEAP_ANALYSIS: ['CORRELATING', 'HEAP_CAPTURE_FAILED'],
-  CORRELATING: ['DIAGNOSING'],
-  DIAGNOSING: ['FIX_AVAILABLE', 'COMPLETED'],
+  /* Each measuring state can go back to PAGES_FOUND: a run that was stopped
+     or crashed mid-way is started again from the plan, never left stuck. */
+  BASELINE_CAPTURED: ['TESTING', 'PAGES_FOUND'],
+  TESTING: ['HEAP_ANALYSIS', 'COMPLETED', 'BROWSER_ERROR', 'PAGES_FOUND'],
+  HEAP_ANALYSIS: ['CORRELATING', 'HEAP_CAPTURE_FAILED', 'PAGES_FOUND'],
+  CORRELATING: ['DIAGNOSING', 'PAGES_FOUND'],
+  DIAGNOSING: ['FIX_AVAILABLE', 'COMPLETED', 'PAGES_FOUND'],
   FIX_AVAILABLE: ['USER_REVIEW', 'COMPLETED'],
   USER_REVIEW: ['APPLYING', 'FIX_REJECTED'],
   APPLYING: ['BUILDING', 'BUILD_FAILED'],

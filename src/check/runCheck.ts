@@ -75,7 +75,18 @@ export type CheckEvent =
   | { type: 'model'; framework: string; version?: string; routes: number; safeRoutes: number; entities: number; authRequired: boolean }
   | { type: 'explored'; route: string; measurable: boolean; note: string; index: number; total: number }
   | { type: 'plan'; routes: string[] }
-  | { type: 'route'; route: string; status: 'testing' | 'done' | 'failed'; verdict?: string; bytesPerIteration?: number; detail?: string }
+  | {
+      type: 'route';
+      route: string;
+      status: 'testing' | 'done' | 'failed';
+      verdict?: string;
+      bytesPerIteration?: number;
+      detail?: string;
+      /** Live JS heap after each repetition (after forced GC), so a chart can be drawn from real readings. */
+      heapBytes?: number[];
+      /** Registered event listeners after each repetition. */
+      listeners?: number[];
+    }
   | { type: 'finding'; finding: CheckFinding }
   | { type: 'done'; checkId: string; state: string; findings: number; fixes: number };
 
@@ -97,6 +108,10 @@ export interface RouteResult {
     error?: string;
   };
   priorityReasons: string[];
+  /** Live JS heap (bytes, after forced GC) after each repetition of the run the verdict came from. */
+  heapBytes?: number[];
+  /** Registered event listeners after each repetition. */
+  listeners?: number[];
   /** Present when modest growth was re-measured with a longer run; the verdict above is the longer run's. */
   confirmation?: { initialVerdict: string; initialBytesPerIteration: number; iterations: number; warmupIterations: number };
 }
@@ -625,6 +640,18 @@ export async function resumeCheck(dir: string, options: ResumeOptions): Promise<
     { file: path.join(dir, 'state.json'), onChange: (transition) => emit({ type: 'state', transition }) },
     CheckStateMachine.load(path.join(dir, 'state.json')) ?? result.state,
   );
+  const INTERRUPTIBLE = ['BASELINE_CAPTURED', 'TESTING', 'HEAP_ANALYSIS', 'CORRELATING', 'DIAGNOSING'];
+  if (INTERRUPTIBLE.includes(machine.current)) {
+    // A measurement that was stopped or crashed part-way: start it again
+    // from the plan, with nothing of the half-finished run kept.
+    machine.to('PAGES_FOUND', `the earlier measurement stopped at ${machine.current} - starting again`);
+    result.routeResults = [];
+    result.findings = [];
+    result.fixes = [];
+    result.verifications = [];
+    result.manualItems = result.manualItems.filter((m) => /not measured - /.test(m));
+    delete result.sourceMaps;
+  }
   if (machine.current !== 'PAGES_FOUND') {
     throw new Error(`This check is at ${machine.current}, not waiting for a choice of pages.`);
   }
@@ -788,8 +815,18 @@ async function measureAndDiagnose(ctx: MeasureContext): Promise<CheckResult> {
       stepFailures: run.failures.length,
       attempts,
       priorityReasons: p.priorityReasons,
+      heapBytes: run.samples.map((sm) => sm.jsHeapUsedBytes),
+      listeners: run.samples.map((sm) => sm.jsEventListeners),
     });
-    emit({ type: 'route', route: p.route, status: 'done', verdict: run.trend.verdict, bytesPerIteration: run.trend.bytesPerIteration });
+    emit({
+      type: 'route',
+      route: p.route,
+      status: 'done',
+      verdict: run.trend.verdict,
+      bytesPerIteration: run.trend.bytesPerIteration,
+      heapBytes: run.samples.map((sm) => sm.jsHeapUsedBytes),
+      listeners: run.samples.map((sm) => sm.jsEventListeners),
+    });
   }
   writeCheckResult(dir, { ...result, state: machine.snapshot() });
 
