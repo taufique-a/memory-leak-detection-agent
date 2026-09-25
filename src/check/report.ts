@@ -100,10 +100,19 @@ export function renderCheckMarkdown(r: CheckResult): string {
   for (const line of r.plan?.methodology ?? ['No measurement plan was made.']) out.push(`- ${line}`);
   if (r.baseline !== undefined) out.push(`- Baseline on \`${r.baseline.route}\`: ${mb(r.baseline.jsHeapUsedBytes)} after forced garbage collection, ${r.baseline.attachedDomNodes} elements.`);
 
+  const timed = r.routeResults.filter((rr) => rr.timings !== undefined);
+  if (timed.length > 0) {
+    out.push('', 'Time spent per page (so speed can be judged; the heap snapshots and their retained-size analysis dominate on large applications):');
+    for (const rr of timed) {
+      const t = rr.timings as NonNullable<typeof rr.timings>;
+      out.push(`- \`${rr.route}\`: trend ${Math.round(t.trendMs / 1000)} s` + (t.confirmMs !== undefined ? `, confirmation ${Math.round(t.confirmMs / 1000)} s` : '') + (t.heapMs !== undefined ? `, heap snapshots ${Math.round(t.heapMs / 1000)} s` : ''));
+    }
+  }
+
   h('7. Findings');
   if (r.findings.length === 0) out.push('No growing object was found' + (r.routeResults.some((x) => x.verdict === 'GROWING') ? ', though pages grew - see items for manual investigation.' : '.'));
   r.findings.forEach((f, i) => {
-    out.push(`### ${i + 1}. ${f.constructorName} on \`${f.route}\` - ${f.confidence}`);
+    out.push(`### ${i + 1}. ${f.constructorName} on \`${f.route}\` - ${f.confidence}, severity ${f.severity}`);
     out.push('');
     out.push(`- Source: ${f.file !== undefined ? `\`${f.file}${f.line !== undefined ? `:${f.line}` : ''}\` (${f.entityName})` : 'not traced to a file'} - ${f.correlationNote}`);
     out.push(`- Recommended action: **${f.action}** - ${f.actionReason}`);
@@ -111,14 +120,37 @@ export function renderCheckMarkdown(r: CheckResult): string {
   });
 
   h('8. Evidence');
+  const snapped = r.routeResults.filter((rr) => rr.heap !== undefined && rr.heap.error === undefined && rr.heap.before !== undefined);
+  if (snapped.length > 0) {
+    out.push('Heap snapshots, before and after the repeated journey (shallow = the objects themselves; retained = what they keep alive):', '');
+    out.push('| Page | Taken via | Heap before | Heap after | Objects | Detached DOM | Console problems |', '|---|---|---|---|---|---|---|');
+    for (const rr of snapped) {
+      const hp = rr.heap as NonNullable<typeof rr.heap>;
+      const signed = (n: number | undefined): string => (n === undefined ? '-' : (n >= 0 ? '+' : '') + String(n));
+      out.push(
+        '| `' + rr.route + '` | ' + (hp.via ?? '-') + ' | ' + mb(hp.before?.totalBytes) + ' | ' + mb(hp.after?.totalBytes) +
+          ' (' + (hp.totalBytesDelta !== undefined ? (hp.totalBytesDelta >= 0 ? '+' : '') + mb(hp.totalBytesDelta) : '-') + ') | ' +
+          signed(hp.totalNodeDelta) + ' | ' + (hp.before?.detachedNodes ?? '-') + ' -> ' + (hp.after?.detachedNodes ?? '-') + ' (' + signed(hp.detachedNodeDelta) + ') | ' +
+          (hp.consoleProblems ?? 'not recorded') + ' |',
+      );
+    }
+    for (const rr of snapped) {
+      const hp = rr.heap as NonNullable<typeof rr.heap>;
+      if ((hp.growingTypes ?? []).length === 0) continue;
+      out.push('', 'Object types that gained the most on `' + rr.route + '`:', '', '| Type | +instances | Shallow | Retained |', '|---|---|---|---|');
+      for (const g of hp.growingTypes ?? []) out.push('| ' + g.name + ' | +' + g.countDelta + ' | ' + mb(g.shallowDelta) + ' | ' + (g.retainedDelta !== undefined ? mb(g.retainedDelta) : 'not computed') + ' |');
+    }
+    out.push('');
+  }
   for (const f of r.findings) {
-    out.push(`- **${f.constructorName}**: +${f.countDelta} instance(s), ${mb(f.retainedBytesDelta ?? f.bytesDelta)} ${f.retainedBytesDelta !== undefined ? 'retained' : 'shallow'}`);
+    out.push(`- **${f.constructorName}**: +${f.countDelta} instance(s); shallow ${mb(f.bytesDelta)}; retained ${f.retainedBytesDelta !== undefined ? mb(f.retainedBytesDelta) : 'not computed'}; severity ${f.severity}`);
     out.push(`  - Retaining path: \`${f.retainingPath}\``);
     for (const reason of f.rationale) out.push(`  - ${reason}`);
   }
   if (r.findings.length === 0) out.push('See routes checked.');
 
   h('9. Confidence');
+  out.push('Severity (cost) is separate from confidence (certainty): HIGH from 5 MB retained per journey, MEDIUM from 512 KB or any PROVEN leak, otherwise LOW.', '');
   out.push('Six levels, no score: PROVEN (growth + source + retaining path + independent trend), HIGH (all but the trend), MEDIUM, LOW (ambiguous or no path), UNKNOWN (not owned by / not traced to your code), INCONCLUSIVE (no net growth).');
   for (const level of ['PROVEN', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'] as const) {
     const count = r.findings.filter((f) => f.confidence === level).length;

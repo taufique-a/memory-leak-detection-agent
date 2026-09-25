@@ -26,6 +26,7 @@ import {
   isBrowserInternal,
   needsConfirmation,
   resolveAuthFile,
+  severityOf,
   type CheckFinding,
   type CheckResult,
 } from '../src/check/runCheck';
@@ -388,6 +389,18 @@ describe('root cause', () => {
 
 /* ------------------------------------------------------------------ */
 
+describe('severity', () => {
+  it('is about cost, kept apart from confidence', () => {
+    expect(severityOf({ confidence: 'HIGH', bytesDelta: 100, retainedBytesDelta: 6 * 1024 * 1024 })).toBe('HIGH');
+    expect(severityOf({ confidence: 'HIGH', bytesDelta: 100, retainedBytesDelta: 600 * 1024 })).toBe('MEDIUM');
+    expect(severityOf({ confidence: 'HIGH', bytesDelta: 100, retainedBytesDelta: 10 * 1024 })).toBe('LOW');
+    // A proven leak is never LOW - small and certain still compounds.
+    expect(severityOf({ confidence: 'PROVEN', bytesDelta: 100, retainedBytesDelta: 10 * 1024 })).toBe('MEDIUM');
+    // Without a retained figure, shallow size is what there is.
+    expect(severityOf({ confidence: 'UNKNOWN', bytesDelta: 6 * 1024 * 1024 })).toBe('HIGH');
+  });
+});
+
 describe('verification decision', () => {
   it('VERIFIED only when the object stopped AND the page stopped growing', () => {
     expect(decideVerification(8, 0, false).status).toBe('FIX VERIFIED');
@@ -418,6 +431,7 @@ function cf(over: Partial<CheckFinding> = {}): CheckFinding {
     action: 'NEEDS DEVELOPER REVIEW',
     actionReason: 'x',
     knowledge: [],
+    severity: 'MEDIUM',
     ...over,
   };
 }

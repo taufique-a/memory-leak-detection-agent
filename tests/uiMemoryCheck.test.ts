@@ -164,8 +164,15 @@ async function findPages(): Promise<void> {
 async function checkPages(): Promise<void> {
   await page.click('#wzCheckSelected');
   await waitText('#running', '^(?!nothing running$)', 30_000);
+  // Real-time: the chart shows readings while a page is still being measured.
+  await waitText('#wzChart', 'measuring', 180_000);
   await idle();
-  await page.waitForSelector('#wz5.on', { timeout: 30_000 });
+  try {
+    await page.waitForSelector('#wz5.on', { timeout: 30_000 });
+  } catch {
+    // Say what the run printed, so a failure here explains itself.
+    throw new Error(`No results screen after the run. Console tail: "${((await page.textContent('#out')) ?? '').slice(-1500)}"`);
+  }
   await page.waitForSelector('[data-mcfix]', { timeout: 30_000 });
 }
 
@@ -197,6 +204,13 @@ describe('the memory check wizard, every button', () => {
     expect(findings).toContain('LeakyPanel');
     expect(findings).toMatch(/Confirmed leak|Strong evidence/);
     expect(findings).toContain('A timer');
+    expect(findings).toContain('severity');
+    const details = (await page.textContent('#wzDetails')) ?? '';
+    expect(details).toContain('Heap snapshots: /orders');
+    expect(details).toContain('Detached DOM nodes');
+    expect(details).toMatch(/LeakyPanel \+\d+shallow/);
+    await page.click('#mcTechBox summary');
+    expect((await page.textContent('#mcTech')) ?? '').toMatch(/Time on \/orders: trend \d+s.*heap snapshots \d+s/);
 
     // "This is expected" and Reject: nothing written, both remembered.
     await page.click('[data-mcexpected]');

@@ -153,6 +153,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:1rem;pa
 .finding h3{margin:0 0 .3rem;font-size:1rem;display:flex;gap:.55rem;align-items:center;flex-wrap:wrap}
 .finding .stats{display:flex;gap:1.2rem;flex-wrap:wrap;margin:.5rem 0 .3rem;font-size:.82rem;color:var(--muted)}
 .finding .stats b{display:block;color:var(--fg)}
+.finding .stats b.sev-high{color:var(--bad)}.finding .stats b.sev-medium{color:var(--warn)}.finding .stats b.sev-low{color:var(--ok)}
 .finding .grid{display:grid;grid-template-columns:auto 1fr;gap:.3rem .9rem;font-size:.88rem;margin:.6rem 0}
 .finding .grid b{color:var(--muted);font-weight:500}
 .finding .details{display:none;border-top:1px solid var(--line);margin-top:.6rem;padding-top:.6rem}.finding.open .details{display:block}
@@ -269,7 +270,7 @@ footer{margin-top:2rem;color:var(--muted);font-size:.8rem;display:flex;gap:1rem;
 
 <details class="techbox" id="mcTechBox"><summary>Show technical details</summary><div id="mcTech" class="sub" style="margin-top:.5rem">Nothing yet.</div><pre id="out"></pre></details>
 
-<footer><span>Runs on your machine only - nothing leaves this computer.</span><span><a href="/?view=advanced&amp;token=${options.token}">Advanced tools</a></span></footer>
+<footer><span>Runs on your machine only - nothing leaves this computer.</span></footer>
 </div>
 
 <div class="modalback" id="mcFixBack">
@@ -518,7 +519,13 @@ function handleCheckLine(line) {
   else if (e.type === 'model') mc.model = e;
   else if (e.type === 'explored') mc.explored.push(e);
   else if (e.type === 'plan') mc.plan = e.routes;
-  else if (e.type === 'route') mc.routes[e.route] = e;
+  else if (e.type === 'route') { const live = mc.routes[e.route] && mc.routes[e.route].live; mc.routes[e.route] = e; if (live && !e.heapBytes) mc.routes[e.route].live = live; }
+  else if (e.type === 'sample') {
+    // A reading the moment it was taken: the chart moves while the page is measured.
+    const r = mc.routes[e.route] || (mc.routes[e.route] = { status: 'testing' });
+    if (!r.live || (e.confirming && !r.confirming)) { r.live = []; r.liveListeners = []; r.confirming = e.confirming; }
+    r.live.push(e.heapBytes); r.liveListeners.push(e.listeners);
+  }
   else if (e.type === 'finding') mc.findings.push(e.finding);
   if (wzStep === 2) wzRenderDetect();
   else if (wzStep === 4) wzRenderAnalysis();
@@ -679,7 +686,9 @@ function chartSvg(series) {
   return out;
 }
 function wzRenderChart(routes) {
-  const series = routes.filter((r) => r.heapBytes && r.heapBytes.length).slice(0, 4).map((r) => ({ name: r.route, values: r.heapBytes }));
+  // Finished pages use the run's readings; the page being measured shows its readings so far.
+  const series = routes.filter((r) => (r.heapBytes && r.heapBytes.length) || (r.live && r.live.length)).slice(-4)
+    .map((r) => ({ name: r.route + (r.heapBytes ? '' : r.confirming ? ' (confirming...)' : ' (measuring...)'), values: r.heapBytes || r.live }));
   let html = chartSvg(series);
   const tiles = [];
   for (const r of routes.filter((r) => r.heapBytes && r.heapBytes.length >= 2)) {
@@ -706,7 +715,7 @@ function wzRenderAnalysis() {
   }).join('');
   const later = ['HEAP_ANALYSIS', 'CORRELATING', 'DIAGNOSING'].includes(state);
   $('wzAnalysisNote').style.display = later ? '' : 'none';
-  $('wzAnalysisDetail').innerHTML = later ? '<b>Analyzing pages...</b><span class="sub">Memory kept growing on at least one page. Taking heap snapshots around the same journey to name what stays behind and what holds it. This takes a few minutes.</span>' : '';
+  $('wzAnalysisDetail').innerHTML = later ? '<b>Taking heap snapshots...</b><span class="sub">At least one page did not come back flat. Two heap snapshots are taken around the same journey (through Chrome DevTools MCP when it is available) and compared: retained and shallow size per object type, detached DOM nodes, and the retaining path of what stays behind. This takes a few minutes per page.</span>' : '';
   wzRenderChart(routes.map((route) => Object.assign({ route: route }, mc.routes[route])));
 }
 
@@ -739,7 +748,7 @@ function wzRenderResults() {
     return '<div class="finding" id="wzf-' + esc(f.id) + '">' +
       '<h3><span class="tag ' + k.cls + '">' + esc(k.label) + '</span> ' + esc(f.entityName || f.constructorName) + ' <code>' + esc(f.route) + '</code></h3>' +
       '<div class="sub">' + why + '</div>' +
-      '<div class="stats"><span><b>' + esc(mcKb(f.retainedBytesDelta !== undefined ? f.retainedBytesDelta : f.bytesDelta)) + '</b>retained memory per journey</span><span><b>' + f.countDelta + '</b>instances left behind</span><span><b>' + esc(f.confidence) + '</b>confidence</span></div>' +
+      '<div class="stats"><span><b>' + (f.retainedBytesDelta !== undefined ? esc(mcKb(f.retainedBytesDelta)) : 'n/a') + '</b>retained per journey</span><span><b>' + esc(mcKb(f.bytesDelta)) + '</b>shallow</span><span><b>' + f.countDelta + '</b>instances left behind</span><span><b class="sev-' + esc((f.severity || 'LOW').toLowerCase()) + '">' + esc(f.severity || 'LOW') + '</b>severity</span><span><b>' + esc(f.confidence) + '</b>confidence</span></div>' +
       '<div class="details"><div class="grid">' +
       '<b>What</b><span>' + esc(f.constructorName) + ' instances stay in memory after the page is used.</span>' +
       '<b>Where</b><span>' + where + '</span>' +
@@ -793,6 +802,7 @@ function wzRenderResults() {
     const mark = p.verdict === 'GROWING' ? '<span class="pill bad">growing</span>' : p.verdict === 'FAILED' ? '<span class="pill warn">not measured</span>' : p.verdict === 'INCONCLUSIVE' ? '<span class="pill warn">inconclusive</span>' : '<span class="pill ok">clean</span>';
     return '<li>' + mark + ' <code>' + esc(p.route) + '</code><span class="fill"></span><span class="sub">' + (leaks.length ? esc(leaks.join(', ')) : esc(mcKb(p.bytesPerIteration)) + ' per visit') + '</span></li>';
   }).join('') + '</ul>' +
+    wzHeapMetrics(pages) +
     (objs.length ? '<div class="lbl2" style="margin-top:.9rem">Top retained objects</div><ul class="objlist">' + objs.map((f) => '<li><span>' + esc(f.constructorName) + ' <span class="sub">on ' + esc(f.route) + '</span></span><span>' + esc(mcKb(f.retainedBytesDelta !== undefined ? f.retainedBytesDelta : f.bytesDelta)) + '</span></li>').join('') + '</ul>' : '') +
     (pages.some((p) => p.heapBytes && p.heapBytes.length) ? '<div class="lbl2" style="margin-top:.9rem">Memory trend</div>' + chartSvg(pages.filter((p) => p.heapBytes && p.heapBytes.length).slice(0, 4).map((p) => ({ name: p.route, values: p.heapBytes }))) : '');
 
@@ -809,8 +819,28 @@ function wzRenderResults() {
   for (const u of (c.model ? c.model.unknowns : [])) lines.push(u);
   for (const x of c.manualItems) lines.push('Needs a person: ' + x);
   for (const x of c.remainingRisks) lines.push('Remaining risk: ' + x);
+  for (const p of pages) if (p.timings) lines.push('Time on ' + p.route + ': trend ' + Math.round(p.timings.trendMs / 1000) + 's' + (p.timings.confirmMs ? ', confirmation ' + Math.round(p.timings.confirmMs / 1000) + 's' : '') + (p.timings.heapMs ? ', heap snapshots ' + Math.round(p.timings.heapMs / 1000) + 's' : ''));
   $('mcTech').innerHTML = '<ul class="state">' + lines.map((l) => '<li>' + esc(l) + '</li>').join('') + '</ul>';
 }
+/** What the two heap snapshots of a page showed: whole-heap figures, detached DOM, the types that gained most. */
+function wzHeapMetrics(pages) {
+  const snapped = pages.filter((p) => p.heap && !p.heap.error && p.heap.before);
+  if (!snapped.length) return '';
+  return snapped.map((p) => {
+    const h = p.heap;
+    const d = h.detachedNodeDelta || 0;
+    return '<div class="lbl2" style="margin-top:.9rem">Heap snapshots: ' + esc(p.route) + '</div>' +
+      '<div class="sub">Taken via ' + esc(h.via || 'Chrome DevTools') + ', before and after the repeated journey.</div>' +
+      '<div class="tiles" style="margin-top:.5rem">' +
+      '<div class="tile"><small>Heap (shallow total)</small><b>' + mcMb(h.before.totalBytes) + '</b><i class="' + ((h.totalBytesDelta || 0) > 200 * 1024 ? 'up' : 'flat') + '">&rarr; ' + mcMb(h.after.totalBytes) + '</i></div>' +
+      '<div class="tile"><small>Objects</small><b>' + h.before.nodes.toLocaleString() + '</b><i class="' + ((h.totalNodeDelta || 0) > 0 ? 'up' : 'flat') + '">' + ((h.totalNodeDelta || 0) >= 0 ? '+' : '') + (h.totalNodeDelta || 0).toLocaleString() + '</i></div>' +
+      '<div class="tile"><small>Detached DOM nodes</small><b>' + h.after.detachedNodes + '</b><i class="' + (d > 0 ? 'up' : 'flat') + '">' + (d >= 0 ? '+' : '') + d + '</i></div>' +
+      (h.consoleProblems !== undefined ? '<div class="tile"><small>Console problems</small><b>' + h.consoleProblems + '</b><i>' + (h.failedRequests || 0) + ' failed requests</i></div>' : '') +
+      '</div>' +
+      ((h.growingTypes || []).length ? '<ul class="objlist">' + h.growingTypes.map((g) => '<li><span>' + esc(g.name) + ' <span class="sub">+' + g.countDelta + '</span></span><span>shallow ' + esc(mcKb(g.shallowDelta)) + (g.retainedDelta !== undefined ? ' &middot; retained ' + esc(mcKb(g.retainedDelta)) : '') + '</span></li>').join('') + '</ul>' : '<div class="sub">Nothing belonging to the application gained instances.</div>');
+  }).join('');
+}
+
 async function wzLoadCommitPreview(fixIndex) {
   let r;
   try { r = await api('/api/memcheck/commit-preview?id=' + encodeURIComponent(mc.check.checkId) + '&fix=' + fixIndex); } catch { return; }

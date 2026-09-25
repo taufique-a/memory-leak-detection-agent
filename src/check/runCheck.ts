@@ -88,6 +88,8 @@ export type CheckEvent =
       listeners?: number[];
     }
   | { type: 'finding'; finding: CheckFinding }
+  /** One reading, as it is taken: live JS heap after forced GC and registered listeners. */
+  | { type: 'sample'; route: string; iteration: number; heapBytes: number; listeners: number; confirming: boolean }
   | { type: 'done'; checkId: string; state: string; findings: number; fixes: number };
 
 export interface RouteResult {
@@ -106,12 +108,26 @@ export interface RouteResult {
     snapshotDir: string;
     warnings: string[];
     error?: string;
+    /** Which channel took the snapshots. */
+    via?: string;
+    /** Whole-heap figures from the two snapshots. */
+    before?: { totalBytes: number; nodes: number; detachedNodes: number };
+    after?: { totalBytes: number; nodes: number; detachedNodes: number };
+    totalBytesDelta?: number;
+    totalNodeDelta?: number;
+    /** The object types that gained the most, with shallow and retained size change. */
+    growingTypes?: Array<{ name: string; countDelta: number; shallowDelta: number; retainedDelta?: number }>;
+    /** Console errors/warnings and failed requests seen during the snapshot run. */
+    consoleProblems?: number;
+    failedRequests?: number;
   };
   priorityReasons: string[];
   /** Live JS heap (bytes, after forced GC) after each repetition of the run the verdict came from. */
   heapBytes?: number[];
   /** Registered event listeners after each repetition. */
   listeners?: number[];
+  /** Where the time went, so speed can be judged: the trend run, the confirmation run, the two snapshots and their analysis. */
+  timings?: { trendMs: number; confirmMs?: number; heapMs?: number };
   /** Present when modest growth was re-measured with a longer run; the verdict above is the longer run's. */
   confirmation?: { initialVerdict: string; initialBytesPerIteration: number; iterations: number; warmupIterations: number };
 }
@@ -138,6 +154,22 @@ export interface CheckFinding {
   knowledge: KnowledgeNote[];
   /** Index into the check's fixes, when one was proposed. */
   fixIndex?: number;
+  /** How much it costs, from the retained bytes it keeps alive per journey and how sure the evidence is. */
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+}
+
+/**
+ * Severity is about cost, confidence is about certainty; they are shown
+ * side by side and never merged. Retained bytes per journey (what the
+ * growth keeps alive over the measured repetitions): 5 MB and up is HIGH,
+ * 512 KB and up is MEDIUM, the rest LOW - except that a PROVEN leak is
+ * never LOW, because a small leak that is certain still compounds.
+ */
+export function severityOf(finding: Pick<CheckFinding, 'confidence' | 'bytesDelta' | 'retainedBytesDelta'>): CheckFinding['severity'] {
+  const bytes = finding.retainedBytesDelta ?? finding.bytesDelta;
+  if (bytes >= 5 * 1024 * 1024) return 'HIGH';
+  if (bytes >= 512 * 1024 || finding.confidence === 'PROVEN') return 'MEDIUM';
+  return 'LOW';
 }
 
 export interface FixVerification {
@@ -751,6 +783,9 @@ async function measureAndDiagnose(ctx: MeasureContext): Promise<CheckResult> {
   for (const p of planned) {
     emit({ type: 'route', route: p.route, status: 'testing' });
     const scenarioFile = p.scenarioFile;
+    const trendStarted = Date.now();
+    const liveSample = (confirming: boolean) => (sm: { iteration: number; jsHeapUsedBytes: number; jsEventListeners: number }): void =>
+      emit({ type: 'sample', route: p.route, iteration: sm.iteration, heapBytes: sm.jsHeapUsedBytes, listeners: sm.jsEventListeners, confirming });
     let attempts = 0;
     let run: ScenarioRun | undefined;
     let error: string | undefined;
@@ -759,7 +794,7 @@ async function measureAndDiagnose(ctx: MeasureContext): Promise<CheckResult> {
     while (attempts < 2 && run === undefined) {
       attempts++;
       try {
-        const r = await runScenario(p.scenario, { onProgress: (m) => progress(`${p.route}: ${m}`) });
+        const r = await runScenario(p.scenario, { onProgress: (m) => progress(`${p.route}: ${m}`), onSample: liveSample(false) });
         if (r.failures.length > 0 && attempts < 2) {
           error = r.failures[0]?.error ?? 'a step failed';
           continue;
@@ -776,17 +811,20 @@ async function measureAndDiagnose(ctx: MeasureContext): Promise<CheckResult> {
       continue;
     }
     /* ---- confirm modest growth before believing it ---- */
+    const timings: NonNullable<RouteResult['timings']> = { trendMs: Date.now() - trendStarted };
     let scenario = p.scenario;
     let confirmation: RouteResult['confirmation'];
     let routeScenarioFile = scenarioFile;
     if (needsConfirmation(run)) {
+      const confirmStarted = Date.now();
       const longer = confirmationScenario(p.scenario);
       progress(
         `${p.route}: growth of ${(run.trend.bytesPerIteration / 1024).toFixed(0)} KB/repetition is modest - ` +
           `confirming with ${longer.iterations} repetitions (${longer.warmupIterations ?? 0} warm-up)`,
       );
       try {
-        const confirmed = await runScenario(longer, { onProgress: (m) => progress(`${p.route}: ${m}`) });
+        const confirmed = await runScenario(longer, { onProgress: (m) => progress(`${p.route}: ${m}`), onSample: liveSample(true) });
+        timings.confirmMs = Date.now() - confirmStarted;
         if (confirmed.failures.length === 0) {
           confirmation = {
             initialVerdict: run.trend.verdict,
@@ -809,6 +847,7 @@ async function measureAndDiagnose(ctx: MeasureContext): Promise<CheckResult> {
       label: p.label,
       scenarioFile: routeScenarioFile,
       ...(confirmation !== undefined ? { confirmation } : {}),
+      timings,
       verdict: run.trend.verdict,
       bytesPerIteration: run.trend.bytesPerIteration,
       iterationsCompleted: run.iterationsCompleted,
@@ -830,7 +869,10 @@ async function measureAndDiagnose(ctx: MeasureContext): Promise<CheckResult> {
   }
   writeCheckResult(dir, { ...result, state: machine.snapshot() });
 
-  const growing = result.routeResults.filter((r) => r.verdict === 'GROWING');
+  // Heap snapshots for every page whose trend was not clearly flat: a
+  // GROWING page to name what grows, an INCONCLUSIVE one because two real
+  // snapshots decide what a noisy trend could not.
+  const growing = result.routeResults.filter((r) => r.verdict === 'GROWING' || r.verdict === 'INCONCLUSIVE');
   if (growing.length === 0) {
     machine.to('COMPLETED', 'no measured page kept growing');
     const measured = result.routeResults.filter((r) => r.verdict !== 'FAILED').length;
@@ -844,12 +886,13 @@ async function measureAndDiagnose(ctx: MeasureContext): Promise<CheckResult> {
   }
 
   /* ================= HEAP_ANALYSIS ================= */
-  machine.to('HEAP_ANALYSIS', `${growing.length} growing page(s): taking heap snapshots around the same journey`);
+  machine.to('HEAP_ANALYSIS', `${growing.length} page(s) to look inside: taking two heap snapshots around the same journey`);
   const heaps = new Map<string, HeapInvestigationResult>();
   for (const rr of growing) {
     const entry = runs.get(rr.route);
     if (entry === undefined) continue;
     const snapshotDir = path.join(dir, 'heap', entry.scenario.name);
+    const heapStarted = Date.now();
     try {
       const heap = await investigateHeap(entry.scenario, {
         outDir: snapshotDir,
@@ -857,12 +900,30 @@ async function measureAndDiagnose(ctx: MeasureContext): Promise<CheckResult> {
         onProgress: (m) => progress(`${rr.route}: ${m}`),
       });
       heaps.set(rr.route, heap);
+      const cmp = heap.comparison;
       rr.heap = {
         growingConstructors: heap.findings.length,
-        detachedNodeDelta: heap.comparison.detachedNodeDelta,
+        detachedNodeDelta: cmp.detachedNodeDelta,
         snapshotDir,
         warnings: heap.warnings,
+        via:
+          heap.before.source === 'chrome-devtools-mcp'
+            ? `Chrome DevTools MCP${heap.devtools !== undefined ? ` ${heap.devtools.serverVersion}` : ''}`
+            : 'Chrome DevTools Protocol',
+        before: { totalBytes: cmp.before.totalSelfSizeBytes, nodes: cmp.before.totalNodes, detachedNodes: cmp.before.detachedNodeCount },
+        after: { totalBytes: cmp.after.totalSelfSizeBytes, nodes: cmp.after.totalNodes, detachedNodes: cmp.after.detachedNodeCount },
+        totalBytesDelta: cmp.totalBytesDelta,
+        totalNodeDelta: cmp.totalNodeDelta,
+        growingTypes: cmp.grew
+          // Chrome's own bookkeeping for a registered timer or listener
+          // (DOMTimer, V8EventListener...) is the mechanism, not an app object.
+          .filter((g) => g.countDelta > 0 && !isBrowserInternal(g.name) && !BLINK_BINDINGS.has(g.name))
+          .sort((a, b) => (b.retainedDelta ?? b.bytesDelta) - (a.retainedDelta ?? a.bytesDelta))
+          .slice(0, 8)
+          .map((g) => ({ name: g.name, countDelta: g.countDelta, shallowDelta: g.bytesDelta, ...(g.retainedDelta !== undefined ? { retainedDelta: g.retainedDelta } : {}) })),
+        ...(heap.devtools !== undefined ? { consoleProblems: heap.devtools.consoleProblems.length, failedRequests: heap.devtools.failedRequests.length } : {}),
       };
+      if (rr.timings !== undefined) rr.timings.heapMs = Date.now() - heapStarted;
     } catch (err) {
       rr.heap = { growingConstructors: 0, detachedNodeDelta: 0, snapshotDir, warnings: [], error: (err as Error).message.split('\n')[0] ?? 'failed' };
       result.manualItems.push(`${rr.route}: memory grows, but the heap snapshots failed (${rr.heap.error}) - what grows is not named.`);
@@ -871,7 +932,7 @@ async function measureAndDiagnose(ctx: MeasureContext): Promise<CheckResult> {
   if (heaps.size === 0) {
     machine.to('HEAP_CAPTURE_FAILED', 'every heap snapshot attempt failed');
     return finish(
-      `${growing.length} page(s) keep growing, but no heap snapshot could be taken, so what grows cannot be named. ` +
+      `${growing.length} page(s) needed a closer look, but no heap snapshot could be taken, so what grows cannot be named. ` +
         'The growing pages are listed; investigate them in DevTools.',
     );
   }
@@ -972,7 +1033,9 @@ async function measureAndDiagnose(ctx: MeasureContext): Promise<CheckResult> {
       action: finding.action,
       actionReason: finding.actionReason,
       knowledge: [],
+      severity: 'LOW',
     };
+    cf.severity = severityOf(cf);
 
     if (projectRoot !== undefined) {
       const proposal = proposeForFinding(framework, finding, projectRoot);
@@ -1021,8 +1084,13 @@ async function measureAndDiagnose(ctx: MeasureContext): Promise<CheckResult> {
     machine.to('COMPLETED', 'diagnosis complete; no change could be generated safely');
   }
   const strongest = result.findings.filter((f) => f.confidence === 'PROVEN' || f.confidence === 'HIGH').length;
+  const growingOnly = result.routeResults.filter((r) => r.verdict === 'GROWING').length;
+  if (growingOnly === 0 && result.findings.length === 0) {
+    machine.to('COMPLETED', 'snapshots showed nothing accumulating');
+    return finish('No page kept growing, and the heap snapshots of the inconclusive page(s) showed nothing accumulating that belongs to the application.');
+  }
   return finish(
-    `${growing.length} page(s) keep growing. ${result.findings.length} growing object type(s) found, ${strongest} at HIGH or PROVEN. ` +
+    `${growingOnly} page(s) keep growing. ${result.findings.length} growing object type(s) found, ${strongest} at HIGH or PROVEN. ` +
       (writable.length > 0
         ? `${writable.length} fix(es) are ready to review. Nothing has been changed yet.`
         : 'No fix could be generated safely; see the items needing manual investigation.'),

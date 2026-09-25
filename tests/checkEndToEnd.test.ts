@@ -263,6 +263,21 @@ describe('memory check - URL only, end to end', () => {
     expect(finding?.rootCause.kind).toBe('timer');
     expect(result.findings.some((f) => f.constructorName === 'CleanPanel')).toBe(false);
 
+    /* ---- the heap metrics a person expects to see: shallow, retained, detached, and who took the snapshots ---- */
+    expect(finding?.severity).toMatch(/HIGH|MEDIUM/);
+    const hp = leaky?.heap;
+    expect(hp?.error).toBeUndefined();
+    expect(hp?.via).toMatch(/Chrome DevTools/);
+    expect(hp?.before?.totalBytes).toBeGreaterThan(0);
+    expect(hp?.after?.totalBytes).toBeGreaterThan(hp?.before?.totalBytes as number);
+    const grownPanel = hp?.growingTypes?.find((g) => g.name === 'LeakyPanel');
+    expect(grownPanel?.countDelta).toBeGreaterThan(0);
+    expect(grownPanel?.shallowDelta).toBeGreaterThan(0);
+    expect(grownPanel?.retainedDelta ?? 0).toBeGreaterThan(grownPanel?.shallowDelta as number);
+    const report0 = fs.readFileSync(path.join(outDir, result.checkId, 'report.md'), 'utf8');
+    expect(report0).toContain('| Page | Taken via | Heap before | Heap after | Objects | Detached DOM |');
+    expect(report0).toMatch(/\| LeakyPanel \| \+\d+ \| /);
+
     /* ---- a fix is proposed, and nothing was written ---- */
     const fix = result.fixes.find((f) => f.index === finding?.fixIndex);
     expect(fix?.safety).toBe('additive');
