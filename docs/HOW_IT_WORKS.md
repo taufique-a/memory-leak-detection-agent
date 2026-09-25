@@ -333,8 +333,12 @@ When none of those apply, it adds exactly one line, matching the file's own inde
 The one flow a normal user needs (`src/check/`). Every stage reuses something above; what is new is only the part a person used to do by hand - choosing pages and writing the journey for each. No scenario file is needed (`--scenario` still works for the older commands).
 
 ```
-memory-agent check <url> [--project <folder>]        or the first page of the UI: "Memory check"
+memory-agent check <url> [--project <folder>]        or the UI itself, which is the wizard (src/ui/wizard.ts)
 ```
+
+### An interrupted run is never stuck
+
+If a measurement stops part-way (stop pressed, Chrome closed, the machine went to sleep), the check is at TESTING or one of its neighbours with nothing finished. `check-run` on such a check goes back to PAGES_FOUND, discards the half-finished results, and measures again from the same plan; the wizard shows the Pages screen with a note saying so. Seen on IOSense on 2026-09-25, where a second "Check Selected" was refused with "This check is at TESTING".
 
 ### Two halves, with you in between
 

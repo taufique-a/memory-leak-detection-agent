@@ -9,7 +9,7 @@ Last full test run before this work: 57 suites, 1176 tests, all passing (commit 
 
 | # | Phase | Status | What exists | Proven by |
 |---|---|---|---|---|
-| 1 | Simplify the UI | DONE | A five-step wizard: Application → Access → Pages → Analysis → Results. First screen asks only for the URL; the project folder is folded under *Advanced options*; nothing else to configure. The older tools stay on their own pages | `uiCheck`, `uiMemoryCheck` (real browser, every button) |
+| 1 | Simplify the UI | DONE | A five-step wizard: Application → Access → Pages → Analysis → Results. The wizard is the whole page (styled after the mockup: hero, step bar, detection checklist, detected-application card, page picker, live heap chart from real readings, results with plain-word findings). First screen asks only for the URL; the project folder is folded under *Advanced options*. The older tools are one link away (`/?view=advanced`) | `uiCheck`, `uiMemoryCheck` (real browser, every button) |
 | 2 | URL → application detection | DONE | Reachable, framework + version, Chrome connected, login status, title, address, route, single/several pages, links — from the running page and the adapters; unknowns stated. An address that does not answer names what does | `checkEndToEnd`, `checkReachability`, `checkSinglePage` |
 | 3 | Automatic login detection | DONE | Stops at `AUTHENTICATION_REQUIRED`; **Open Login** opens a real Chrome for you; the check continues by itself; no password is ever seen or stored | `checkEndToEnd` (login stop), wizard |
 | 4 | Single-page / multi-page detection | DONE | Decided from the page's safe links; a single page is checked while it stays open, never "no result" | `checkSinglePage` (real Chrome), `checkUnits` |

@@ -41,7 +41,7 @@ and how to do it by hand if you need to.
 
 ## Memory check — start here
 
-**In the UI:** the first page, **Memory check**, is a five-step wizard:
+**In the UI:** the page IS the memory check - a five-step wizard and nothing else to configure. (The older step-by-step tools are one link away: *Advanced tools* in the footer, or `/?view=advanced`.)
 
 1. **Application** — paste the address you open your app at, press **Continue**. (The project folder your dev server runs from is under *Advanced options*; it is what lets the agent trace leaks to files and prepare fixes.)
 2. **Access** — it shows what it found: reachable, framework and version, Chrome connected, login status. If a login is needed, **Open Login** opens a real Chrome for you to sign in; the check continues by itself afterwards.
@@ -49,7 +49,7 @@ and how to do it by hand if you need to.
 4. **Analysis** — each page as it is measured.
 5. **Results** — each page, and each finding in plain words (what, where, why, impact, fix) with **View evidence**, **View code**, **Fix**, **This is expected**; then Fix Review, the fix result, **Measure again**, source control (**Commit** / **Commit & Push**, only for a verified fix, only the files it changed), and **View Full Report**.
 
-That is all it needs — no scenario file, no routes, no settings.
+That is all it needs — no scenario file, no routes, no settings. If a measurement is interrupted (stop pressed, browser closed), the Pages screen offers the same pages again; nothing gets stuck at "TESTING".
 
 **From a terminal** (after activating Node 22, section 1):
 
