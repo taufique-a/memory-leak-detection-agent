@@ -41,9 +41,15 @@ and how to do it by hand if you need to.
 
 ## Memory check — start here
 
-**In the UI:** the first page, **Memory check**. Paste the address you open
-your app at, optionally the project folder, and press **Start Memory Check**.
-That is all it needs — no scenario file.
+**In the UI:** the first page, **Memory check**, is a five-step wizard:
+
+1. **Application** — paste the address you open your app at, press **Continue**. (The project folder your dev server runs from is under *Advanced options*; it is what lets the agent trace leaks to files and prepare fixes.)
+2. **Access** — it shows what it found: reachable, framework and version, Chrome connected, login status. If a login is needed, **Open Login** opens a real Chrome for you to sign in; the check continues by itself afterwards.
+3. **Pages** — *Single page detected* → **Start Memory Check**; *Multiple pages detected* → tick pages, then **Check Selected Pages**, **Check All Pages** or **Check current page only**. The page you gave is always included.
+4. **Analysis** — each page as it is measured.
+5. **Results** — each page, and each finding in plain words (what, where, why, impact, fix) with **View evidence**, **View code**, **Fix**, **This is expected**; then Fix Review, the fix result, **Measure again**, source control (**Commit** / **Commit & Push**, only for a verified fix, only the files it changed), and **View Full Report**.
+
+That is all it needs — no scenario file, no routes, no settings.
 
 **From a terminal** (after activating Node 22, section 1):
 
@@ -97,10 +103,13 @@ is remembered. If your server does not rebuild on change, restart it and press
 Terminal equivalents, on a finished check:
 
 ```powershell
+npm run dev -- check http://localhost:4200 --plan-only      # stop once the pages are found
+npm run dev -- check-run      --check chk-... --pages /a,/b # measure only those (or --all / --current)
 npm run dev -- check-apply    --check chk-... --fix 0      # asks y/N first
 npm run dev -- check-verify   --check chk-... --fix 0      # re-measure an applied fix
 npm run dev -- check-reject   --check chk-... --fix 0
 npm run dev -- check-expected --check chk-... --finding f2 # "this memory is intended"
+npm run dev -- check-commit   --check chk-... --fix 0 [--push]  # only the files the verified fix changed
 ```
 
 Everything a check produces is in `reports\checks\<check id>\`: `report.html`
@@ -1235,7 +1244,7 @@ src/
 docs/          HOW_IT_WORKS.md - plain-English guide to the agent
 scripts/       setup-node.ps1 / .cmd - fetch the pinned Node into .node\
 .node/         Node 22, npm cache, Playwright browsers (gitignored; version in .node-version)
-tests/         57 test files, mirrors src/ - eighteen drive a real Chrome
+tests/         60 test files, mirrors src/ - nineteen drive a real Chrome
                (find them with `grep -l isChromeAvailable tests/*.test.ts`)
 scenarios/     journey definitions (safe to commit — no secrets)
 reports/       generated output (gitignored)
@@ -1309,6 +1318,8 @@ Two constraints worth knowing before you edit:
 | — Knowledge store | ✅ | Applied / rejected / verified / marked expected, remembered in `.memory-agent/knowledge.json`; annotates only - never changes confidence or auto-applies |
 | — Tool registry + `doctor` | ✅ | Each capability proven for real, with its fallback; `--project`, `--json` |
 | — Source maps | ◐ | URL-only checks trace through the app's own maps when they embed `sourcesContent`; minified (renamed) builds stay UNKNOWN |
+| — Wizard (URL → Access → Pages → Analysis → Results) | ✅ | Two-phase check: `--plan-only` stops at PAGES_FOUND with every measurable page offered; `check-run` measures the chosen ones. Real-browser test drives every button (`uiMemoryCheck`) |
+| — Source control | ✅ | `check-commit`: commits only the files a verified fix changed, on the current branch, with a message naming the finding; `--push` to the existing remote, never without asking (`checkGit`) |
 | — Live check on IOSense | ⬜ | Not run yet: needs IOSense's dev server and your sign-in. Its source and the Angular fix path were checked (see docs/STATUS.md) |
 
 **Phase 12 is deliberately partial.** The evidence bundle and analysis prompt

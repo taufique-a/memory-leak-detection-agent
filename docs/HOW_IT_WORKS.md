@@ -336,9 +336,13 @@ The one flow a normal user needs (`src/check/`). Every stage reuses something ab
 memory-agent check <url> [--project <folder>]        or the first page of the UI: "Memory check"
 ```
 
+### Two halves, with you in between
+
+The wizard runs the check in two halves. The first (`check <url> --plan-only`) connects, detects, explores and writes a journey for **every** measurable page, then stops at `PAGES_FOUND` and lists them - nothing is measured. You choose (a single page needs only a confirmation), and the second half (`check-run --check <id> --pages ...`, `--all` or `--current`) continues the same record from `BASELINE_CAPTURED` with only the chosen pages; the journeys are read back from the check's folder, so nothing is re-explored. A check that is not at `PAGES_FOUND` cannot be continued, and a page that was never offered is refused. Run unattended (`check <url>` without `--plan-only`), the agent picks the busiest six itself.
+
 ### The states (`state.ts`)
 
-`CONNECTING → (AUTHENTICATION_REQUIRED) → DISCOVERING → PLANNING → EXPLORING → BASELINE_CAPTURED → TESTING → HEAP_ANALYSIS → CORRELATING → DIAGNOSING → FIX_AVAILABLE`, then on your approval `USER_REVIEW → APPLYING → BUILDING → TESTING_AFTER_FIX → VERIFYING → COMPLETED`. Failures are named states: `AUTH_FAILED`, `BROWSER_ERROR`, `DISCOVERY_FAILED`, `HEAP_CAPTURE_FAILED`, `BUILD_FAILED`, `TEST_FAILED`, `FIX_REJECTED`, `VERIFICATION_INCONCLUSIVE`. A move the transition table does not allow throws, so a step cannot be skipped by accident. Every move is written to `state.json` and streamed to the UI as an `@@CHECK {json}` line, so the status list on screen is the real state, never a guess from log text.
+`CONNECTING → (AUTHENTICATION_REQUIRED) → DISCOVERING → PLANNING → EXPLORING → (PAGES_FOUND) → BASELINE_CAPTURED → TESTING → HEAP_ANALYSIS → CORRELATING → DIAGNOSING → FIX_AVAILABLE`, then on your approval `USER_REVIEW → APPLYING → BUILDING → TESTING_AFTER_FIX → VERIFYING → COMPLETED`. Failures are named states: `AUTH_FAILED`, `BROWSER_ERROR`, `DISCOVERY_FAILED`, `HEAP_CAPTURE_FAILED`, `BUILD_FAILED`, `TEST_FAILED`, `FIX_REJECTED`, `VERIFICATION_INCONCLUSIVE`. A move the transition table does not allow throws, so a step cannot be skipped by accident. Every move is written to `state.json` and streamed to the UI as an `@@CHECK {json}` line, so the status list on screen is the real state, never a guess from log text.
 
 ### One page or many - decided by the address, not by you
 
@@ -442,6 +446,10 @@ It is written through `fix/apply.ts` (baseline recorded, rollback commands print
 
 After writing, it gives the app 20 seconds and then waits up to 2 minutes for it to answer, so a dev server that rebuilds on change is picked up automatically. A server that does not rebuild gives DID NOT RESOLVE - never a false "verified" - and the message says to restart it; **Measure again** (`check-verify`) then re-measures. Build or test failure stops the process (`BUILD_FAILED` / `TEST_FAILED`); the change stays in the tree so you can look, with the rollback command shown.
 
+### Source control (`git.ts`) - only when you ask
+
+After a fix is **verified**, the Results screen shows what a commit would contain - branch, the files the fix changed, `git diff --stat`, and the message (`fix: timer leak in LeakyPanel on /orders`) - with **Commit** and, when the project has a remote, **Commit & Push**. Only those files are added, by name; your own uncommitted work stays where it is. No force push, no branch switching, no stash, no amend; a push goes to the branch the project is on. A fix that is not verified is not offered for commit. The outcome (commit, branch, pushed or not, or git's own error) is recorded on the check and in the report.
+
 ### Memory of your decisions (`knowledge.ts`)
 
 Applied, rejected, verified, not verified, marked expected - keyed by framework, constructor, cause and file, in `.memory-agent/knowledge.json` (no source code, no credentials). Shown on matching findings next time. It **never** changes a confidence level, hides a finding, or makes a fix automatic: a rejected fix is a proposal again next time, an accepted one still needs approval.
@@ -456,7 +464,7 @@ Applied, rejected, verified, not verified, marked expected - keyed by framework,
 
 ### What proves it
 
-In a real Chrome: `tests/checkEndToEnd.test.ts` (React app: login stop, Log out never requested, a leak found only one level deep, leaking page found and clean page not, component named in its file, fix proposed and nothing written, then applied, built, re-measured → FIX VERIFIED, and a stale proposal refused), `checkPlainJs.test.ts` (plain-JS custom element: found, fixed, VERIFIED), `checkSourceMaps.test.ts` (address only, traced through the app's source map), `uiMemoryCheck.test.ts` (every button on the page: Start, Mark as expected, Reject, Apply against a server still serving old code, Measure again after a restart), `inspectApply.test.ts`. Without a browser: `checkUnits`, `reactFixGenerator`, `angularCheckFix`, `toolRegistry`, `uiCheck`.
+In a real Chrome: `tests/checkEndToEnd.test.ts` (React app: login stop, Log out never requested, a leak found only one level deep, leaking page found and clean page not, component named in its file, fix proposed and nothing written, then applied, built, re-measured → FIX VERIFIED, and a stale proposal refused), `checkPlainJs.test.ts` (plain-JS custom element: found, fixed, VERIFIED), `checkSourceMaps.test.ts` (address only, traced through the app's source map), `uiMemoryCheck.test.ts` (every button of the wizard: Continue, the pages list, Check Selected Pages, This is expected, Fix, Reject, Apply against a server still serving old code, Measure again after a restart, Commit - which leaves the person's own uncommitted file alone), `checkGit.test.ts`, the stop-and-continue case in `checkEndToEnd.test.ts`, `inspectApply.test.ts`. Without a browser: `checkUnits`, `reactFixGenerator`, `angularCheckFix`, `toolRegistry`, `uiCheck`.
 
 ### Not yet proven, and stated limits
 

@@ -68,6 +68,10 @@ export function renderCheckMarkdown(r: CheckResult): string {
   out.push(m?.framework.version !== undefined ? `- ${m.framework.displayName} ${m.framework.version}` : `- Unknown${m?.framework.versionReason !== undefined ? `: ${m.framework.versionReason}` : ''}`);
 
   h('4. Routes checked');
+  if (r.selectedPages !== undefined && r.plan !== undefined) {
+    const notChosen = r.plan.planned.map((p) => p.route).filter((x) => !(r.selectedPages as string[]).includes(x));
+    out.push(`Chosen: ${r.selectedPages.join(', ')}.` + (notChosen.length > 0 ? ` Found but not chosen: ${notChosen.join(', ')}.` : ''), '');
+  }
   if (r.routeResults.length === 0) out.push('None were measured.');
   else {
     out.push('| Route | Result | Growth | Why it was tested |', '|---|---|---|---|');
@@ -166,6 +170,11 @@ export function renderCheckMarkdown(r: CheckResult): string {
   for (const v of applied) {
     if (v.rollback.length > 0) out.push('', `To undo fix ${v.fixIndex}:`, '```', ...v.rollback, '```');
   }
+  out.push('', '**Source control:** ' + (r.git === undefined
+    ? 'not committed (only done when asked).'
+    : r.git.committed
+      ? `committed ${r.git.commit?.slice(0, 10)} on ${r.git.branch} (${r.git.files.join(', ')})` + (r.git.pushed ? `, pushed to ${r.git.remote}.` : ', not pushed.') + (r.git.error !== undefined ? ` ${r.git.error}` : '')
+      : `not committed - ${r.git.error ?? 'refused'}`));
 
   h('16. Remaining risks');
   for (const x of [...r.remainingRisks, ...r.limitations]) out.push(`- ${x}`);
