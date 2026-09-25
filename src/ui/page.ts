@@ -550,7 +550,8 @@ a{color:var(--accent)}
 .pagepick{list-style:none;margin:.6rem 0 0;padding:0;max-height:22rem;overflow:auto;border:1px solid var(--line);border-radius:8px}
 .pagepick li{padding:.45rem .7rem;border-bottom:1px solid var(--line);font-size:.9rem}
 .pagepick li:last-child{border-bottom:0}
-.pagepick label{display:flex;gap:.6rem;align-items:center;cursor:pointer;max-width:none}
+.pagepick label{display:flex;flex-direction:row;gap:.6rem;align-items:center;cursor:pointer;max-width:none;text-align:left}
+.pagepick input[type=checkbox]{margin:0}
 .pagepick .why{color:var(--muted);font-size:.78rem;margin-left:auto}
 .finding{border:1px solid var(--line);border-left-width:5px;border-radius:8px;padding:.9rem 1rem;margin:.7rem 0;background:var(--card)}
 .finding.confirmed{border-left-color:var(--bad)}.finding.strong{border-left-color:var(--bad)}
