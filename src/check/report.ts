@@ -35,6 +35,17 @@ export function renderCheckMarkdown(r: CheckResult): string {
   out.push(`Check \`${r.checkId}\` - started ${r.startedAt}${r.finishedAt !== undefined ? `, finished ${r.finishedAt}` : ''}.`);
   out.push(`Final state: **${r.state.current}**.`, '', `> ${r.conclusion}`);
 
+  // The answer most readers want first: each page, and what leaks on it.
+  if (r.routeResults.length > 0) {
+    out.push('', `**Result by page** (${r.mode === 'single-page' ? 'a single page, watched while it stays open' : 'the page you gave, plus the pages reached from it'})`, '');
+    for (const rr of r.routeResults) {
+      const leaks = r.findings.filter((f) => f.route === rr.route).map((f) => `${f.constructorName} (${f.confidence})`);
+      const verdict =
+        rr.verdict === 'GROWING' ? 'memory keeps growing' : rr.verdict === 'FAILED' ? 'could not be measured' : rr.verdict === 'INCONCLUSIVE' ? 'inconclusive' : 'no leak found';
+      out.push(`- \`${rr.route}\` - **${verdict}**${leaks.length > 0 ? `: ${leaks.join(', ')}` : ''}`);
+    }
+  }
+
   h('1. Application');
   out.push(`- Address: ${r.url}`);
   if (m !== undefined) {

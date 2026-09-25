@@ -340,6 +340,21 @@ memory-agent check <url> [--project <folder>]        or the first page of the UI
 
 `CONNECTING → (AUTHENTICATION_REQUIRED) → DISCOVERING → PLANNING → EXPLORING → BASELINE_CAPTURED → TESTING → HEAP_ANALYSIS → CORRELATING → DIAGNOSING → FIX_AVAILABLE`, then on your approval `USER_REVIEW → APPLYING → BUILDING → TESTING_AFTER_FIX → VERIFYING → COMPLETED`. Failures are named states: `AUTH_FAILED`, `BROWSER_ERROR`, `DISCOVERY_FAILED`, `HEAP_CAPTURE_FAILED`, `BUILD_FAILED`, `TEST_FAILED`, `FIX_REJECTED`, `VERIFICATION_INCONCLUSIVE`. A move the transition table does not allow throws, so a step cannot be skipped by accident. Every move is written to `state.json` and streamed to the UI as an `@@CHECK {json}` line, so the status list on screen is the real state, never a guess from log text.
 
+### One page or many - decided by the address, not by you
+
+You give one address. What the check does next depends only on what that page turns out to be:
+
+- **The page has safe links to other pages** (a multi-page application): it follows them, one or two levels deep, and checks each page it can enter and leave. **The page you gave is checked too**, as described below.
+- **The page has no safe link to another page** (a single page): there is nothing to click through, and this is *not* "no result". The page itself is the whole check.
+
+**The page you gave - always checked, watched while it stays open.** It is loaded once; each repetition then touches only what is harmless (tabs, show/hide controls, scrolling) and leaves the page alone for 1.5 s so its own timers and streams run. What this catches is memory that piles up while a page is simply open and used - a timer or stream that keeps adding, a list that never trims. It cannot show what is left behind by *leaving* a page (that needs a page to leave to), which is why multi-page apps are also entered and left. The report says which kind of application it found (`mode`: single-page / multi-page) and lists **the result by page**, with what leaks on each.
+
+The status list, the CLI output (`PAGES`) and the top of the report all show the same thing: each page, and either "no leak found" or what keeps growing on it.
+
+### If the address does not answer
+
+The check says so plainly and, when the address is on this machine, tells you what *is* answering: another port a dev server may have moved to (4200 taken, so 4300), or the same port on IPv6 loopback only where `127.0.0.1` refuses. It probes this machine's own loopback addresses only, and only when the address you gave was loopback - it never scans another host (`reachability.ts`).
+
 ### Login
 
 If a password field or a login address appears, the check stops at `AUTHENTICATION_REQUIRED`. It never tries to get past it. In the UI the **Sign in** button opens a real Chrome window, you sign in yourself, press *I have signed in / continue*, and the check restarts on its own. Only the resulting session is saved; the tool never sees the password. A saved sign-in (`.auth\app.auth.json`) is picked up automatically only if it was saved **for this address** - never one for some other app that happens to be lying around (`resolveAuthFile`). If a saved one no longer works the state is `AUTH_FAILED`, not a silent retry.
@@ -363,7 +378,7 @@ For each safe link on the start page (up to 12) it clicks, waits for the address
 
 ### The plan and the journey (`plan.ts`)
 
-Routes are ranked by how much they have to leak - bigger DOM, chart libraries, canvases, tabs, show/hide controls, iframes, being in the main navigation - and the busiest 6 are measured; the rest are listed as deferred, never dropped silently. The journey for one route:
+The page you gave is planned first and sits outside the cap. Other routes are ranked by how much they have to leak - bigger DOM, chart libraries, canvases, tabs, show/hide controls, iframes, being in the main navigation - and the busiest 6 are measured; the rest are listed as deferred, never dropped silently. The journey for one route:
 
 ```
 load the start page once                      <- the only reload

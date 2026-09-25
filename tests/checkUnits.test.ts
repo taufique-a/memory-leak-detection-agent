@@ -218,6 +218,32 @@ describe('memory test plan', () => {
     ]);
   });
 
+  it('always plans the page you gave, first and outside the cap, with no navigation in it', () => {
+    const plan = buildMemoryTestPlan([explored('/a'), explored('/b')], {
+      baseUrl: 'http://app.test',
+      startRoute: '/',
+      maxRoutes: 1,
+      startPage: { safeTabs: ['Daily'], safeDisclosures: ['Filters'], scrollable: true },
+    });
+    expect(plan.planned.map((p) => p.route)).toEqual(['/', '/a']);
+    const stay = plan.planned[0]?.scenario;
+    expect(stay?.setup).toEqual([{ action: 'goto', path: '/', waitUntil: 'load' }]);
+    expect(stay?.steps.some((st) => st.action === 'back' || st.action === 'goto' || st.action === 'reload')).toBe(false);
+    expect(stay?.steps.map((st) => st.action)).toContain('press');
+    expect(stay?.steps[stay.steps.length - 1]).toEqual({ action: 'wait', ms: 1500 });
+    expect(plan.methodology[0]).toMatch(/always checked while it stays open/);
+  });
+
+  it('a single page with nothing to touch is still watched: it just stays open', () => {
+    const plan = buildMemoryTestPlan([], {
+      baseUrl: 'http://app.test',
+      startRoute: '/',
+      startPage: { safeTabs: [], safeDisclosures: [], scrollable: false },
+    });
+    expect(plan.planned).toHaveLength(1);
+    expect(plan.planned[0]?.scenario.steps).toEqual([{ action: 'wait', ms: 1500 }]);
+  });
+
   it('refuses selectors it cannot quote safely', () => {
     expect(linkSelector('/a"b')).toBeUndefined();
     expect(tabSelector('Tab "x"')).toBeUndefined();

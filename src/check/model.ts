@@ -171,8 +171,8 @@ export function assembleApplicationModel(input: ModelInputs): ApplicationModel {
   /* ---- routes ---- */
   if (input.routes.filter((r) => r.safeToVisit).length === 0) {
     unknowns.push(
-      'Routes: no in-app link on the start page was safe to follow. Without one, there is nothing to ' +
-        'enter and leave, so no page lifecycle can be measured from this address.',
+      'Routes: no in-app link on the start page was safe to follow, so this is treated as a single page: it is ' +
+        'watched while it stays open, and no enter-and-leave lifecycle can be measured from this address.',
     );
   }
   unknowns.push(

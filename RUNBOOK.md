@@ -65,6 +65,10 @@ Options and exit codes:
 
 Exit `0` = the check ran; `1` = it could not (browser, discovery or heap failure); `3` = the app needs you to sign in first.
 
+**One address is all it needs.** If the address is a single page (no links to other pages) it is checked while it stays open; if the app has several pages it follows the safe links and checks each - and always checks the page you gave. The result is listed page by page (`PAGES` in the terminal, "Result by page" at the top of the report).
+
+**If nothing answers** at the address, the check says so and names any address on this machine that *does* answer (another port, or IPv6-only). It only ever looks at this machine's loopback.
+
 **Address tip:** use the exact address you open the app at. A dev server may listen on `localhost` only (IPv6), so `http://127.0.0.1:<port>` can fail where `http://localhost:<port>` works.
 
 What it does, in order (each step appears in the UI's status list):

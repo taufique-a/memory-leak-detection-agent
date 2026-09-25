@@ -108,6 +108,22 @@ function isSafeLabel(label: string): boolean {
   return classifyLink(probe, 'http://x.invalid/')?.safeToVisit === true;
 }
 
+/** What is harmless to touch on the page the browser is on, and whether it scrolls. */
+export interface Interactables {
+  safeTabs: string[];
+  safeDisclosures: string[];
+  scrollable: boolean;
+}
+
+export async function readInteractables(page: Pick<Page, 'evaluate'>): Promise<Interactables> {
+  const tabs = ((await page.evaluate(SAFE_TABS_SCRIPT).catch(() => [])) as string[]).filter(isSafeLabel).slice(0, 3);
+  const disclosures = [...new Set((await page.evaluate(SAFE_DISCLOSURES_SCRIPT).catch(() => [])) as string[])]
+    .filter(isSafeLabel)
+    .slice(0, 2);
+  const scrollable = (await page.evaluate(SCROLLABLE_SCRIPT).catch(() => false)) as boolean;
+  return { safeTabs: tabs, safeDisclosures: disclosures, scrollable };
+}
+
 export interface ExploreOptions {
   maxRoutes?: number;
   /** Most pages to explore one level deeper (reached through a first-level page). Default 6; 0 turns it off. */
@@ -233,11 +249,10 @@ export async function exploreRoutes(
         };
       } else {
         const inv = await readPageInventory(page);
-        const tabs = inApp ? ((await page.evaluate(SAFE_TABS_SCRIPT)) as string[]).filter(isSafeLabel).slice(0, 3) : [];
-        const disclosures = inApp
-          ? [...new Set((await page.evaluate(SAFE_DISCLOSURES_SCRIPT)) as string[])].filter(isSafeLabel).slice(0, 2)
-          : [];
-        const scrollable = inApp ? ((await page.evaluate(SCROLLABLE_SCRIPT).catch(() => false)) as boolean) : false;
+        const touch: Interactables = inApp ? await readInteractables(page) : { safeTabs: [], safeDisclosures: [], scrollable: false };
+        const tabs = touch.safeTabs;
+        const disclosures = touch.safeDisclosures;
+        const scrollable = touch.scrollable;
         result = {
           ...base,
           reached: true,

@@ -58,6 +58,50 @@ export interface PlanOptions {
   warmupIterations?: number;
   /** Routes whose link sits in the app's navigation (nav, header, menu). */
   inNavigation?: ReadonlySet<string>;
+  /**
+   * The page the person gave, watched while it STAYS OPEN. Always checked
+   * when supplied - it is the whole check for a single-page application, and
+   * one more page for a multi-page one. What is safe to touch on it comes
+   * from the same reader the explorer uses.
+   */
+  startPage?: { safeTabs: readonly string[]; safeDisclosures: readonly string[]; scrollable: boolean };
+}
+
+/** How long the page is left alone at the end of each repetition, so timers and streams get to run. */
+export const STAY_OPEN_MS = 1500;
+
+/**
+ * The journey for a page that stays open: touch what is harmless (tabs,
+ * show/hide controls, scrolling), then leave it alone for a moment. No
+ * navigation at all - which is exactly what a single page offers. What it
+ * catches is memory that piles up while the page is simply open and used:
+ * a timer or stream that keeps adding, a list that never trims.
+ */
+export function stayOpenJourney(page: NonNullable<PlanOptions['startPage']>): Step[] {
+  const steps: Step[] = [];
+  for (const tab of page.safeTabs) {
+    const sel = tabSelector(tab);
+    if (sel === undefined) continue;
+    steps.push({ action: 'click', selector: sel });
+    steps.push({ action: 'wait', ms: 250 });
+  }
+  for (const label of page.safeDisclosures) {
+    const open = disclosureSelector(label, false);
+    const close = disclosureSelector(label, true);
+    if (open === undefined || close === undefined) continue;
+    steps.push({ action: 'click', selector: open });
+    steps.push({ action: 'wait', ms: 250 });
+    steps.push({ action: 'click', selector: close });
+    steps.push({ action: 'wait', ms: 250 });
+  }
+  if (page.scrollable) {
+    steps.push({ action: 'press', key: 'End' });
+    steps.push({ action: 'wait', ms: 400 });
+    steps.push({ action: 'press', key: 'Home' });
+    steps.push({ action: 'wait', ms: 200 });
+  }
+  steps.push({ action: 'wait', ms: STAY_OPEN_MS });
+  return steps;
 }
 
 export function scoreRoute(r: ExploredRoute, inNavigation: boolean): { score: number; reasons: string[] } {
@@ -189,14 +233,40 @@ export function buildMemoryTestPlan(explored: readonly ExploredRoute[], options:
 
   ranked.sort((a, b) => b.priority - a.priority);
   const cap = options.maxRoutes ?? 6;
+  const planned = ranked.slice(0, cap);
+  if (options.startPage !== undefined) {
+    // First, and outside the cap: it is the page the person asked about.
+    planned.unshift({
+      route: options.startRoute,
+      label: 'the page you gave (watched while it stays open)',
+      priority: Number.POSITIVE_INFINITY,
+      priorityReasons: ['the address you gave - watched while it stays open, used the way a person would'],
+      scenario: {
+        schemaVersion: 1,
+        name: `check-${slug(options.startRoute)}-stays-open`,
+        description: `Stay on ${options.startRoute}, touching only what is harmless, and watch its memory.`,
+        baseUrl: options.baseUrl,
+        ...(options.authFile !== undefined ? { auth: { type: 'storageState' as const, file: options.authFile } } : {}),
+        setup: [{ action: 'goto', path: options.startRoute, waitUntil: 'load' }],
+        steps: stayOpenJourney(options.startPage),
+        iterations,
+        warmupIterations,
+      },
+    });
+  }
   return {
     startRoute: options.startRoute,
-    planned: ranked.slice(0, cap),
+    planned,
     deferred: ranked.slice(cap).map((p) => p.route),
     notMeasurable,
     iterations,
     warmupIterations,
     methodology: [
+      ...(options.startPage !== undefined
+        ? [
+            `The page you gave (${options.startRoute}) is always checked while it stays open: it is loaded once, then each repetition touches only what is harmless (tabs, show/hide controls, scrolling) and leaves it alone for ${STAY_OPEN_MS / 1000} s so its timers and streams run. This is the whole check for a single-page application.`,
+          ]
+        : []),
       `Load ${options.startRoute} once. Everything after that happens inside the same running page - no reloads, which would free leaked memory and hide it.`,
       `For each route: click its link (for a page one level deeper, its parent page's link first), wait for the address to change, switch through any safe tabs, open and close safe show/hide controls, scroll a long page to the end and back, press Back, wait to be back on ${options.startRoute}.`,
       `Repeat ${iterations} times. Garbage collection is forced and the heap is read after every repetition; the first ${warmupIterations} are discarded as warm-up (first visits load code and fill caches).`,

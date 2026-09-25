@@ -37,7 +37,8 @@ import { runScenario, type ScenarioRun } from '../scenario/runner';
 import { explainSessionMismatch, readSavedSession } from '../scenario/session';
 import type { Scenario } from '../scenario/types';
 import type { Confidence } from '../types/index';
-import { exploreRoutes, type ExplorationResult } from './explore';
+import { exploreRoutes, readInteractables, type ExplorationResult, type Interactables } from './explore';
+import { describeUnreachable } from './reachability';
 import { proposeForFinding, toCheckProposal, type CheckFixProposal } from './fixes';
 import { readPageInventory, watchPageResources } from './inventory';
 import { annotateWithKnowledge, type KnowledgeNote } from './knowledge';
@@ -155,6 +156,11 @@ export interface CheckResult {
   remainingRisks: string[];
   manualItems: string[];
   limitations: string[];
+  /**
+   * What the address turned out to be: a page with no safe links to other
+   * pages (checked while it stays open), or an application with several.
+   */
+  mode?: 'single-page' | 'multi-page';
   /** URL-only checks: what the application's own source maps provided. */
   sourceMaps?: { scriptsMapped: number; originalSources: number; skipped: Array<{ script: string; reason: string }> };
 }
@@ -344,6 +350,7 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
   let startRoute = '/';
   let scriptUrls: string[] = [];
   let exploration: ExplorationResult | undefined;
+  let startInteractables: Interactables = { safeTabs: [], safeDisclosures: [], scrollable: false };
   let runtimeOutcome: DetectionOutcome | undefined;
   let sourceOutcome: DetectionOutcome | undefined;
   try {
@@ -352,8 +359,10 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
       await session.page.goto(options.url, { waitUntil: 'load' });
       await session.page.waitForLoadState('networkidle', { timeout: 8_000 }).catch(() => undefined);
     } catch (err) {
-      machine.to('BROWSER_ERROR', `could not reach ${options.url}: ${(err as Error).message.split('\n')[0] ?? ''}`);
-      return finish(`${options.url} could not be reached. Is the application running at that address?`);
+      // Say what IS answering on this machine, not just that this address is not.
+      const advice = await describeUnreachable(options.url);
+      machine.to('BROWSER_ERROR', `${advice.short} (${(err as Error).message.split('\n')[0] ?? 'connection failed'})`);
+      return finish(advice.message);
     }
 
     const authDetection = await detectAuthRequirement(session.page);
@@ -384,6 +393,9 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
     scriptUrls = inventory.scripts.filter((sc) => sc.src !== undefined).map((sc) => sc.src as string);
     startRoute = routeOf(new URL(session.page.url()));
     const routes = classifyLinks(inventory.links, session.page.url());
+    // What is harmless to touch on THIS page, read now - before exploring
+    // moves the browser around - so the page you gave can be watched too.
+    startInteractables = await readInteractables(session.page);
 
     const sourceAdapter = sourceOutcome?.adapter;
     const sourceCtx = projectRoot !== undefined ? { projectRoot } : undefined;
@@ -421,28 +433,32 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
 
     /* ================= PLANNING (which links to try) ================= */
     const safe = routes.filter((r) => r.safeToVisit);
+    result.mode = safe.length > 0 ? 'multi-page' : 'single-page';
     machine.to(
       'PLANNING',
-      `${routes.length} link(s) found, ${safe.length} safe to follow, ${routes.length - safe.length} refused`,
+      safe.length > 0
+        ? `${routes.length} link(s) found, ${safe.length} safe to follow, ${routes.length - safe.length} refused - the page you gave is checked too`
+        : `no safe link to another page (${routes.length} found) - this is a single page, checked while it stays open`,
     );
-    if (safe.length === 0) {
-      machine.to('COMPLETED', 'no safe in-app link to test');
-      return finish(
-        'No link on the start page was safe to follow, so no page could be entered and left. Nothing was ' +
-          'measured - this is not a clean result, it is no result.',
-      );
-    }
 
     /* ================= EXPLORING ================= */
-    machine.to('EXPLORING', `visiting up to ${Math.min(safe.length, 12)} page(s) by clicking their links, then pressing Back`);
+    machine.to(
+      'EXPLORING',
+      safe.length > 0
+        ? `visiting up to ${Math.min(safe.length, 12)} page(s) by clicking their links, then pressing Back`
+        : 'nothing to click through - the page itself is the whole check',
+    );
     // Navigation links first: those are the pages a user actually moves between.
     const ordered = [...safe].sort((a, b) => Number(b.inNavigation) - Number(a.inNavigation));
-    exploration = await exploreRoutes(session.page, session.page.url(), ordered, {
-      maxRoutes: 12,
-      onProgress: progress,
-      onRoute: (r, index, total) =>
-        emit({ type: 'explored', route: r.route, measurable: r.reached && r.inApp && r.returnedOk && !r.requiresAuth, note: r.note, index, total }),
-    });
+    exploration =
+      safe.length === 0
+        ? { startRoute, explored: [], history: [] }
+        : await exploreRoutes(session.page, session.page.url(), ordered, {
+            maxRoutes: 12,
+            onProgress: progress,
+            onRoute: (r, index, total) =>
+              emit({ type: 'explored', route: r.route, measurable: r.reached && r.inApp && r.returnedOk && !r.requiresAuth, note: r.note, index, total }),
+          });
     result.exploration = exploration;
     for (const w of resources.workers) if (!model.workers.includes(w)) model.workers.push(w);
     for (const s of resources.sockets) if (!model.sockets.includes(s)) model.sockets.push(s);
@@ -481,6 +497,8 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
     iterations: options.iterations ?? DEFAULT_ITERATIONS,
     warmupIterations: options.warmupIterations ?? DEFAULT_WARMUP,
     inNavigation: nav,
+    // Always: the page you gave, watched while it stays open.
+    startPage: startInteractables,
   });
   const scenarioDir = path.join(dir, 'scenarios');
   fs.mkdirSync(scenarioDir, { recursive: true });
@@ -608,8 +626,9 @@ export async function runCheck(options: CheckOptions): Promise<CheckResult> {
     return finish(
       measured === 0
         ? 'Every planned page failed to run, so nothing was measured. This is not a clean result.'
-        : `${measured} page(s) measured; none kept growing after warm-up. That clears these journeys only - ` +
-            'pages not reached from the start page, and actions the agent does not perform (buttons, forms), were not tested.',
+        : `${measured} page(s) checked (${result.routeResults.filter((r) => r.verdict !== 'FAILED').map((r) => r.route).join(', ')}); ` +
+            'none kept growing after warm-up. That clears what was watched only - pages not reached from the start page, ' +
+            'and actions the agent does not perform (buttons, forms), were not tested.',
     );
   }
 

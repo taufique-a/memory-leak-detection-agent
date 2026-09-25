@@ -3744,6 +3744,10 @@ function mcRender() {
       '<span><b>Charts</b> ' + (m.chartLibraries.length ? esc(m.chartLibraries.join(', ')) : 'none') + '</span>' +
       '<span><b>Workers / sockets</b> ' + m.workers.length + ' / ' + m.sockets.length + '</span>' +
       '</div>' + (c.conclusion ? '<p style="margin:.6rem 0 0"><b>' + esc(c.conclusion) + '</b></p>' : '') + '</div>';
+  } else if (c && c.conclusion) {
+    // Stopped before the application was understood (an address that does not
+    // answer, a login): the conclusion IS the answer, so show it.
+    summary = '<div class="banner warn"><b>' + esc(c.conclusion) + '</b></div>';
   } else if (mc.model) {
     summary = '<div class="banner">' + esc(mc.model.framework) + (mc.model.version ? ' ' + esc(mc.model.version) : '') +
       ' &middot; ' + mc.model.safeRoutes + ' of ' + mc.model.routes + ' links safe to follow</div>';
@@ -3756,9 +3760,12 @@ function mcRender() {
   if (results && results.length) {
     routes = results.map((r) => {
       const tone = r.verdict === 'GROWING' ? 'bad' : r.verdict === 'FAILED' || r.verdict === 'INCONCLUSIVE' ? 'warn' : 'ok';
+      const leaks = c.findings.filter((f) => f.route === r.route).map((f) => f.constructorName);
       return '<li><span class="pill ' + tone + '">' + esc(r.verdict) + '</span> <code>' + esc(r.route) + '</code> ' +
         '<span class="sub">' + esc(mcKb(r.bytesPerIteration)) + (r.confirmation ? ' (confirmed over ' + r.confirmation.iterations + ' visits)' : '') +
-        (r.error ? ' - ' + esc(r.error) : '') + '</span></li>';
+        (r.error ? ' - ' + esc(r.error) : '') + '</span>' +
+        (leaks.length ? '<div class="sub">Leaks here: <b>' + esc(leaks.join(', ')) + '</b></div>' : (r.verdict === 'GROWING' ? '' : '<div class="sub">No leak found on this page.</div>')) +
+        '</li>';
     }).join('');
   } else if (mc.plan.length || mc.explored.length) {
     const list = mc.plan.length ? mc.plan : mc.explored.map((x) => x.route);

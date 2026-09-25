@@ -170,8 +170,26 @@ export async function runCheckCommand(args: string[]): Promise<number> {
   heading('RESULT');
   field('Check', result.checkId);
   field('State', result.state.current);
+  if (result.mode !== undefined) {
+    field('Application', result.mode === 'single-page' ? 'a single page (watched while it stays open)' : 'several pages');
+  }
   console.log('');
   info(result.conclusion);
+  if (result.routeResults.length > 0) {
+    heading('PAGES');
+    for (const rr of result.routeResults) {
+      const leaks = result.findings.filter((f) => f.route === rr.route).map((f) => f.constructorName);
+      const verdict =
+        rr.verdict === 'GROWING'
+          ? colour.red('memory keeps growing')
+          : rr.verdict === 'FAILED'
+            ? colour.yellow('could not be measured')
+            : rr.verdict === 'INCONCLUSIVE'
+              ? colour.yellow('inconclusive')
+              : colour.green('no leak found');
+      console.log(`  ${rr.route.padEnd(28)} ${verdict}${leaks.length > 0 ? colour.dim(`  ${leaks.join(', ')}`) : ''}`);
+    }
+  }
   if (result.fixes.some((f) => f.newContent !== undefined)) {
     console.log('');
     for (const f of result.fixes.filter((x) => x.newContent !== undefined)) {
